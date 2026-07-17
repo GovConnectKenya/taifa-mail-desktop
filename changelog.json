@@ -1,0 +1,17 @@
+[
+  {
+    "version": "0.1.0",
+    "date": "2026-07-17",
+    "tag": "First release",
+    "major": false,
+    "summary": "The first Taifa Mail desktop app: a walking skeleton that puts your webmail in a real window.",
+    "added": [
+      "A desktop window that loads the Taifa Mail webmail at mail.govconnect.ke, signed in exactly as it is in your browser.",
+      "A tray icon so Taifa Mail stays reachable while it is out of the way.",
+      "Automatic updates: the app checks for new versions and installs them for you.",
+      "Navigation lock, so links that lead away from Taifa Mail open in your normal browser instead of taking over the app window."
+    ],
+    "improved": [],
+    "fixed": []
+  }
+]

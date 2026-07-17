@@ -1,0 +1,105 @@
+name: Release
+
+# Cutting a release: add an entry to the top of changelog.json, then run
+# `make release` (or `npm run release`). That pushes a v<version> tag, which
+# triggers this workflow to build the installers for every platform and publish
+# them to GitHub Releases. electron-updater reads the feed straight from
+# Releases (build.publish is provider: github), so there is nothing else to sync.
+#
+# NOTE ON TAGS: this repo is standalone, so `v*.*.*` is safe. If this ever moves
+# into the taifa-mail monorepo, the tag MUST become `desktop-v*.*.*`
+# (taifa-mail/.github/workflows/release.yml already fires on `v*` and both would
+# race). That change is TWO-PART: electron-updater's GitHubProvider derives the
+# version by stripping a leading `v` and semver-parsing the rest, so it cannot
+# cope with a `desktop-v` prefix. Renaming the tag prefix REQUIRES switching
+# build.publish to `provider: generic` in the same commit. Doing one without the
+# other ships a build whose updater silently never finds an update.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+# Point both caches inside the workspace so one `path:` list works on all three
+# runners, with no per-OS branching between ~/.cache and %LOCALAPPDATA%.
+env:
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: '--mac --x64 --arm64'
+          - os: windows-latest
+            args: '--win'
+          - os: ubuntu-latest
+            args: '--linux'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Cache the downloaded Electron binaries and electron-builder's tooling.
+      # Keyed on the lockfile because that is what pins the Electron version.
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      - name: Install dependencies
+        # npm install, not npm ci: the lockfile is resolved on one OS and omits
+        # electron-builder's other-platform optional deps, which makes npm ci
+        # fail the strict lock check on every runner.
+        run: npm install --no-audit --no-fund
+
+      # macOS: build + code-sign + notarize. The signing env (CSC_LINK etc.) is
+      # ONLY set here; passing an empty CSC_LINK to Windows/Linux makes
+      # electron-builder treat it as a bad cert path, so they get their own step.
+      - name: Build and package (macOS, signed + notarized)
+        if: matrix.os == 'macos-latest'
+        run: npx electron-builder ${{ matrix.args }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.MAC_CERTS }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Build and package (Windows / Linux)
+        if: matrix.os != 'macos-latest'
+        run: npx electron-builder ${{ matrix.args }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # We build with --publish never and upload explicitly: electron-builder's
+      # own publisher races across the three runners and can clobber latest*.yml.
+      - name: Publish installers to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+            release/*.blockmap
+            release/latest*.yml
+          fail_on_unmatched_files: false

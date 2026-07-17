@@ -1,0 +1,79 @@
+{
+  "name": "taifa-mail-desktop",
+  "productName": "Taifa Mail",
+  "version": "0.1.0",
+  "description": "Taifa Mail desktop: a thin Electron shell around the Taifa Mail webmail at mail.govconnect.ke.",
+  "main": "src/main.js",
+  "author": "RCFI",
+  "homepage": "https://mail.govconnect.ke",
+  "license": "UNLICENSED",
+  "private": true,
+  "//": "Three things in the build key below are load-bearing and must not be tidied away: the 'zip' mac target (electron-updater cannot update from a .dmg), the hardcoded notarize.teamId literal (electron-builder does not interpolate ${env.APPLE_TEAM_ID} there), and the entitlements plist (copied verbatim, required by the hardened runtime). See RELEASING.md before changing any of them.",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --publish never",
+    "pack": "electron-builder --dir",
+    "release": "node scripts/release.mjs"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "ke.govconnect.taifamail",
+    "productName": "Taifa Mail",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "GovConnectKenya",
+        "repo": "taifa-mail-desktop"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/branding/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": {
+        "teamId": "YAD95QLFD7"
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/branding/icon.ico",
+      "artifactName": "TaifaMail-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Network;Email",
+      "maintainer": "RCFI <support@govconnect.ke>"
+    }
+  }
+}

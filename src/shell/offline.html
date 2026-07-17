@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Shown by main only when the document itself fails to load (real transport
+      failures: ERR_CONNECTION_REFUSED, ERR_NAME_NOT_RESOLVED,
+      ERR_INTERNET_DISCONNECTED). HTTP error responses never reach here, since
+      Electron renders those bodies, so the webmail's own branded "updating"
+      page still shows during a deploy.
+
+      This page must work with ZERO network. That is the entire point of it, so
+      it is one self-contained file: no CDN, no Google Fonts, no external CSS,
+      no images fetched over the wire. Anything you add later that needs a
+      network request will render as a broken box at exactly the moment the user
+      is depending on this page. That includes the logo, which is why it is
+      inline SVG rather than an <img>.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
+    />
+    <title>Taifa Mail</title>
+    <style>
+      /*
+        These are the webmail's own dark-theme tokens, copied from
+        frontend/src/app.css [data-theme="dark"]. Deliberately not invented
+        greys: this page stands in for the app, so it should feel like the same
+        product, not like a browser error page.
+
+        Colour reasoning, since it looks inconsistent and is not:
+        the dark theme brightens the brand green to #1ea94e because the brand
+        green #006900 is too dark to read as text or hairlines against brand
+        black. But a FILLED button carries its own contrast context, so the
+        button keeps the true brand green #006900 with white ink (about 6.8:1,
+        clears AA), and #1ea94e would only manage about 3.1:1 with white. So:
+        brightened green for anything that touches the black background, true
+        brand green for the button fill. Ink on green stays white either way.
+      */
+      :root {
+        --bg: #050100;
+        --surface: #171412;
+        --border: #2f2c28;
+        --text: #f2f1ec;
+        --muted: #8e8b7e;
+        --muted-soft: #5a584f;
+        --accent: #1ea94e;
+        --accent-deep: #006900;
+        --accent-hover: #007d00;
+        --danger: #ff7a5e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        /* A single soft bloom behind the mark, so the page has some depth and
+           does not read as a flat void. Subtle on purpose. */
+        background-image: radial-gradient(
+          110% 70% at 50% 0%,
+          rgba(30, 169, 78, 0.09),
+          transparent 62%
+        );
+        color: var(--muted);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 40px 32px;
+        /* The window is dragged by its chrome, not by this page. */
+        user-select: none;
+      }
+
+      main {
+        width: 100%;
+        max-width: 26rem;
+        text-align: center;
+      }
+
+      .mark {
+        width: 44px;
+        height: 44px;
+        display: block;
+        margin: 0 auto 26px;
+      }
+
+      /* The brand mark is drawn for a light background: its main stroke is
+         brand black, which would be invisible here. Remap each path to the
+         dark-theme token that keeps the same role. */
+      .m-green {
+        fill: var(--accent);
+      }
+      .m-ink {
+        fill: var(--text);
+      }
+      .m-red {
+        fill: var(--danger);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 25px;
+        line-height: 1.25;
+        font-weight: 600;
+        letter-spacing: -0.021em;
+        color: var(--text);
+      }
+
+      .lede {
+        margin: 0 auto 26px;
+        max-width: 23rem;
+        color: var(--muted);
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 7px 15px 7px 13px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        font-size: 13px;
+        line-height: 1.4;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .dot {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        /* A quiet heartbeat, so a page that is otherwise still reads as working
+           rather than as frozen. */
+        animation: pulse 2s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.25;
+        }
+      }
+
+      .attempt {
+        margin: 10px 0 0;
+        min-height: 1.2em; /* reserve the line so the button never jumps */
+        font-size: 12.5px;
+        color: var(--muted-soft);
+      }
+
+      .actions {
+        margin-top: 26px;
+      }
+
+      button {
+        font: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        color: #ffffff;
+        background: var(--accent-deep);
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        padding: 9px 20px;
+        cursor: pointer;
+        transition: background 120ms ease;
+      }
+
+      button:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      .footnote {
+        margin: 30px 0 0;
+        font-size: 12px;
+        letter-spacing: 0.01em;
+        color: var(--muted-soft);
+        /* The brand uses a mono face for addresses and identifiers. JetBrains
+           Mono cannot be fetched offline, so defer to the system mono stack. */
+        font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <svg class="mark" viewBox="108 111 287 282" role="img" aria-label="Taifa Mail">
+        <g transform="matrix(0.05, 0, 0, -0.05, -53.054414, 565.858782)" stroke="none">
+          <path
+            class="m-green"
+            d="M5640 8948 c-946 -121 -1677 -625 -2051 -1415 -49 -103 -89 -193 -89 -199 0 -6 70 58 156 143 802 793 2117 890 3201 237 408 -246 634 -262 953 -70 241 145 247 167 94 360 -521 653 -1462 1046 -2264 944z"
+          />
+          <path
+            class="m-ink"
+            d="M7970 7387 c-151 -122 -1075 -802 -1633 -1203 -494 -354 -386 -382 -1281 338 -722 581 -799 628 -1036 626 -959 -6 -871 -1776 138 -2786 429 -429 975 -713 1488 -773 l104 -12 -135 84 c-414 258 -794 720 -1017 1239 -271 628 -320 1329 -95 1356 64 8 153 -54 725 -502 771 -603 673 -627 1771 424 571 547 936 959 1113 1257 67 112 48 106 -142 -48z"
+          />
+          <path
+            class="m-red"
+            d="M8247 7183 c-16 -1122 -789 -2261 -1943 -2861 -375 -195 -446 -297 -353 -504 206 -458 1319 -10 1956 787 544 681 723 1711 443 2549 -97 291 -100 291 -103 29z"
+          />
+        </g>
+        <ellipse class="m-green" cx="372.707" cy="162.096" rx="16.02" ry="16.02" />
+      </svg>
+
+      <h1>Can't reach Taifa Mail</h1>
+      <p class="lede">
+        Your messages are safe on the server. Taifa Mail will keep trying to
+        reconnect on its own.
+      </p>
+
+      <p class="status" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <!--
+          The ticking number is aria-hidden and the live region carries a coarser
+          sentence that only changes between attempts. A polite live region
+          updated once a second would queue sixty announcements a minute and talk
+          over everything else on the page.
+        -->
+        <span id="countdown-text" aria-hidden="true">Trying again shortly</span>
+        <span class="visually-hidden" id="countdown-sr">Trying to reconnect automatically.</span>
+      </p>
+      <p class="attempt" id="attempt"></p>
+
+      <div class="actions">
+        <button type="button" id="retry">Try again now</button>
+      </div>
+
+      <p class="footnote">mail.govconnect.ke</p>
+    </main>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var textEl = document.getElementById('countdown-text');
+        var srEl = document.getElementById('countdown-sr');
+        var attemptEl = document.getElementById('attempt');
+        var retryEl = document.getElementById('retry');
+
+        // The bridge only exists on file:// pages, and only when the preload
+        // ran. If it is missing (a packaging mistake, a preload that threw), the
+        // page must still render calmly instead of throwing on load.
+        var shell = window.taifaShell;
+
+        var deadline = null; // ms timestamp of the next automatic retry
+        var timer = null;
+
+        function plural(n, word) {
+          return n + ' ' + word + (n === 1 ? '' : 's');
+        }
+
+        function render() {
+          if (deadline === null) {
+            textEl.textContent = 'Trying again shortly';
+            return;
+          }
+          var left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+          if (left <= 0) {
+            textEl.textContent = 'Trying again now';
+            return;
+          }
+          textEl.textContent = 'Trying again in ' + plural(left, 'second');
+        }
+
+        function stop() {
+          if (timer !== null) {
+            clearInterval(timer);
+            timer = null;
+          }
+        }
+
+        function tick() {
+          render();
+          if (deadline !== null && deadline - Date.now() <= 0) stop();
+        }
+
+        function start() {
+          stop();
+          render();
+          timer = setInterval(tick, 1000);
+        }
+
+        function onState(state) {
+          if (!state) return;
+
+          var seconds = Number(state.nextRetryInSeconds);
+          if (isFinite(seconds) && seconds >= 0) {
+            deadline = Date.now() + seconds * 1000;
+            start();
+          } else {
+            deadline = null;
+            stop();
+            render();
+          }
+
+          var attempt = Number(state.attempt);
+          if (isFinite(attempt) && attempt > 0) {
+            attemptEl.textContent = plural(attempt, 'attempt') + ' so far';
+            // Announced once per attempt rather than once per second.
+            srEl.textContent =
+              'Reconnection ' + plural(attempt, 'attempt') + ' so far. Trying again automatically.';
+          } else {
+            attemptEl.textContent = '';
+          }
+        }
+
+        if (shell && typeof shell.onState === 'function') {
+          // The unsubscribe is kept so a reload of this page cannot leave a
+          // listener behind on the channel.
+          var unsubscribe = shell.onState(onState);
+          window.addEventListener('beforeunload', function () {
+            stop();
+            if (typeof unsubscribe === 'function') unsubscribe();
+          });
+        }
+
+        if (shell && typeof shell.retry === 'function') {
+          retryEl.addEventListener('click', function () {
+            deadline = null;
+            stop();
+            textEl.textContent = 'Trying again now';
+            shell.retry();
+          });
+        } else {
+          // Without the bridge there is genuinely nothing this button can do, so
+          // say so quietly rather than lying with a control that no-ops.
+          retryEl.disabled = true;
+          retryEl.setAttribute('aria-disabled', 'true');
+          attemptEl.textContent = 'Taifa Mail will keep trying automatically';
+        }
+
+        render();
+      })();
+    </script>
+  </body>
+</html>
