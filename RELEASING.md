@@ -58,9 +58,183 @@ where any user could read it back out.
 
 3. The tag triggers `.github/workflows/release.yml`, which:
    - builds and packages the app on macOS (x64 + arm64), Windows and Linux,
+   - renders the release body from `changelog.json` (`scripts/release-notes.mjs`),
    - uploads the installers, blockmaps and `latest*.yml` to the GitHub Release.
 
 That is it. Installed copies pick up the update on their next check.
+
+### Bump arguments
+
+`scripts/release.mjs` takes an optional bump argument:
+
+```bash
+node scripts/release.mjs               # release changelog.json[0] as written
+node scripts/release.mjs patch         # changelog.json[0] must be a patch bump
+node scripts/release.mjs minor         # ... a minor bump
+node scripts/release.mjs major         # ... a major bump
+node scripts/release.mjs 0.4.2         # ... exactly 0.4.2
+npm run release -- minor               # same thing through npm
+```
+
+The argument is a **check, not an instruction**. It computes what the next
+version should be (bumping from `package.json`) and then requires
+`changelog.json[0].version` to agree. If they disagree the script stops and
+tells you both numbers: it will not rewrite the changelog for you. The version
+and the notes at `changelog.json[0]` are one unit, written together by a human
+for one specific release. A script that silently changed the version would
+leave the bullets describing a release that no longer exists, and nothing
+downstream would ever notice.
+
+`make release` passes no argument, which is the "changelog.json[0] as written"
+path. That is still the normal way to release.
+
+Two more behaviours worth knowing:
+
+- **`patch` walks forward past taken tags.** If `package.json` says `0.2.0` but
+  `v0.2.1` is already tagged (a release cut from another clone, a release commit
+  that never landed), `patch` resolves to `v0.2.2` rather than failing. The next
+  free patch number is always the right answer. This does **not** apply to
+  `minor`, `major` or an explicit version: those collide loudly, because
+  skipping one would mean inventing a version nobody asked for.
+- **Explicit versions never auto-skip.** `node scripts/release.mjs 0.4.2` fails
+  if `v0.4.2` exists. You asked for a specific number; you get it or an error.
+
+The script also refuses to run from a dirty working tree (it commits only
+`changelog.json` and `package.json`, so anything else you have open would be
+left behind by the tag), and refuses to run from a branch other than `main`.
+Pass `--allow-any-branch` to override the branch check. There is no override for
+the dirty check.
+
+### The changelog gate
+
+For a **minor or major** release, the script prints the changelog entry and asks
+you to confirm it describes this version:
+
+```
+  v0.3.0  (minor release, up from 0.2.0)  2026-08-01
+  Search that actually finds things.
+    added    Full-text search across every folder.
+    fixed    Attachments no longer vanish from drafts.
+
+Do those notes describe v0.3.0? [y/N]
+```
+
+Anything but `y` aborts before anything is committed, tagged or pushed. The
+mistake this catches is a real one and it is silent: a new version number over
+last release's bullets, shipped straight to the download page.
+
+If stdin is not a terminal the script **fails** rather than skipping the
+question. A piped or scripted run must never be able to tag a minor or major
+release whose notes nobody has read. There is no `--yes` flag on purpose: a flag
+that skips the gate ends up in a script, and then there is no gate.
+
+Patch releases are not gated. The question is keyed on the size of the version
+step, not on how you invoked the script, so `node scripts/release.mjs 0.3.0`
+from `0.2.0` asks it too.
+
+## `changelog.json` is a data contract, not prose
+
+Three things read this file now:
+
+1. **The GitHub release body.** CI runs `scripts/release-notes.mjs` and feeds the
+   result to the release action as `body_path`.
+2. **The govconnect.ke/desktop download page**, which renders the top entry.
+3. **/desktop/changelog**, which renders all of them.
+
+So it is an API with three consumers, not a text file you jot notes in. Which
+means:
+
+- **Keep the shape.** `version`, `date` (real ISO `YYYY-MM-DD`), `tag`, `major`,
+  `summary`, `added`, `improved`, `fixed`. `scripts/release.mjs` validates all of
+  it before tagging: a bad date, an empty summary, or an entry with no bullets in
+  any of the three groups is refused. That is not pedantry, those cases render as
+  a blank card on the download page.
+- **Bullets are short and user-facing.** "Fixed crash on launch", not "Resolved
+  null pointer in BrowserWindow handler". The reader is someone who wants to know
+  whether to click Update, not someone reading our diff.
+- **`summary` is one sentence** and carries the release on its own. It is the
+  first line of the release body and the only line the download page shows.
+- **Never edit a shipped entry's `version` or `date`.** Past entries are history
+  that three pages already render. Fix a wrong bullet if you must; do not
+  renumber.
+
+## Fixing a bad release
+
+First, the mental model, because `provider: github` has no feed file to revert.
+The updater asks GitHub for this repo's **latest release** and reads `latest.yml`
+/ `latest-mac.yml` from that release's assets. That is the entire feed. Whatever
+GitHub currently calls "Latest" is what every installed copy sees on its next
+check. There is no pointer file to edit and nothing to sync.
+
+Two consequences that decide what you should actually do:
+
+- **Removing a release does not roll anyone back.** electron-updater will not
+  downgrade (`allowDowngrade` is off, and we do not set it). Everyone already on
+  the bad version stays on the bad version. Pulling the release only stops it
+  spreading to people who have not updated yet.
+- **The fix that reaches those users is a new version.** A higher number is the
+  only thing the updater will act on.
+
+So the default answer is: **ship a patch, do not delete anything.**
+
+```bash
+# changelog.json gets a new entry at the top, honestly describing the fix:
+#   { "version": "0.2.1", ..., "fixed": ["Fixed a crash on launch."] }
+node scripts/release.mjs patch
+```
+
+That is the whole procedure for a bug, and it is what you want in almost every
+case. Users on the bad build get the fix, users on the old build skip straight
+past it, and the history stays true.
+
+### When to pull the release as well
+
+Only when the build is actively harmful and has not spread widely: it destroys
+data, it will not launch at all, or it has a security problem. Pulling it stops
+new downloads and stops the update offer while you build the patch. Do this
+first, then ship the patch anyway.
+
+```bash
+# Preferred: demote it. The artifacts stay put for diagnosis, but GitHub stops
+# calling it Latest, which is exactly what the updater asks for.
+gh release edit v0.2.0 --prerelease
+
+# Confirm what the feed now serves (gh release view with no tag = the latest):
+gh release view --json tagName,isPrerelease
+```
+
+Demoting to a pre-release is enough because the updater resolves the latest
+**non-prerelease** release. (This holds only while we leave `allowPrerelease`
+off. If that ever changes, demoting stops hiding anything and you have to
+delete.) GitHub should promote the previous release to Latest automatically;
+check with the command above, and if it did not, set it explicitly:
+
+```bash
+gh release edit v0.1.9 --latest
+```
+
+If you want it gone entirely, tag included:
+
+```bash
+gh release delete v0.2.0 --cleanup-tag --yes
+git fetch --prune --prune-tags origin      # drop the local tag too
+```
+
+Deleting takes the installers with it, so anyone mid-download gets a 404, and
+the sha512 that already-updated copies verified against is gone. That is fine as
+long as you understand it is a removal, not an undo.
+
+### Do not reuse the version number
+
+Whatever you do, do not delete `v0.2.0` and re-tag a fixed `v0.2.0`. Everyone who
+already installed the bad 0.2.0 is on 0.2.0, the updater compares versions and
+finds nothing newer, and they are stranded on the broken build permanently. The
+sha512 in the feed will also no longer match the binary they hold. Burn the
+number and ship 0.2.1.
+
+`scripts/release.mjs` will not let you reuse a number anyway: it fails if the tag
+exists, and after `--cleanup-tag` plus a prune it would happily tag it again, so
+this one is on you.
 
 ## Load-bearing details, please do not tidy these away
 

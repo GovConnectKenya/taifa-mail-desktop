@@ -89,11 +89,34 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # The release body comes from changelog.json, not from GitHub's default
+      # auto-generated notes: that default is a list of commit subjects, which
+      # is not what a user should be reading in the update dialog.
+      #
+      # ONE leg writes it, not all three. All three legs upload to the SAME
+      # release, but action-gh-release only overwrites the body when the run
+      # actually passes one (it falls back to the existing body otherwise), so
+      # the mac and Windows legs cannot blank out what Linux wrote. Having all
+      # three render identical Markdown and race to PATCH the same field would
+      # be three writes to do one job, with the result depending on who finishes
+      # last. Linux is the leg to pick: it is the cheapest runner, it needs no
+      # signing secrets, and it already has Node set up.
+      - name: Render the release notes from changelog.json
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node scripts/release-notes.mjs "$VERSION" > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
       # We build with --publish never and upload explicitly: electron-builder's
       # own publisher races across the three runners and can clobber latest*.yml.
       - name: Publish installers to the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Empty on the other two legs, which leaves the existing body alone.
+          # RELEASE_NOTES.md only exists on the leg that rendered it, and a
+          # body_path pointing at a missing file would fail the step.
+          body_path: ${{ matrix.os == 'ubuntu-latest' && 'RELEASE_NOTES.md' || '' }}
           files: |
             release/*.dmg
             release/*.zip
