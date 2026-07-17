@@ -1,7 +1,7 @@
 {
   "name": "taifa-mail-desktop",
   "productName": "Taifa Mail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Taifa Mail desktop: a thin Electron shell around the Taifa Mail webmail at mail.govconnect.ke.",
   "main": "src/main.js",
   "author": "RCFI",

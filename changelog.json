@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.1.1",
+    "date": "2026-07-17",
+    "tag": "Latest",
+    "major": false,
+    "summary": "Fixes automatic updates on macOS and Linux, and adds one-line install commands.",
+    "added": [
+      "Install from a terminal: one command sets Taifa Mail up on macOS, Windows or Linux and picks the right build for your machine."
+    ],
+    "improved": [],
+    "fixed": [
+      "Automatic updates on macOS and Linux. The app would find a new version and then fail to download it, so it could never update itself. Windows was not affected."
+    ]
+  },
+  {
     "version": "0.1.0",
     "date": "2026-07-17",
     "tag": "First release",
