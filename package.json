@@ -8,7 +8,7 @@
   "homepage": "https://mail.govconnect.ke",
   "license": "UNLICENSED",
   "private": true,
-  "//": "Three things in the build key below are load-bearing and must not be tidied away: the 'zip' mac target (electron-updater cannot update from a .dmg), the hardcoded notarize.teamId literal (electron-builder does not interpolate ${env.APPLE_TEAM_ID} there), and the entitlements plist (copied verbatim, required by the hardened runtime). See RELEASING.md before changing any of them.",
+  "//": "Four things in the build key below are load-bearing and must not be tidied away: the top-level 'artifactName' (productName has a space, and a space breaks auto-update: see RELEASING.md), the 'zip' mac target (electron-updater cannot update from a .dmg), the hardcoded notarize.teamId literal (electron-builder does not interpolate ${env.APPLE_TEAM_ID} there), and the entitlements plist (copied verbatim, required by the hardened runtime). See RELEASING.md before changing any of them.",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
@@ -26,6 +26,7 @@
   "build": {
     "appId": "ke.govconnect.taifamail",
     "productName": "Taifa Mail",
+    "artifactName": "TaifaMail-${version}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },

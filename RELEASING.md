@@ -241,6 +241,46 @@ this one is on you.
 Each of these looks like clutter and is not. All three are real bugs that were
 paid for once already.
 
+### 0. `artifactName` has no space in it, and that is the whole point
+
+`build.artifactName` is `TaifaMail-${version}-${arch}.${ext}`. It exists because
+`productName` is "Taifa Mail", with a space, and a space in an artifact name
+silently breaks auto-update on macOS and Linux.
+
+Three components disagree about what a space becomes:
+
+- electron-builder names the file `Taifa Mail-0.1.0-arm64.dmg`,
+- it writes `Taifa-Mail-0.1.0-arm64.dmg` (hyphens) into `latest-mac.yml`,
+- GitHub stores the release asset as `Taifa.Mail-0.1.0-arm64.dmg` (dots).
+
+electron-updater reads the name out of the yml and fetches it from the release,
+so it asks for the hyphen name, gets a 404, and the update never installs. This
+shipped in v0.1.0 and was fixed in v0.1.1:
+
+```
+Taifa-Mail-0.1.0-arm64-mac.zip   (what the feed said)      -> 404
+Taifa.Mail-0.1.0-arm64-mac.zip   (what was on the release) -> 200
+```
+
+Nothing fails loudly. CI is green, the release page looks right, the app reports
+"up to date" or downloads nothing, and only a user who never gets an update ever
+notices. Windows was unaffected the whole time, purely because `win.artifactName`
+already had no space in it.
+
+So: **keep every artifact name free of spaces.** If you change `productName`, or
+add a target, check that the name in `latest*.yml` matches the asset on the
+release before you trust the release. One command:
+
+```bash
+R=GovConnectKenya/taifa-mail-desktop
+curl -sL "https://github.com/$R/releases/latest/download/latest-mac.yml" | grep -E "^ +- url:|^path:"
+# then confirm one of them actually resolves:
+curl -sIL "https://github.com/$R/releases/latest/download/<name-from-above>" -o /dev/null -w '%{http_code}\n'
+```
+
+200 means the feed and the release agree. 404 means auto-update is broken for
+every installed copy.
+
 ### 1. `zip` in the mac targets
 
 `build.mac.target` is `["dmg", "zip"]`. The `.dmg` is what people download; the
