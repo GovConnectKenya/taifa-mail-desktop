@@ -21,6 +21,7 @@ const {
   ipcMain,
   nativeImage,
   powerMonitor,
+  screen,
   session,
   shell,
 } = require('electron');
@@ -28,13 +29,23 @@ const {
 const { APP_URL } = require('./config');
 const { harden, installSessionHandlers } = require('./security');
 const windowState = require('./window-state');
-const { initUpdater, checkManual, getStatus } = require('./updater');
+const { initUpdater, checkManual, getStatus, quitAndInstallNow } = require('./updater');
 
 const PARTITION = 'persist:taifamail';
 
 let win = null;
 let tray = null;
+let trayWin = null;
 let isQuitting = false;
+// Unread count, parsed from the webmail's document title (see the
+// page-title-updated handler). Drives the tray tooltip, the dock badge and the
+// popover's inbox badge. 0 until the webmail puts a count in its title.
+let unreadCount = 0;
+
+// The tray popover's fixed size. Deliberately compact: it is a menu-bar widget,
+// not a second window.
+const TRAY_W = 320;
+const TRAY_H = 316;
 
 // Offline retry state. Reset every time we successfully load the app.
 let retryTimer = null;
@@ -174,6 +185,23 @@ function createWindow() {
     }
   });
 
+  // Unread count from the document title. The webmail sets its tab title to
+  // "Taifa Mail (3)" style; parse the number out of it and drive the tray
+  // tooltip, the dock badge and the popover from one source. This needs no
+  // bridge to the remote page: the title is a public property of the WebContents.
+  // Until the webmail puts a count in the title it simply reads 0, which is
+  // correct rather than a guess.
+  win.webContents.on('page-title-updated', (_e, title) => {
+    const m = /\((\d+)\)/.exec(title || '');
+    const n = m ? Math.min(parseInt(m[1], 10), 9999) : 0;
+    if (n === unreadCount) return;
+    unreadCount = n;
+    if (process.platform === 'darwin') app.dock.setBadge(n ? String(n) : '');
+    else if (typeof app.setBadgeCount === 'function') app.setBadgeCount(n);
+    if (tray && !tray.isDestroyed()) tray.setToolTip(unreadTooltip(''));
+    pushTrayState();
+  });
+
   // Keep the app alive in the tray. A mail client that quits when you close the
   // window cannot notify you of mail.
   win.on('close', (e) => {
@@ -199,19 +227,30 @@ function showWindow() {
   win.focus();
 }
 
+// The updater's onState callback: keep the tooltip and the (live) popover in
+// step with download progress. The right-click menu is built on demand, so
+// there is nothing to rebuild here.
 function updateStatusLabel() {
-  if (!tray || tray.isDestroyed()) return;
-  const s = getStatus();
-  let suffix = '';
-  if (s.state === 'downloading') suffix = ` (update ${s.percent || 0}%)`;
-  else if (s.state === 'ready') suffix = ' (update ready, restart to apply)';
-  else if (s.state === 'error') suffix = ' (update check failed)';
-  tray.setToolTip(`Taifa Mail${suffix}`);
-  buildTrayMenu();
+  if (tray && !tray.isDestroyed()) {
+    const s = getStatus();
+    let suffix = '';
+    if (s.state === 'downloading') suffix = ` (update ${s.percent || 0}%)`;
+    else if (s.state === 'ready') suffix = ' (update ready, restart to apply)';
+    else if (s.state === 'error') suffix = ' (update check failed)';
+    tray.setToolTip(unreadTooltip(suffix));
+  }
+  pushTrayState();
 }
 
+function unreadTooltip(suffix) {
+  const base = unreadCount > 0 ? `Taifa Mail (${unreadCount} unread)` : 'Taifa Mail';
+  return base + (suffix || '');
+}
+
+// The classic right-click menu, built fresh each time so its update label
+// reflects the current state. Returned (not set as a persistent context menu)
+// so a left click can drive the popover instead.
 function buildTrayMenu() {
-  if (!tray || tray.isDestroyed()) return;
   const s = getStatus();
   const updateLabel =
     s.state === 'ready'
@@ -220,25 +259,129 @@ function buildTrayMenu() {
         ? `Downloading update ${s.percent || 0}%`
         : 'Check for Updates...';
 
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Open Taifa Mail', click: showWindow },
-      { type: 'separator' },
-      {
-        label: updateLabel,
-        enabled: s.state !== 'downloading',
-        click: () => checkManual(),
+  return Menu.buildFromTemplate([
+    { label: 'Open Taifa Mail', click: showWindow },
+    { type: 'separator' },
+    {
+      label: updateLabel,
+      enabled: s.state !== 'downloading',
+      click: () => (s.state === 'ready' ? quitAndInstallNow() : checkManual()),
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit Taifa Mail',
+      click: () => {
+        isQuitting = true;
+        app.quit();
       },
-      { type: 'separator' },
-      {
-        label: 'Quit Taifa Mail',
-        click: () => {
-          isQuitting = true;
-          app.quit();
-        },
-      },
-    ])
-  );
+    },
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Tray popover
+//
+// A frameless, transparent local window (src/tray/popover.html) shown under the
+// tray icon on a left click, hidden on blur. It is a file:// page, so it gets
+// the taifaShell bridge (the remote webmail never does), and every button is a
+// no-argument call that main services below. The classic right-click Menu stays
+// as a fallback.
+// ---------------------------------------------------------------------------
+
+// The one payload the popover renders from. Pushed on every update-state change
+// and every time the popover is shown, so it never opens showing stale info.
+function pushTrayState() {
+  if (!trayWin || trayWin.isDestroyed()) return;
+  const s = getStatus();
+  trayWin.webContents.send('tray:state', {
+    update: { state: s.state, percent: s.percent, version: s.version },
+    unread: unreadCount,
+  });
+}
+
+function createTrayWindow() {
+  trayWin = new BrowserWindow({
+    width: TRAY_W,
+    height: TRAY_H,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  trayWin.loadFile(path.join(__dirname, 'tray', 'popover.html'));
+  // Dismiss on click-away, the expected behaviour for a menu-bar widget.
+  trayWin.on('blur', () => {
+    if (trayWin && !trayWin.isDestroyed()) trayWin.hide();
+  });
+  // Never actually close it: hide and keep it warm so the next click is instant.
+  trayWin.on('close', (e) => {
+    if (isQuitting) return;
+    e.preventDefault();
+    trayWin.hide();
+  });
+}
+
+function toggleTrayPopover() {
+  if (!trayWin || trayWin.isDestroyed()) createTrayWindow();
+  if (trayWin.isVisible()) {
+    trayWin.hide();
+    return;
+  }
+  // Position centred under the tray icon, clamped so it never runs off-screen.
+  try {
+    const tb = tray.getBounds();
+    const area = screen.getDisplayNearestPoint({ x: tb.x, y: tb.y }).workArea;
+    let x = Math.round(tb.x + tb.width / 2 - TRAY_W / 2);
+    x = Math.max(area.x + 6, Math.min(x, area.x + area.width - TRAY_W - 6));
+    // On macOS the tray sits at the top, so drop the popover just below it. On
+    // Windows/Linux the tray is usually at the bottom, so anchor to the work
+    // area top edge instead of running the popover off the bottom of the screen.
+    const y =
+      process.platform === 'darwin'
+        ? Math.round(tb.y + tb.height + 4)
+        : Math.round(area.y + 6);
+    trayWin.setPosition(x, y, false);
+  } catch (_) {
+    // A bad bounds read must not stop the popover opening; it just opens where
+    // it last was.
+  }
+  pushTrayState();
+  trayWin.show();
+  trayWin.focus();
+}
+
+// -- popover actions (each wired to a tray:* IPC channel in the ready block) --
+
+function hideTrayPopover() {
+  if (trayWin && !trayWin.isDestroyed() && trayWin.isVisible()) trayWin.hide();
+}
+
+// Show the window on the app, optionally navigating it there first. Used by the
+// popover's Open Inbox / New Message / Settings, which each want the window
+// forward and on a specific URL.
+function showAppAt(url) {
+  hideTrayPopover();
+  if (!win || win.isDestroyed()) {
+    createWindow();
+  }
+  if (url) {
+    showingOffline = false;
+    win.loadURL(url);
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }
 
 function createTray() {
@@ -253,11 +396,15 @@ function createTray() {
 
   tray = new Tray(image);
   tray.setToolTip('Taifa Mail');
-  buildTrayMenu();
-  // Windows and Linux users expect a left click to open the app. On macOS a
-  // left click opens the context menu, which Tray does for us.
-  tray.on('click', () => {
-    if (process.platform !== 'darwin') showWindow();
+  createTrayWindow();
+
+  // Left click opens the popover widget; right click shows the classic menu as
+  // a fallback (and the only affordance on platforms where popover positioning
+  // is unreliable).
+  tray.on('click', toggleTrayPopover);
+  tray.on('right-click', () => {
+    hideTrayPopover();
+    tray.popUpContextMenu(buildTrayMenu());
   });
 }
 
@@ -324,6 +471,19 @@ app.whenReady().then(() => {
   ipcMain.on('shell:retry', () => {
     retryAttempt = 0;
     loadApp();
+  });
+
+  // Tray popover actions. Each is a fixed channel from our own file:// popover;
+  // main owns the URLs and decides the action. APP_URL already ends in '/', so
+  // append bare query/path segments.
+  ipcMain.on('tray:open-inbox', () => showAppAt(APP_URL));
+  ipcMain.on('tray:new-message', () => showAppAt(`${APP_URL}?compose=1`));
+  ipcMain.on('tray:open-settings', () => showAppAt(`${APP_URL}settings`));
+  ipcMain.on('tray:check-updates', () => checkManual());
+  ipcMain.on('tray:restart-update', () => quitAndInstallNow());
+  ipcMain.on('tray:quit', () => {
+    isQuitting = true;
+    app.quit();
   });
 
   app.on('activate', () => showWindow());

@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The menu-bar / tray popover. A frameless, transparent local window that
+      main positions under the tray icon and hides on blur (see main.js). It is
+      a file:// page, so it gets the taifaShell bridge (the remote webmail never
+      does); every action here is a no-argument call that main services and
+      decides. No network: this must paint instantly when the icon is clicked,
+      so like the offline page it is one self-contained file with no external
+      request of any kind.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:;"
+    />
+    <title>Taifa Mail</title>
+    <style>
+      /* The webmail's own dark-theme tokens (frontend/src/app.css
+         [data-theme="dark"]), so the popover reads as the same product. */
+      :root {
+        --bg: #171412; /* surface: the panel sits on the dark menu bar */
+        --bg-2: #23201d;
+        --border: #2f2c28;
+        --text: #f2f1ec;
+        --muted: #8e8b7e;
+        --muted-soft: #5a584f;
+        --accent: #1ea94e;
+        --accent-deep: #006900;
+        --accent-hover: #23c059;
+        --danger: #ff7a5e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        /* The window itself is transparent; the panel below draws the popover.
+           Keep the body clear so the rounded corners are real, not faked over
+           an opaque rectangle. */
+        background: transparent;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+        cursor: default;
+      }
+
+      .panel {
+        margin: 8px;
+        height: calc(100% - 16px);
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow:
+          0 12px 32px rgba(0, 0, 0, 0.45),
+          0 2px 8px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+      }
+
+      /* Header: mark + wordmark, and a status dot on the right. */
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 16px 12px;
+      }
+      .mark {
+        width: 22px;
+        height: 22px;
+        flex: none;
+      }
+      .m-green {
+        fill: var(--accent);
+      }
+      .m-ink {
+        fill: var(--text);
+      }
+      .m-red {
+        fill: var(--danger);
+      }
+      .word {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .dot {
+        margin-left: auto;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 0 3px rgba(30, 169, 78, 0.16);
+      }
+
+      .sep {
+        height: 1px;
+        background: var(--border);
+        margin: 0 12px;
+      }
+
+      /* The primary action: open the inbox. Big, with an unread count. */
+      .inbox {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 10px 12px;
+        padding: 13px 14px;
+        border: 1px solid var(--border);
+        border-radius: 11px;
+        background: var(--bg-2);
+        color: var(--text);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition:
+          border-color 0.14s ease,
+          background 0.14s ease;
+      }
+      .inbox:hover {
+        border-color: var(--accent);
+        background: #26221e;
+      }
+      .inbox .ic {
+        display: inline-flex;
+        color: var(--accent);
+        flex: none;
+      }
+      .inbox .txt {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .inbox .t1 {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .inbox .t2 {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .badge {
+        margin-left: auto;
+        min-width: 22px;
+        height: 22px;
+        padding: 0 7px;
+        display: none; /* shown only when unread > 0 */
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        background: var(--accent-deep);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .badge.show {
+        display: inline-flex;
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+        margin: 0 12px 10px;
+      }
+      .btn {
+        flex: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+          background 0.14s ease,
+          border-color 0.14s ease;
+      }
+      .btn:hover {
+        background: var(--bg-2);
+        border-color: var(--muted-soft);
+      }
+      .btn .ic {
+        display: inline-flex;
+        color: var(--muted);
+      }
+
+      /* Update row: reflects the auto-updater state, with a contextual action. */
+      .upd {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 12px 8px;
+        padding: 11px 14px;
+        border-radius: 10px;
+        background: var(--bg-2);
+        font-size: 12.5px;
+        color: var(--muted);
+        min-height: 42px;
+      }
+      .upd .u-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--muted-soft);
+        flex: none;
+      }
+      .upd.ready .u-dot,
+      .upd.available .u-dot {
+        background: var(--accent);
+      }
+      .upd.error .u-dot {
+        background: var(--danger);
+      }
+      .upd .u-txt {
+        flex: 1;
+        color: var(--text);
+      }
+      .upd .u-sub {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .u-act {
+        flex: none;
+        padding: 6px 12px;
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        background: var(--accent-deep);
+        color: #fff;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        display: none;
+        transition: background 0.14s ease;
+      }
+      .u-act:hover {
+        background: var(--accent-hover);
+      }
+      .u-act.show {
+        display: inline-flex;
+      }
+      /* A ghost variant for the idle "Check" action. */
+      .u-act.ghost {
+        background: transparent;
+        border-color: var(--border);
+        color: var(--text);
+        font-weight: 500;
+      }
+      .u-act.ghost:hover {
+        background: var(--bg);
+        border-color: var(--muted-soft);
+      }
+
+      .foot {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 10px;
+        border-top: 1px solid var(--border);
+      }
+      .link {
+        padding: 7px 10px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 12.5px;
+        cursor: pointer;
+        transition:
+          color 0.14s ease,
+          background 0.14s ease;
+      }
+      .link:hover {
+        color: var(--text);
+        background: var(--bg-2);
+      }
+      .link.quit:hover {
+        color: var(--danger);
+      }
+      .link.right {
+        margin-left: auto;
+      }
+
+      button:focus-visible,
+      .inbox:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <div class="head">
+        <svg class="mark" viewBox="108 111 287 282" aria-hidden="true">
+          <g transform="matrix(0.05, 0, 0, -0.05, -53.054414, 565.858782)" stroke="none">
+            <path
+              class="m-green"
+              d="M5640 8948 c-946 -121 -1677 -625 -2051 -1415 -49 -103 -89 -193 -89 -199 0 -6 70 58 156 143 802 793 2117 890 3201 237 408 -246 634 -262 953 -70 241 145 247 167 94 360 -521 653 -1462 1046 -2264 944z"
+            />
+            <path
+              class="m-ink"
+              d="M7970 7387 c-151 -122 -1075 -802 -1633 -1203 -494 -354 -386 -382 -1281 338 -722 581 -799 628 -1036 626 -959 -6 -871 -1776 138 -2786 429 -429 975 -713 1488 -773 l104 -12 -135 84 c-414 258 -794 720 -1017 1239 -271 628 -320 1329 -95 1356 64 8 153 -54 725 -502 771 -603 673 -627 1771 424 571 547 936 959 1113 1257 67 112 48 106 -142 -48z"
+            />
+            <path
+              class="m-red"
+              d="M8247 7183 c-16 -1122 -789 -2261 -1943 -2861 -375 -195 -446 -297 -353 -504 206 -458 1319 -10 1956 787 544 681 723 1711 443 2549 -97 291 -100 291 -103 29z"
+            />
+          </g>
+          <ellipse class="m-green" cx="372.707" cy="162.096" rx="16.02" ry="16.02" />
+        </svg>
+        <span class="word">Taifa Mail</span>
+        <span class="dot" aria-hidden="true"></span>
+      </div>
+
+      <div class="sep"></div>
+
+      <button class="inbox" id="inbox" type="button">
+        <span class="ic" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z" />
+            <path d="M3 7l9 6 9-6" />
+          </svg>
+        </span>
+        <span class="txt">
+          <span class="t1">Open Inbox</span>
+          <span class="t2" id="inbox-sub">Your mailbox</span>
+        </span>
+        <span class="badge" id="unread" aria-hidden="true">0</span>
+      </button>
+
+      <div class="row">
+        <button class="btn" id="compose" type="button">
+          <span class="ic" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </span>
+          New Message
+        </button>
+        <button class="btn" id="settings" type="button">
+          <span class="ic" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+            </svg>
+          </span>
+          Settings
+        </button>
+      </div>
+
+      <div class="upd" id="upd">
+        <span class="u-dot" aria-hidden="true"></span>
+        <span class="u-txt" id="upd-txt" role="status" aria-live="polite">Taifa Mail is up to date</span>
+        <button class="u-act ghost" id="upd-act" type="button">Check</button>
+      </div>
+
+      <div class="foot">
+        <button class="link" id="open-full" type="button">Open Taifa Mail</button>
+        <button class="link quit right" id="quit" type="button">Quit</button>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        'use strict';
+        var s = window.taifaShell;
+
+        var unreadEl = document.getElementById('unread');
+        var inboxSub = document.getElementById('inbox-sub');
+        var upd = document.getElementById('upd');
+        var updTxt = document.getElementById('upd-txt');
+        var updAct = document.getElementById('upd-act');
+
+        // Wire the buttons. Each is a no-argument call into main. Guard on the
+        // bridge so the page still renders if it is somehow missing (a packaging
+        // slip), rather than throwing on load.
+        function on(id, fn) {
+          var el = document.getElementById(id);
+          if (el && s) el.addEventListener('click', fn);
+          else if (el) el.disabled = true;
+        }
+        on('inbox', function () { s.openInbox(); });
+        on('open-full', function () { s.openInbox(); });
+        on('compose', function () { s.newMessage(); });
+        on('settings', function () { s.openSettings(); });
+        on('quit', function () { s.quit(); });
+
+        // The update action is contextual: restart when an update is ready,
+        // otherwise check for one.
+        var updState = 'idle';
+        if (updAct && s) {
+          updAct.addEventListener('click', function () {
+            if (updState === 'ready') s.restartUpdate();
+            else s.checkUpdates();
+          });
+        }
+
+        function renderUnread(n) {
+          n = Number(n) || 0;
+          if (n > 0) {
+            unreadEl.textContent = n > 99 ? '99+' : String(n);
+            unreadEl.classList.add('show');
+            inboxSub.textContent = n === 1 ? '1 unread message' : n + ' unread messages';
+          } else {
+            unreadEl.classList.remove('show');
+            inboxSub.textContent = 'Your mailbox';
+          }
+        }
+
+        function renderUpdate(u) {
+          u = u || {};
+          updState = u.state || 'idle';
+          upd.className = 'upd ' + updState;
+          updAct.className = 'u-act';
+          var pct = Math.max(0, Math.min(100, Math.round(u.percent || 0)));
+          switch (updState) {
+            case 'checking':
+              updTxt.innerHTML = 'Checking for updates';
+              break;
+            case 'available':
+              updTxt.innerHTML = 'Downloading an update' + (u.version ? ' <span class="u-sub">v' + u.version + '</span>' : '');
+              break;
+            case 'downloading':
+              updTxt.innerHTML = 'Downloading an update <span class="u-sub">' + pct + '%</span>';
+              break;
+            case 'ready':
+              updTxt.innerHTML = 'Update ready' + (u.version ? ' <span class="u-sub">v' + u.version + '</span>' : '');
+              updAct.textContent = 'Restart';
+              updAct.className = 'u-act show';
+              break;
+            case 'error':
+              updTxt.textContent = 'Update check failed';
+              updAct.textContent = 'Retry';
+              updAct.className = 'u-act ghost show';
+              break;
+            case 'dev':
+              updTxt.textContent = 'Updates run in the installed app';
+              break;
+            default:
+              updTxt.textContent = 'Taifa Mail is up to date';
+              updAct.textContent = 'Check';
+              updAct.className = 'u-act ghost show';
+          }
+        }
+
+        renderUnread(0);
+        renderUpdate({ state: 'idle' });
+
+        // Main pushes { update, unread } on 'tray:state' whenever either
+        // changes and every time the popover is shown.
+        if (s && typeof s.onTrayState === 'function') {
+          var off = s.onTrayState(function (st) {
+            if (!st) return;
+            if ('unread' in st) renderUnread(st.unread);
+            if (st.update) renderUpdate(st.update);
+          });
+          window.addEventListener('beforeunload', function () {
+            if (typeof off === 'function') off();
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

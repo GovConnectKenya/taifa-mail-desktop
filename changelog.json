@@ -1,8 +1,23 @@
 [
   {
+    "version": "0.1.2",
+    "date": "2026-07-18",
+    "tag": "Latest",
+    "major": false,
+    "summary": "A menu-bar popover with your inbox, quick compose, and update status one click from the tray.",
+    "added": [
+      "A tray popover: click the menu-bar icon for Open Inbox, New Message, Settings, and the current update status, without opening the full window.",
+      "An unread count on the dock icon and the tray, read from the mailbox."
+    ],
+    "improved": [
+      "The tray icon left-click now opens the popover; the plain menu is still there on right-click."
+    ],
+    "fixed": []
+  },
+  {
     "version": "0.1.1",
     "date": "2026-07-17",
-    "tag": "Latest",
+    "tag": "Previous",
     "major": false,
     "summary": "Fixes automatic updates on macOS and Linux, and adds one-line install commands.",
     "added": [

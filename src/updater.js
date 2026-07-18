@@ -192,4 +192,14 @@ function getStatus() {
   return lastStatus;
 }
 
-module.exports = { initUpdater, checkManual, getStatus };
+// Install a downloaded update right now, for the tray popover's "Restart to
+// update" action (the dialog path in wireEvents is the other way in). A no-op
+// unless an update is actually downloaded and ready, so calling it in any other
+// state does nothing rather than misbehaving.
+function quitAndInstallNow() {
+  if (!app.isPackaged || lastStatus.state !== 'ready') return;
+  // setImmediate so the caller's IPC handler returns first, same as the dialog.
+  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+}
+
+module.exports = { initUpdater, checkManual, getStatus, quitAndInstallNow };

@@ -27,6 +27,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 if (location.protocol === 'file:') {
   contextBridge.exposeInMainWorld('taifaShell', {
+    // -- offline page ----------------------------------------------------
     // Safe even in principle: it takes no arguments, and all it can do is ask
     // main to load the webmail again. Called a thousand times by a hostile
     // caller, the worst outcome is a reload, which is what the button next to
@@ -37,6 +38,24 @@ if (location.protocol === 'file:') {
     // Returns an unsubscribe function so a page that re-subscribes (or lives a
     // long time) does not pile up listeners on the channel.
     onState: (cb) => sub('shell:state', cb),
+
+    // -- tray popover ----------------------------------------------------
+    // Every method here is the same safety class as retry(): no arguments, a
+    // single fixed channel, and only ever reachable from OUR own file:// pages
+    // (the remote webmail never gets this bridge, see the header). Main owns
+    // every URL and decides every action, so the worst a caller can do is
+    // trigger a navigation or a quit, which the popover's own buttons already
+    // do. No caller-supplied channel, no arguments to validate.
+    openInbox: () => ipcRenderer.send('tray:open-inbox'),
+    newMessage: () => ipcRenderer.send('tray:new-message'),
+    openSettings: () => ipcRenderer.send('tray:open-settings'),
+    checkUpdates: () => ipcRenderer.send('tray:check-updates'),
+    restartUpdate: () => ipcRenderer.send('tray:restart-update'),
+    quit: () => ipcRenderer.send('tray:quit'),
+
+    // Pushed by main on 'tray:state' as { update: {state, percent, version},
+    // unread }. Same unsubscribe contract as onState.
+    onTrayState: (cb) => sub('tray:state', cb),
   });
 }
 
