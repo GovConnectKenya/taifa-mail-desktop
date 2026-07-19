@@ -2,7 +2,7 @@
   {
     "version": "0.1.2",
     "date": "2026-07-18",
-    "tag": "Latest",
+    "tag": "",
     "major": false,
     "summary": "A menu-bar popover with your inbox, quick compose, and update status one click from the tray.",
     "added": [
@@ -17,7 +17,7 @@
   {
     "version": "0.1.1",
     "date": "2026-07-17",
-    "tag": "Previous",
+    "tag": "",
     "major": false,
     "summary": "Fixes automatic updates on macOS and Linux, and adds one-line install commands.",
     "added": [

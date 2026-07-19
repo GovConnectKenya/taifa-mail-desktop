@@ -35,7 +35,7 @@ where any user could read it back out.
    {
      "version": "0.2.0",
      "date": "2026-08-01",
-     "tag": "Latest",
+     "tag": "",
      "major": false,
      "summary": "One line on what this release is about.",
      "added": ["New thing", "Another new thing"],
@@ -45,6 +45,22 @@ where any user could read it back out.
    ```
 
    Do not add a `files` array, the build fills in sha512 and sizes.
+
+   **Do not write a status word into `tag`.** "Latest", "Unreleased" and the
+   like are NOT stored here: the download and changelog pages derive them from
+   the GitHub releases API (the single source of truth for what is actually
+   published), so a hand-typed status can never drift from reality. This is
+   exactly the trap that once showed "not published yet" for every platform
+   while a perfectly good release sat on GitHub: `changelog.json[0]` was a
+   version whose notes were written before `make release` cut its tag, and the
+   page trusted the entry's `"tag": "Latest"` instead of the release feed.
+
+   It is normal and expected for the top entry to sit here for a while before
+   you release it: you write the notes, they merge, and only later do you run
+   `make release`. During that window the download page keeps offering the
+   latest ACTUALLY-published release, and the changelog page shows the new entry
+   with an "Unreleased" badge. `tag` is now only for a genuine free-text label
+   on a specific release ("First release", "Security"); leave it "" otherwise.
 
 2. Run:
 
