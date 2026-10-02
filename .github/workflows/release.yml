@@ -48,7 +48,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # Cache the downloaded Electron binaries and electron-builder's tooling.
@@ -68,6 +68,12 @@ jobs:
         # electron-builder's other-platform optional deps, which makes npm ci
         # fail the strict lock check on every runner.
         run: npm install --no-audit --no-fund
+
+      - name: Security and OIDC regression tests
+        run: npm test
+
+      - name: Dependency security audit
+        run: npm audit --audit-level=high
 
       # macOS: build + code-sign + notarize. The signing env (CSC_LINK etc.) is
       # ONLY set here; passing an empty CSC_LINK to Windows/Linux makes

@@ -31,12 +31,23 @@ const { harden, installSessionHandlers } = require('./security');
 const windowState = require('./window-state');
 const { initUpdater, checkManual, getStatus, quitAndInstallNow } = require('./updater');
 
+const { installWorkforce } = require('./workforce-window');
 const PARTITION = 'persist:taifamail';
+let workforce;
+const pendingCallbacks = [];
+function receiveCallback(raw) {
+  if (typeof raw !== 'string' || raw.length > 4096 || !raw.startsWith('ke.govconnect.taifamail.auth:')) return;
+  if (workforce) void workforce.receive(raw);
+  else if (pendingCallbacks.length < 4) pendingCallbacks.push(raw);
+}
+app.on('open-url', (event, raw) => { event.preventDefault(); receiveCallback(raw); });
 
 let win = null;
 let tray = null;
 let trayWin = null;
 let isQuitting = false;
+let quitCleanupStarted = false;
+let quitCleanupComplete = false;
 // Unread count, parsed from the webmail's document title (see the
 // page-title-updated handler). Drives the tray tooltip, the dock badge and the
 // popover's inbox badge. 0 until the webmail puts a count in its title.
@@ -419,6 +430,10 @@ function createAppMenu() {
   const template = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     { role: 'fileMenu' },
+    { label: 'Identity', submenu: [
+      { label: 'Sign in with Taifa Identity...', click: () => workforce.show() },
+      { label: 'Sign out of Mail and Identity...', click: () => workforce.logout() },
+    ] },
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
@@ -442,13 +457,19 @@ function createAppMenu() {
 
 // Hook every WebContents at creation, including any child or iframe contents,
 // so the navigation lock applies by construction rather than per window.
-app.on('web-contents-created', (_e, wc) => harden(wc));
+app.on('web-contents-created', (_e, wc) => harden(wc, (event, url) => workforce?.intercept(wc, event, url)));
 
-app.on('second-instance', () => showWindow());
+app.on('second-instance', (_event, argv) => {
+  showWindow();
+  for (const arg of argv) receiveCallback(arg);
+});
 
 app.whenReady().then(() => {
   const ses = session.fromPartition(PARTITION);
   installSessionHandlers(ses);
+  workforce = installWorkforce({ session: ses, complete: () => showAppAt(APP_URL), mainContents: () => win?.webContents });
+  if (app.isPackaged) app.setAsDefaultProtocolClient('ke.govconnect.taifamail.auth');
+  for (const arg of [...process.argv, ...pendingCallbacks.splice(0)]) receiveCallback(arg);
   ses.setSpellCheckerLanguages(['en-GB', 'en-US']);
 
   createAppMenu();
@@ -492,6 +513,17 @@ app.whenReady().then(() => {
 // Deliberately a no-op: closing the last window hides to tray, it does not quit.
 app.on('window-all-closed', () => {});
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
+  if (quitCleanupComplete || !workforce) return;
+  event.preventDefault();
+  if (quitCleanupStarted) return;
+  quitCleanupStarted = true;
+  let deadline;
+  const bounded = new Promise(resolve => { deadline = setTimeout(resolve, 20000); });
+  void Promise.race([workforce.cancel().catch(() => {}), bounded]).finally(() => {
+    clearTimeout(deadline);
+    quitCleanupComplete = true;
+    app.quit();
+  });
 });
