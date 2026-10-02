@@ -7,8 +7,8 @@ No production deployment, signed release, or OS handler registration was claimed
 
 ## Observed local checks
 
-- `npm test`: 27 passed, zero failed or skipped. Latest local run completed in
-  2.96 seconds. Real RSA ID tokens and HTTPS, signed issuer/client audience,
+- `npm test`: 28 passed, zero failed or skipped. Latest local run completed in
+  2.87 seconds. Real RSA ID tokens and HTTPS, signed issuer/client audience,
   nonce/state/PKCE, approved actual MFA/recency, one-use callback, bounded paths,
   mailbox/org response validation, precise IPC authority, cancellation races,
   logout ordering and local credential clearing are covered.
@@ -21,7 +21,8 @@ No production deployment, signed release, or OS handler registration was claimed
   the next cookie-authenticated request. Mail in this harness is a test server,
   so this is runtime/protocol seam proof, not actual Mail backend admission.
 - `npm audit --json`: zero vulnerabilities after pinning Electron44.5.1,
-  electron-builder26.15.3, openid-client6.8.8 and a compatible transitive patch.
+  electron-builder26.15.3, its required Windows packaging peer,
+  openid-client6.8.8 and compatible transitive patches.
   The inherited dependency tree initially reported11high and1critical findings.
 - `npm run pack -- --mac --arm64 -c.mac.identity=null -c.mac.notarize=false`:
   passed. The unpacked app's Info.plist declared the exact

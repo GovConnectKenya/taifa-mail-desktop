@@ -19,12 +19,13 @@
     "test:electron": "electron tests/electron-smoke.cjs"
   },
   "dependencies": {
-    "electron-updater": "^6.8.3",
+    "electron-updater": "6.8.9",
     "openid-client": "6.8.8"
   },
   "devDependencies": {
     "electron": "44.5.1",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "electron-builder-squirrel-windows": "26.15.3"
   },
   "build": {
     "appId": "ke.govconnect.taifamail",

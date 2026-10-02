@@ -175,3 +175,12 @@ test('logout failure clears local cookies, reloads renderer and reports unconfir
   assert.equal(s.completed(), 1);
   assert.match(s.states.at(-1).message, /credentials were cleared.*server logout was not confirmed.*central logout is unavailable/);
 });
+test('actual token endpoint rejects a wrong PKCE verifier before Mail exchange', async t => {
+  const p = await fixture(); t.after(() => p.close());
+  const s = setup(p, { flow: { clientLoader: async () => ({ ...p.client, authorizationCodeGrant: (config, url, checks) => p.client.authorizationCodeGrant(config, url, { ...checks, pkceCodeVerifier: p.client.randomPKCECodeVerifier() }) }) } });
+  await s.flow.start(ORG);
+  await s.flow.receive(p.response(s.urls[0]));
+  assert.equal(s.flow.pending, null);
+  assert.deepEqual(s.calls, []);
+  assert.equal(s.states.at(-1).phase, 'error');
+});
