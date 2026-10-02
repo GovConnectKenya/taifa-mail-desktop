@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createServer } from 'node:https';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import * as oidc from 'openid-client';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
@@ -19,6 +19,18 @@ if (!issuer || !username || !password || !logoutPort) throw Error('Disposable co
 const callbacks = [];
 const logoutEvents = [];
 let browser, server;
+const proofFile = process.env.DESKTOP_MAIL_PROOF_FILE;
+function privateProof(path, payload) {
+  if (!proofFile) return;
+  writeFileSync(path, JSON.stringify(payload), { mode: 0o600, flag: 'wx' });
+  chmodSync(path, 0o600);
+}
+async function waitMarker(suffix) {
+  if (!proofFile) return;
+  const deadline = Date.now() + 240000;
+  while (!existsSync(proofFile + suffix) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+  assert(existsSync(proofFile + suffix), 'Actual Mail interoperability marker unavailable');
+}
 const configuration = await oidc.discovery(new URL(issuer), CLIENT_ID, undefined, oidc.None(), { timeout: 5 });
 oidc.enableNonRepudiationChecks(configuration);
 const keys = createRemoteJWKSet(new URL(configuration.serverMetadata().jwks_uri));
@@ -60,10 +72,11 @@ try {
       assert.equal(payload.nonce, undefined);
       assert.equal(typeof payload.events?.['http://schemas.openid.net/event/backchannel-logout'], 'object');
       logoutEvents.push(payload);
+      privateProof(proofFile + '.logout', { issuer, client_id: CLIENT_ID, logout_token: token, claims: payload });
       res.writeHead(200); res.end();
     } catch { res.writeHead(400); res.end(); }
   });
-  await new Promise(resolve => server.listen(logoutPort, '0.0.0.0', resolve));
+  await new Promise(resolve => server.listen(logoutPort, process.env.ACCEPTANCE_BACKCHANNEL_HOST || '127.0.0.1', resolve));
   browser = await chromium.launch(process.env.CI ? {} : { channel: 'chrome' });
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   // Prevent any OS handler invocation. A real provider still issues the exact
@@ -97,20 +110,35 @@ try {
       assert(Number.isSafeInteger(payload.auth_time));
       assert(Math.floor(Date.now() / 1000) - payload.auth_time <= 300);
       accessClaims = payload; exchanges++;
+      if (exchanges === 1 && proofFile) {
+        privateProof(proofFile, { issuer, client_id: CLIENT_ID, audience: 'disposable-mail-api', ca_file: process.env.ACCEPTANCE_TLS_CERT, access_token: token, claims: payload });
+        console.log('Actual MFA proof delivered privately; waiting for real Mail admission');
+        await waitMarker('.admitted');
+      }
     },
     async mailboxes() { return [{ id: ID, address: 'assigned@example.test' }]; },
     async select(id) { assert.equal(id, ID); selected++; },
     async cleanup() {}, async dropLocal() {}, async logout() { localLogout++; },
   };
   const inspectedClient = { ...oidc, async authorizationCodeGrant(...args) {
-    const tokens = await oidc.authorizationCodeGrant(...args);
+    let tokens;
+    try { tokens = await oidc.authorizationCodeGrant(...args); } catch (error) { console.log('Actual standard grant denied:', error.name, error.code || ''); throw error; }
     await assert.rejects(() => jwtVerify(tokens.id_token, keys, { issuer, audience: 'foreign-desktop', algorithms: ['RS256'] }));
     idClaims = tokens.claims();
+    console.log('Actual signed ID claim policy:', JSON.stringify({ acr: idClaims.acr, auth_time_integer: Number.isSafeInteger(idClaims.auth_time), sid_present: typeof idClaims.sid === 'string', sub_present: typeof idClaims.sub === 'string', client_audience_exact: idClaims.aud === CLIENT_ID }));
     return tokens;
   } };
   const flow = new WorkforceFlow({ issuer, mail, openExternal: async url => urls.push(url), notify: update => updates.push(update), complete: () => {}, clientLoader: async () => inspectedClient });
+  console.log('Provider browser ready; enrolling OTP and proving real password-token denial');
+  if (proofFile) assert(!existsSync(proofFile) && !existsSync(proofFile + '.admitted') && !existsSync(proofFile + '.logout') && !existsSync(proofFile + '.retired'), 'Stale interoperability artifacts must be removed by their owner');
   await flow.start(ORG);
-  await page.goto(urls[0]);
+  const enrollmentUrl = new URL(urls[0]);
+  assert.equal(enrollmentUrl.searchParams.get('acr_values'), 'taifa-phishing-resistant taifa-mfa');
+  // Simulate lowering the authorization request before the real provider
+  // authenticates. A valid signed password-only ID token must still be denied
+  // by the unchanged desktop consumer. All PKCE/nonce/state pins stay intact.
+  enrollmentUrl.searchParams.set('acr_values', 'taifa-password');
+  await page.goto(enrollmentUrl.href);
   await page.locator('#username').fill(username);
   await page.locator('#password').fill(password);
   await page.locator('#kc-login').click();
@@ -123,9 +151,39 @@ try {
   let lastCounter = Math.floor(Date.now() / 30000);
   await page.locator('input[name="totp"]').fill(totp(secret));
   await page.locator('#saveTOTPBtn').click();
-  const callback = await waitCallback();
-  assert.equal(await flow.receive(callback.replace(/state=[^&]+/, 'state=wrong')), false);
+  let callback = await waitCallback();
+  console.log('Provider returned exact callback:', new URL(callback).searchParams.has('code') ? 'authorization code' : 'protocol error');
+  const wrongStateCallback = new URL(callback);
+  wrongStateCallback.searchParams.set('state', 'wrong');
+  assert.equal(await flow.receive(wrongStateCallback.href), false);
   assert.equal(exchanges, 0);
+  assert.equal(await flow.receive(callback), true);
+  // The deliberately lowered request attained level1. Merely displaying
+  // OTP enrollment must not override the actual signed password assurance.
+  assert.equal(idClaims.acr, 'taifa-password');
+  assert.equal(flow.pending, null);
+  assert.equal(exchanges, 0, 'OTP enrollment must not be represented as MFA');
+  console.log('Actual lowered password-only request was denied despite OTP enrollment; performing genuine MFA');
+  await flow.start(ORG, true);
+  await page.goto(urls.at(-1));
+  console.log('Actual reauthentication surface:', JSON.stringify({ path: new URL(page.url()).pathname, password_present: await page.locator('#password').count(), otp_present: await page.locator('#otp').count(), intercepted_callbacks: callbacks.length }));
+  await page.locator('#password, #otp').first().waitFor({ timeout: 20000 });
+  if (await page.locator('#password').isVisible()) {
+    if (await page.locator('#username').count() && await page.locator('#username').isEditable()) await page.locator('#username').fill(username);
+    await page.locator('#password').fill(password);
+    await page.locator('#kc-login').click();
+  } else {
+    // A genuine recently attained level1 may be reused by the provider's
+    // conditional flow. Level2 still requires an actual OTP execution.
+    assert(Math.floor(Date.now() / 1000) - idClaims.auth_time <= 300);
+  }
+  await page.locator('#otp').waitFor({ timeout: 20000 });
+  assert.equal(callbacks.length, 0, 'Password alone cannot attain MFA');
+  while (Math.floor(Date.now() / 30000) === lastCounter) await new Promise(resolve => setTimeout(resolve, 200));
+  lastCounter = Math.floor(Date.now() / 30000);
+  await page.locator('#otp').fill(totp(secret));
+  await page.locator('#kc-login').click();
+  callback = await waitCallback();
   assert.equal(await flow.receive(callback), true);
   assert.equal(flow.pending?.phase, 'selection');
   assert.equal(exchanges, 1);
@@ -141,6 +199,7 @@ try {
   assert.equal(flow.pending, null);
   assert.equal(await flow.receive(callback), false);
 
+  console.log('Actual initial MFA admission passed; testing nonce and PKCE denial');
   const wrongNonce = await authorization();
   await page.goto(wrongNonce.url.href);
   const invalidNonceCallback = new URL(await waitCallback());
@@ -150,13 +209,41 @@ try {
   const invalidVerifierCallback = new URL(await waitCallback());
   await assert.rejects(() => oidc.authorizationCodeGrant(configuration, invalidVerifierCallback, { pkceCodeVerifier: oidc.randomPKCECodeVerifier(), expectedState: wrongPKCE.state, expectedNonce: wrongPKCE.nonce, maxAge: 300 }), error => error instanceof oidc.ResponseBodyError && error.error === 'invalid_grant');
 
-  // Actual requested recent authentication must obtain a new password plus OTP.
+  console.log('Actual MFA and protocol negatives passed; testing provider and signed backchannel logout');
+  await flow.logout();
+  assert.equal(localLogout, 1);
+  await page.goto(urls.at(-1));
+  const confirm = page.getByRole('button', { name: /sign\s*out|log\s*out/i });
+  console.log('Actual provider logout confirmation controls:', await confirm.count());
+  if (await confirm.count()) await confirm.first().click();
+  const logoutCallback = await waitCallback();
+  assert.equal(await flow.receive(logoutCallback), true);
+  const deadline = Date.now() + 20000;
+  while (!logoutEvents.length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+  assert(logoutEvents.length, 'Real signed desktop backchannel logout was not delivered');
+  assert.equal(logoutEvents[0].sid, accessClaims.sid);
+  await waitMarker('.retired');
+  const afterLogout = await authorization({ prompt: 'none' });
+  await page.goto(afterLogout.url.href);
+  assert.equal(new URL(await waitCallback()).searchParams.get('error'), 'login_required');
+  // OIDC auth_time has whole-second precision. A max_age=0 request in the
+  // same second legitimately reuses a just-attained session. Advance beyond
+  // that signed timestamp before testing forced recent authentication.
+  while (Math.floor(Date.now() / 1000) <= idClaims.auth_time + 1) await new Promise(resolve => setTimeout(resolve, 100));
+  console.log('Provider negatives passed; requiring recent actual MFA and an OTP execution');
   await flow.start(ORG, true);
   await page.goto(urls.at(-1));
-  await page.locator('#password').waitFor({ timeout: 20000 });
-  if (await page.locator('#username').count() && await page.locator('#username').isEditable()) await page.locator('#username').fill(username);
-  await page.locator('#password').fill(password);
-  await page.locator('#kc-login').click();
+  console.log('Actual reauthentication surface:', JSON.stringify({ path: new URL(page.url()).pathname, password_present: await page.locator('#password').count(), otp_present: await page.locator('#otp').count(), intercepted_callbacks: callbacks.length }));
+  await page.locator('#password, #otp').first().waitFor({ timeout: 20000 });
+  if (await page.locator('#password').isVisible()) {
+    if (await page.locator('#username').count() && await page.locator('#username').isEditable()) await page.locator('#username').fill(username);
+    await page.locator('#password').fill(password);
+    await page.locator('#kc-login').click();
+  } else {
+    // A genuine recently attained level1 may be reused by the provider's
+    // conditional flow. Level2 still requires an actual OTP execution.
+    assert(Math.floor(Date.now() / 1000) - idClaims.auth_time <= 300);
+  }
   await page.locator('#otp').waitFor({ timeout: 20000 });
   assert.equal(callbacks.length, 0, 'Password alone cannot finish requested MFA');
   const valid = new Set([-2, -1, 0, 1, 2].map(offset => totp(secret, offset)));
@@ -175,23 +262,11 @@ try {
   assert.equal(idClaims.acr, 'taifa-mfa');
   await flow.select(ID);
 
-  await flow.logout();
-  assert.equal(localLogout, 1);
-  await page.goto(urls.at(-1));
-  const confirm = page.getByRole('button', { name: /sign out|log out/i });
-  if (await confirm.count()) await confirm.first().click();
-  const logoutCallback = await waitCallback();
-  assert.equal(await flow.receive(logoutCallback), true);
-  const deadline = Date.now() + 20000;
-  while (!logoutEvents.length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
-  assert(logoutEvents.length, 'Real signed desktop backchannel logout was not delivered');
-  assert.equal(logoutEvents[0].sid, accessClaims.sid);
-  const afterLogout = await authorization({ prompt: 'none' });
-  await page.goto(afterLogout.url.href);
-  assert.equal(new URL(await waitCallback()).searchParams.get('error'), 'login_required');
-  console.log('PASS real Keycloak26.8 reviewed native registration, actual password+TOTP/LoA MFA, desktop PKCE/state/nonce/issuer/client+Mail audiences, wrong nonce/state/verifier/audience denial, recent MFA, main proof lifecycle, provider logout and signed desktop backchannel. Private URI redirect captured; actual OS handler and real Mail admission remain separate gates.');
+  console.log('PASS real Keycloak26.8 reviewed native registration, actual password+TOTP/LoA MFA, desktop PKCE/state/nonce/issuer/client+Mail audiences, wrong nonce/state/verifier/audience denial, recent MFA, main proof lifecycle, provider logout and signed desktop backchannel. Private URI redirect captured; actual OS callback dispatch and signed device builds remain separate gates.');
+  if (proofFile) console.log('PASS coordinated actual Mail/PostgreSQL admission and signed provider backchannel retirement markers. Electron/runtime and actual OS dispatch are separately evidenced.');
 } catch (error) {
   console.error('FAIL real desktop provider acceptance:', error.name);
+  console.error('Source call sites:', error.stack?.split('\n').filter(row => /^\s+at /.test(row)).slice(0, 3).join('\n'));
   process.exitCode = 1;
 } finally {
   await browser?.close();

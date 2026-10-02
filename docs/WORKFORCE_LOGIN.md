@@ -98,14 +98,24 @@ BrowserWindow and HTTPS session cookie jar through OIDC, native exchange and
 explicit mailbox selection. Its disposable mock Mail endpoint is not a claim of
 production integration. `npm run pack` validates the local unpacked build.
 
-Before deployment, reviewers must prove the reviewed native client and Mail API
-configuration against the real staged provider/backend, actual system-browser
-return into each signed OS installer, MFA/passkey behavior, signed backchannel
-logout, lifecycle departure and provider-outage behavior. The reviewed Identity native client
-registration profile requires its independent governance and real-provider
-validation before production registration can be declared complete. The minimal
-repository realm does not itself define a production MFA/LoA assurance flow. OS handler registration and
-signed/notarized installer delivery require their own device/release proof.
+The complete official Keycloak26.8 distribution test and coordinated actual
+Mail/PostgreSQL test now pass. They exercise genuine TOTP/LoA MFA, password-only
+downgrade denial, public native registration/replay, state/nonce/PKCE/audiences,
+real signed provider logout, assigned-mailbox admission and durable session/refresh
+retirement. See [the separate evidence](evidence/desktop-workforce-validation.md)
+for provenance, reproduction and exact limits. They capture the private provider
+redirect and use a separately mounted backend test; they do not prove installed
+OS dispatch or a single device connecting every component.
+
+Before deployment, reviewers must prove approved production client/assurance
+configuration, actual system-browser return into each signed OS installer,
+hardware passkeys, sponsored pilot, lifecycle departure and provider-outage
+behavior. The minimal repository realm does not itself define a production
+MFA/LoA assurance flow. The fixture maps each requested assurance name to a
+separate level. Its higher phishing-resistant level has no authenticator and
+cannot be attained. Production assurance policy requires its own review.
+OS handler registration and signed/notarized installer delivery require device
+and release proof.
 
 Primary protocol and API references:
 
