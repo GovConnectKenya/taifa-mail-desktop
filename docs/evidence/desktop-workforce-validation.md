@@ -7,8 +7,8 @@ No production deployment, signed release, or OS handler registration was claimed
 
 ## Observed local checks
 
-- `npm test`: 28 passed, zero failed or skipped. Latest local run completed in
-  2.87 seconds. Real RSA ID tokens and HTTPS, signed issuer/client audience,
+- `npm test`: 29 passed, zero failed or skipped. Latest local run completed in
+  2.98 seconds. Real RSA ID tokens and HTTPS, signed issuer/client audience,
   nonce/state/PKCE, approved actual MFA/recency, one-use callback, bounded paths,
   mailbox/org response validation, precise IPC authority, cancellation races,
   logout ordering and local credential clearing are covered.
@@ -30,6 +30,11 @@ No production deployment, signed release, or OS handler registration was claimed
   notarized. It does not prove installed OS callback delivery. The generated
   unpacked directory was removed during the disk-space incident after preserving
   build and protocol evidence. Product source was not removed.
+- Full production builder26 configuration schema validation passed, including
+  the boolean notarization policy and retained updater/signing requirements.
+  Actual Linux CI also passed the Electron runtime test with the SUID sandbox
+  configured. Earlier failed CI runs exposed and corrected portable lock peer
+  resolution and the legacy builder24 notarization configuration type.
 - `git diff --check`: passed.
 
 Evidence artifacts: `/tmp/desktop-workforce-node-tests.log`,

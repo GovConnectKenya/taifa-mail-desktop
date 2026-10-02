@@ -17,7 +17,9 @@ In the GitHub repo settings (Settings, Secrets and variables, Actions) add:
 - `APPLE_ID`: the Apple ID used for notarization.
 - `APPLE_APP_SPECIFIC_PASSWORD`: an app-specific password for that Apple ID,
   generated at appleid.apple.com. Not the account password.
-- `APPLE_TEAM_ID`: the Apple Developer team ID.
+
+The reviewed Apple Developer team ID `YAD95QLFD7` is a literal in the macOS
+release step, which passes it as `APPLE_TEAM_ID`. It is not a secret.
 
 `GITHUB_TOKEN` is provided automatically and is used to upload the installers.
 There is no `RELEASE_PUBLISH_SECRET`: that belonged to the website sync job,
@@ -304,15 +306,15 @@ every installed copy.
 apply an update from a `.dmg`. Drop `zip` and the app still builds, still ships,
 and silently never updates itself on macOS.
 
-### 2. `notarize.teamId` is a hardcoded literal
+### 2. The notarization team is a hardcoded literal
 
-`build.mac.notarize.teamId` is the literal `YAD95QLFD7`, not
-`${env.APPLE_TEAM_ID}`. electron-builder does **not** interpolate `${env.*}` in
-that field: it passes the string through verbatim and notarization fails against
-a team ID that does not exist. This was diagnosed and fixed once in spaci
-(commit 651be23). The `APPLE_TEAM_ID` secret is still set in CI because the
-notarization tooling reads it from the environment as well, so the two must
-agree. If the team ID ever changes, change it in **both** places.
+Builder26 uses `build.mac.notarize: true` and reads the team from
+`APPLE_TEAM_ID`. The macOS release step supplies the reviewed literal
+`YAD95QLFD7`; it does not interpolate a template inside a builder configuration
+field. Builder24's former `{teamId: ...}` object is invalid in builder26.
+If the approved team changes, update that workflow literal through review.
+Required certificate and notarization credentials are validated before the
+release build so missing secrets cannot silently skip notarization.
 
 ### 3. The macOS signing env is only on the macOS build step
 
@@ -326,9 +328,9 @@ reintroduces that (spaci commit 20e978e).
 
 Two more things in the workflow that look redundant and are not:
 
-- `npm install --no-audit --no-fund`, not `npm ci`. The lockfile is resolved on
-  one OS and omits electron-builder's other-platform optional dependencies, so
-  `npm ci` fails its strict lock check on every runner.
+- Release installation still uses `npm install --no-audit --no-fund`.
+  Security CI proves the lockfile with `npm ci`. The builder's Windows packaging
+  peer is explicitly pinned so npm10 and npm11 resolve the same required graph.
 - `--publish never` followed by an explicit `softprops/action-gh-release@v2`
   upload. electron-builder's own publisher races across the three runners and
   can clobber `latest*.yml`.

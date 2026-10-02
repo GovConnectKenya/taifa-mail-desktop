@@ -75,6 +75,21 @@ jobs:
       - name: Dependency security audit
         run: npm audit --audit-level=high
 
+      - name: Validate macOS release credentials
+        if: matrix.os == 'macos-latest'
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERTS }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          for credential in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD; do
+            if [ -z "${!credential}" ]; then
+              echo "::error::Missing required macOS release credential: $credential"
+              exit 1
+            fi
+          done
+
       # macOS: build + code-sign + notarize. The signing env (CSC_LINK etc.) is
       # ONLY set here; passing an empty CSC_LINK to Windows/Linux makes
       # electron-builder treat it as a bad cert path, so they get their own step.
@@ -87,7 +102,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_TEAM_ID: YAD95QLFD7
 
       - name: Build and package (Windows / Linux)
         if: matrix.os != 'macos-latest'
