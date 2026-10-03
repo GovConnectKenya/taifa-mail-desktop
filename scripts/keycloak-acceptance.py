@@ -127,7 +127,7 @@ def main():
             authorization = request('/realms/master/protocol/openid-connect/token', urllib.parse.urlencode({'client_id': 'admin-cli', 'grant_type': 'password', 'username': 'disposable-operator', 'password': passwords['admin']}).encode())
             admin_token = authorization['access_token']
             admin_path = '/admin/realms/taifa-staff-dev'
-            os.environ.update({'OIDC_ISSUER': issuer, 'MAIL_NATIVE_PROJECT_ID': 'disposable-mail-project', 'MAIL_NATIVE_ENVIRONMENT': 'development', 'MAIL_NATIVE_API_AUDIENCE': 'disposable-mail-api', 'MAIL_NATIVE_BACKCHANNEL_LOGOUT_URL': f'https://{"localhost" if native else "host.docker.internal"}:{logout_port}/backchannel'})
+            os.environ.update({'IDENTITY_ENV': 'development', 'OIDC_ISSUER': issuer, 'MAIL_NATIVE_PROJECT_ID': 'disposable-mail-project', 'MAIL_NATIVE_ENVIRONMENT': 'development', 'MAIL_NATIVE_API_AUDIENCE': 'disposable-mail-api', 'MAIL_NATIVE_BACKCHANNEL_LOGOUT_URL': f'https://{"localhost" if native else "host.docker.internal"}:{logout_port}/backchannel'})
             spec = registration('disposable-mail-project', 'disposable-desktop-environment', 'development', 'native-mail-desktop', ['ke.govconnect.taifamail.auth:/oauth2redirect'], SCOPES, issuer)
             # Exercise the reviewed registration adapter against actual REST.
             # Only this disposable fixture uses the bootstrapped operator token;
