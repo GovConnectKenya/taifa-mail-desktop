@@ -11,11 +11,12 @@ function openExternally(url) {
 }
 
 // ---------- per-WebContents hardening ----------
-function harden(wc) {
+function harden(wc, intercept = () => false) {
   // A same-origin navigation keeps our preload, so anything leaving the webmail
   // origin must never load in this window: it would inherit the bridge. Send it
   // to the real browser instead, where it gets an address bar and no preload.
   const guardNav = (e, url) => {
+    if (intercept(e, url)) return;
     if (isAllowedNav(url)) return;
     e.preventDefault();
     openExternally(url);

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<title>Taifa Identity</title><link rel="stylesheet" href="workforce.css"></head>
+<body><main><p class="eyebrow">TAIFA MAIL</p><h1>Institution sign-in</h1>
+<p>Central sign-in opens in your system browser. Your Institution decides which mailboxes you can use.</p>
+<form id="start"><label for="org">Mail workspace ID</label><input id="org" autocomplete="off" required placeholder="Workspace UUID">
+<label class="check"><input id="recent" type="checkbox"> Authenticate again for a recent session</label><button id="submit">Continue in browser</button></form>
+<p id="status" role="status" aria-live="polite"></p><div id="mailboxes"></div>
+<button id="cancel" class="secondary">Cancel sign-in</button><button id="logout" class="secondary">Sign out of Mail and central Identity</button>
+</main><script src="workforce.js"></script></body></html>

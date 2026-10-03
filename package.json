@@ -8,20 +8,24 @@
   "homepage": "https://mail.govconnect.ke",
   "license": "UNLICENSED",
   "private": true,
-  "//": "Four things in the build key below are load-bearing and must not be tidied away: the top-level 'artifactName' (productName has a space, and a space breaks auto-update: see RELEASING.md), the 'zip' mac target (electron-updater cannot update from a .dmg), the hardcoded notarize.teamId literal (electron-builder does not interpolate ${env.APPLE_TEAM_ID} there), and the entitlements plist (copied verbatim, required by the hardened runtime). See RELEASING.md before changing any of them.",
+  "//": "Four build rules remain load-bearing: artifactName without spaces, the mac zip target for auto-updates, notarization enabled with the approved team ID literal in the release workflow (builder26 reads APPLE_TEAM_ID), and the hardened-runtime entitlements plist. See RELEASING.md before changing them.",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
     "dist": "electron-builder --publish never",
-    "pack": "electron-builder --dir",
-    "release": "node scripts/release.mjs"
+    "pack": "electron-builder --dir --publish never",
+    "release": "node scripts/release.mjs",
+    "test": "node --test tests/*.test.js",
+    "test:electron": "electron tests/electron-smoke.cjs"
   },
   "dependencies": {
-    "electron-updater": "^6.8.3"
+    "electron-updater": "6.8.9",
+    "openid-client": "6.8.8"
   },
   "devDependencies": {
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "electron-builder-squirrel-windows": "26.15.3"
   },
   "build": {
     "appId": "ke.govconnect.taifamail",
@@ -52,9 +56,7 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": {
-        "teamId": "YAD95QLFD7"
-      }
+      "notarize": true
     },
     "win": {
       "target": [
@@ -75,6 +77,14 @@
       ],
       "category": "Network;Email",
       "maintainer": "RCFI <support@govconnect.ke>"
-    }
+    },
+    "protocols": [
+      {
+        "name": "Taifa Mail central authentication",
+        "schemes": [
+          "ke.govconnect.taifamail.auth"
+        ]
+      }
+    ]
   }
 }
