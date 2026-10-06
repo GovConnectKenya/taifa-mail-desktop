@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shlex
 import shutil
@@ -17,11 +18,16 @@ VERSION = '26.8.0'
 ARCHIVE_URL = f'https://github.com/keycloak/keycloak/releases/download/{VERSION}/keycloak-{VERSION}.tar.gz'
 SHA256 = '9e41da899f838a58cd510fc98ed4f7cadc715aed5683e42aca20a0c9a2a3980a'
 METADATA_URL = f'https://api.github.com/repos/keycloak/keycloak/releases/tags/{VERSION}'
+FIXTURE_DATABASE_PATTERN = re.compile(r'^identity_desktop_acceptance_[0-9a-f]{12}_test$')
+
+
+def validate_database_name(database):
+    if not isinstance(database, str) or not FIXTURE_DATABASE_PATTERN.fullmatch(database):
+        raise RuntimeError('Only isolated fixture database names are allowed')
 
 
 def record_database(database):
-    if not database.startswith('desktop_identity_acceptance_'):
-        raise RuntimeError('Only this fixture database prefix can be recorded')
+    validate_database_name(database)
     path = Path('/tmp/desktop-workforce-retained-databases.jsonl')
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
     descriptor = os.open(path, flags, 0o600)
@@ -34,11 +40,12 @@ class NativeProvider:
     def __init__(self, files, identity, base, port, admin_password):
         self.files, self.identity = files, identity
         self.base, self.port, self.admin_password = base, port, admin_password
-        self.database = 'desktop_identity_acceptance_' + secrets.token_hex(6)
+        self.database = 'identity_desktop_acceptance_' + secrets.token_hex(6) + '_test'
         self.process = self.connection = self.log = None
         self.created = False
 
     def start(self):
+        validate_database_name(self.database)
         import psycopg
         from psycopg import sql
         from psycopg.conninfo import conninfo_to_dict
