@@ -1,12 +1,14 @@
 'use strict';
 
-// Origin policy for the thin shell.
+// Origin policy for the app.
 //
-// This app is a BrowserWindow pointed at the live webmail, not a local bundle,
-// so we attach a preload to code we do not control at runtime. The security
-// model is NOT "mail.govconnect.ke is trusted". It is that a compromise of the
-// web app, or of its npm tree, must not become native code execution. This
-// module is where the boundary is declared; security.js enforces it.
+// The window loads https://mail.govconnect.ke, and src/bundle.js answers its
+// page and asset requests from the webmail build packaged in the app, passing
+// only the backend paths to the network. The security model is unchanged from
+// the thin shell: it is NOT "mail.govconnect.ke is trusted". It is that a
+// compromise of the web app, or of its npm tree, must not become native code
+// execution. This module is where the boundary is declared; security.js
+// enforces it.
 
 // Overridable so the shell can be pointed at a dev server or staging without
 // editing source. Production builds never set it. A trailing slash would make
@@ -51,6 +53,26 @@ const ALLOWED_PERMISSIONS = new Set([
 // our users an email, so this is an allowlist, never a denylist.
 const EXTERNAL_SCHEMES = new Set(['https:', 'http:', 'mailto:']);
 
+// The paths nginx routes to the backend API on mail.govconnect.ke
+// (nginx/mail.govconnect.ke.conf in taifa-mail). bundle.js passes exactly these
+// to the network; every other path on the webmail origin is the bundled app.
+// /ws/ is listed for completeness: websockets are never https requests, so the
+// bundle handler never sees them and they always go straight to the backend.
+const BACKEND_PATH = /^\/(v1|t|auth|oauth|unsubscribe|health|ws)(\/|$)/;
+
+function isBackendPath(pathname) {
+  return BACKEND_PATH.test(pathname);
+}
+
+// The webmail's page background (--color-bg in frontend/src/lib/styles/tokens.css,
+// light and [data-theme='dark']). The window paints this before the webmail
+// does, so a cold start never flashes a different colour.
+const THEME_BG = { light: '#f5f8f6', dark: '#101010' };
+
+// The webmail's own theme preference cookie (theme.svelte.ts / theme-init.js):
+// 'light' | 'dark' | 'system', light when unset.
+const THEME_COOKIE = 'taifa-mail-theme';
+
 // URLs arrive from the network and from email bodies, so they are attacker
 // controlled and frequently not URLs at all. Anything that fails to parse gets
 // no benefit of the doubt.
@@ -75,6 +97,9 @@ module.exports = {
   APP_URL,
   ALLOWED_NAV_ORIGINS,
   ALLOWED_PERMISSIONS,
+  THEME_BG,
+  THEME_COOKIE,
   isAllowedNav,
+  isBackendPath,
   isExternallyOpenable,
 };
