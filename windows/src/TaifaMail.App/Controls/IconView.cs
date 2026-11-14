@@ -2,7 +2,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
+using Shape = Microsoft.UI.Xaml.Shapes.Shape;
+using ShapePath = Microsoft.UI.Xaml.Shapes.Path;
 
 namespace TaifaMail.App.Controls;
 
@@ -12,7 +13,7 @@ namespace TaifaMail.App.Controls;
 /// </summary>
 public sealed class IconView : UserControl
 {
-    private readonly Path _path = new() { StrokeThickness = 1.5, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round, Stretch = Stretch.None };
+    private readonly ShapePath _path = new() { StrokeThickness = 1.5, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round, Stretch = Stretch.None };
     private readonly Viewbox _box = new() { Stretch = Stretch.Uniform };
     private readonly Canvas _canvas = new() { Width = 24, Height = 24 };
 
