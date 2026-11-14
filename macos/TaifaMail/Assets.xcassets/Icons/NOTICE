@@ -1,0 +1,5 @@
+Interface icons in this folder are Iconsax icons (rounded shape, linear variant) taken from the
+project's local icon library. They are used under the Iconsax licence terms (https://iconsax.io).
+Each SVG is vendored unmodified as its own imageset; scripts/vendor-icons.sh lists the exact
+source glyphs. Chevrons only for directional affordances (arrow-down4, arrow-up3, arrow-right4;
+left is the right chevron mirrored because rounded/linear has no arrow-left4).
