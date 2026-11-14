@@ -6,7 +6,9 @@ name: Windows native
 
 on:
   push:
-    branches: [feat/native-windows]
+    branches: [main]
+    paths: ['windows/**', 'docs/native/**', '.github/workflows/windows-native.yml']
+  pull_request:
     paths: ['windows/**', 'docs/native/**', '.github/workflows/windows-native.yml']
   workflow_dispatch:
 
