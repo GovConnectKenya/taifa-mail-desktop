@@ -183,7 +183,7 @@ Every data screen has these states: loading (skeleton), loaded, empty, error, of
 - Reply, Reply all, Forward prefill recipients, subject (Re:, Fwd:), quoted body, `in_reply_to`, `references`, `reply_uid`, `reply_folder`.
 
 ### 8.8 Search
-- Search field in the toolbar (Cmd+F focuses it; Shift+Cmd+F searches all folders). Results use the thread list rows. Scope control: current folder, all mail. Empty result: "No messages match". Loading shows skeleton rows. Cancel with Escape returns to the folder.
+- Search field in the toolbar (Cmd+F focuses it; Shift+Cmd+F searches all folders). Results use the thread list rows. Scope control: current folder, or all folders (client side fan out, see API_CONTRACT 5.2). Empty result: "No messages match". Loading shows skeleton rows. Cancel with Escape returns to the folder.
 
 ### 8.9 Settings
 - Window with a sidebar of panes: General (theme system, light, dark; list density comfortable, compact), Notifications (new mail alerts on or off, Dock badge on or off), Signature (editor, saved through the mailbox blocks API), Auto-reply (enabled, subject, message, mode and schedule), Account (address, institution, quota bar, sign out).
