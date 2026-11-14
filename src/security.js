@@ -1,6 +1,6 @@
 'use strict';
 const { shell } = require('electron');
-const { APP_ORIGIN, ALLOWED_PERMISSIONS, isAllowedNav, isExternallyOpenable } = require('./config');
+const { ALLOWED_PERMISSIONS, isAllowedNav, isExternallyOpenable } = require('./config');
 
 // Hands a URL to the OS, but only if config vouches for the scheme. Every
 // openExternal in this app goes through here: shell.openExternal on an
@@ -68,8 +68,12 @@ function installSessionHandlers(ses) {
     callback(ALLOWED_PERMISSIONS.has(permission));
   });
 
+  // requestingOrigin is compared as a parsed origin, not as a string: Electron
+  // may hand it over as a URL with a trailing slash, and a literal comparison
+  // then denies every check, so Notification.permission reads 'denied' and the
+  // webmail never shows a new-mail notification.
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
-    requestingOrigin === APP_ORIGIN && ALLOWED_PERMISSIONS.has(permission));
+    isAllowedNav(requestingOrigin) && ALLOWED_PERMISSIONS.has(permission));
 
   // No HID, USB, or serial. A mail client has no business enumerating hardware,
   // and this one line keeps a compromised page from trying.
