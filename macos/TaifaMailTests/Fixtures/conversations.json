@@ -1,0 +1,15 @@
+{
+  "folder": "INBOX", "total": 2, "limit": 50, "offset": 0,
+  "items": [
+    {"thread_key": "t1", "count": 3, "unread": true, "uids": [101, 99],
+     "latest": {"uid": 101, "folder": "INBOX", "message_id": "<a1@example.go.ke>", "subject": "Budget review",
+       "from_name": "Amina Wanjiru", "from_addr": "amina@treasury.example.go.ke", "to": ["me@health.example.go.ke"],
+       "date": "2026-11-13T08:15:00+03:00", "seen": false, "flagged": true, "answered": false, "keywords": [], "important": false,
+       "has_attachments": true, "snippet": "Please find the figures", "category": "primary",
+       "auth_level": null, "auth_code": null, "sender_verified": true, "auth_warned": false}},
+    {"thread_key": "t2", "count": 1, "unread": false, "uids": [100],
+     "latest": {"uid": 100, "folder": "INBOX", "subject": "Hello", "from_name": "", "from_addr": "x@example.go.ke",
+       "to": [], "date": "2026-11-12T10:00:00Z", "seen": true, "flagged": false, "answered": false,
+       "has_attachments": false, "snippet": "", "category": "updates", "auth_level": "danger", "auth_code": "dmarc_fail"}}
+  ]
+}

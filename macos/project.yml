@@ -1,0 +1,86 @@
+# Source of truth for TaifaMail.xcodeproj. The generated project is committed so a clean checkout
+# builds with plain xcodebuild; regenerate with `xcodegen generate` (a developer tool, not a dependency).
+name: TaifaMail
+options:
+  bundleIdPrefix: ke.govconnect
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  configs:
+    # Debug keeps ad hoc signing so builds and tests work without any certificate.
+    Debug:
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_IDENTITY: "-"
+      DEVELOPMENT_TEAM: ""
+      ENABLE_HARDENED_RUNTIME: NO
+    # Release is ready for Developer ID signing and notarization (see RELEASING.md); nothing is signed or uploaded here.
+    Release:
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: "Developer ID Application"
+      DEVELOPMENT_TEAM: YAD95QLFD7
+      ENABLE_HARDENED_RUNTIME: YES
+      OTHER_CODE_SIGN_FLAGS: "--timestamp"
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  TaifaMail:
+    type: application
+    platform: macOS
+    sources:
+      - path: TaifaMail
+        excludes: ["TaifaMail.entitlements"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ke.govconnect.TaifaMail
+        PRODUCT_NAME: TaifaMail
+        INFOPLIST_KEY_CFBundleDisplayName: Taifa Mail
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Taifa Mail"
+        CODE_SIGN_ENTITLEMENTS: TaifaMail/TaifaMail.entitlements
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_PREVIEWS: NO
+    scheme:
+      testTargets:
+        - TaifaMailTests
+      gatherCoverageData: false
+  TaifaMailTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: TaifaMailTests
+    dependencies:
+      - target: TaifaMail
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ke.govconnect.TaifaMailTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TaifaMail.app/Contents/MacOS/TaifaMail"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  TaifaMailUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: TaifaMailUITests
+    dependencies:
+      - target: TaifaMail
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ke.govconnect.TaifaMailUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: TaifaMail
+schemes:
+  TaifaMailUI:
+    build:
+      targets:
+        TaifaMail: all
+        TaifaMailUITests: [test]
+    test:
+      targets:
+        - TaifaMailUITests

@@ -1,0 +1,17 @@
+{
+  "messages": [
+    {"uid": 99, "folder": "INBOX", "seen": true, "flagged": false, "answered": false, "from_name": "Amina", "from_addr": "amina@treasury.example.go.ke",
+     "to": ["me@health.example.go.ke"], "cc": [], "subject": "Budget review", "date_ts": 1794900000, "size": 2048, "message_id": "<a0@example.go.ke>",
+     "has_attachments": false, "snippet": "First", "auth_level": null, "auth_code": null, "sender_verified": true, "auth_warned": false, "body": null},
+    {"uid": 101, "folder": "INBOX", "seen": false, "flagged": true, "answered": false, "from_name": "Amina", "from_addr": "amina@treasury.example.go.ke",
+     "to": ["me@health.example.go.ke"], "cc": [], "subject": "Re: Budget review", "date_ts": 1794986400, "message_id": "<a1@example.go.ke>",
+     "has_attachments": true, "snippet": "Second", "sender_verified": true, "auth_warned": false,
+     "body": {"uid": 101, "folder": "INBOX", "subject": "Re: Budget review", "from_name": "Amina", "from_addr": "amina@treasury.example.go.ke",
+       "to": ["me@health.example.go.ke"], "cc": [], "bcc": [], "file_ids": [], "date": "2026-11-13T08:15:00+03:00", "seen": false, "flagged": true,
+       "answered": false, "keywords": [], "important": false, "message_id": "<a1@example.go.ke>", "reply_to": "", "references": "<a0@example.go.ke>",
+       "auth_warning": {"level": "warning", "code": "spf_fail", "title": "Unverified", "message": "SPF failed", "links_disabled": true, "reasons": [{"code": "spf", "label": "SPF failed"}]},
+       "sender_verified": false, "text": "Hello", "html": "<p>Hello</p>",
+       "attachments": [{"part_id": "2", "filename": "a.pdf", "content_type": "application/pdf", "size": 1234}], "date_ts": 1794986400}}
+  ],
+  "source_uidvalidity": 7, "total": 2, "has_more_older": false, "next_before": 0
+}
