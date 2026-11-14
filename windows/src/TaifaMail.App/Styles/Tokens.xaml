@@ -236,7 +236,7 @@
     <Setter Property="Foreground" Value="{ThemeResource TmText3Brush}"/>
   </Style>
 
-  <!-- Controls are 40 high (webmail --control-h); toolbars and dense rows use 32. -->
+  <!-- Controls are 40 high (the webmail control height token); toolbars and dense rows use 32. -->
   <Style x:Key="TmPrimaryButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
     <Setter Property="MinHeight" Value="40"/>
     <Setter Property="CornerRadius" Value="8"/>
