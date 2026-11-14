@@ -138,6 +138,7 @@ public class MailShellViewModelTests
         Assert.False(row.Unread);
         Assert.Equal(1, vm.TotalUnread);
         Assert.Single(vm.OpenMessages);
+        Assert.True(vm.OpenMessages[0].Expanded);
     }
 
     [Fact]
@@ -173,5 +174,52 @@ public class MailShellViewModelTests
         await vm.StartAsync();
         await vm.LoadFolderAsync(vm.Folders.First(f => f.Path == "Sent"));
         Assert.All(vm.Threads, r => Assert.Equal("me@example.test", r.AvatarAddress));
+    }
+}
+
+public class SearchAndCardTests
+{
+    private sealed class SearchMail : IMailApi
+    {
+        public string MailboxId => "m";
+        public List<string> Queries = new();
+        public Task<List<ApiFolder>> FoldersAsync(CancellationToken ct = default) => Task.FromResult(new List<ApiFolder> { new("Inbox", "INBOX", "\\Inbox", 0, 5) });
+        public Task<ApiConversationList> ConversationsAsync(string f, int l = 50, int o = 0, CancellationToken ct = default) =>
+            Task.FromResult(new ApiConversationList(f, 1, l, o, new() { OfflineCacheTests.Thread(1) }));
+        public Task<ApiMailList> SearchAsync(string t, string f = "INBOX", int l = 50, int o = 0, CancellationToken ct = default)
+        {
+            Queries.Add(t);
+            var hit = new ApiMailSummary(9, f, "<9@x>", "Budget", "Ada", "ada@example.test", null, "2026-01-01T10:00:00Z", false, false, false, true, "numbers");
+            return Task.FromResult(new ApiMailList(f, 1, l, o, new() { hit }));
+        }
+        public Task<ApiConversationWindow> ConversationAsync(long u, string f, int l = 20, long? b = null, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<ApiMarkReadResult> MarkThreadReadAsync(long u, string f, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task SetFlagsAsync(long u, string f, bool? s = null, bool? fl = null, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<AvatarBatchResponse> AvatarsAsync(IReadOnlyCollection<string> e, CancellationToken ct = default) => Task.FromResult(new AvatarBatchResponse(new()));
+    }
+
+    [Fact]
+    public async Task Search_shows_results_as_rows_and_empty_query_restores_the_folder()
+    {
+        var mail = new SearchMail();
+        var vm = new MailShellViewModel(mail, "https://mail.example.test");
+        await vm.StartAsync();
+        await vm.SearchAsync("budget");
+        Assert.True(vm.Searching);
+        Assert.Equal("Budget", vm.Threads.Single().Subject);
+        Assert.True(vm.Threads.Single().Unread);
+        await vm.SearchAsync("");
+        Assert.False(vm.Searching);
+        Assert.Equal("t1", vm.Threads.Single().ThreadKey);
+    }
+
+    [Fact]
+    public void Remote_content_is_detected_only_for_network_loads()
+    {
+        MessageCardVm Card(string html) => new(new ApiMailDetail(1, "INBOX", 1, "s", "A", "a@x.test", null, null, "2026-01-01T10:00:00Z", true, false, false, "<1>", null, null, null, html, null), "me@x.test", true);
+        Assert.True(Card("<img src=\"https://t.example/p.gif\">").HasRemoteContent);
+        Assert.True(Card("<div style=\"background:url('http://t.example/b.png')\"></div>").HasRemoteContent);
+        Assert.False(Card("<img src=\"data:image/png;base64,AAAA\"><p>hi</p>").HasRemoteContent);
+        Assert.False(Card("<p>no pictures</p>").HasRemoteContent);
     }
 }

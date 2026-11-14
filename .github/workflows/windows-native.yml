@@ -40,3 +40,92 @@ jobs:
         with:
           name: core-test-results
           path: windows/artifacts/test-results
+
+  build:
+    name: Build Release ${{ matrix.platform }}
+    runs-on: windows-latest
+    needs: core
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            rid: win-x64
+          - platform: ARM64
+            rid: win-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish Release (unsigned, self contained, unpackaged)
+        run: >
+          dotnet publish src/TaifaMail.App/TaifaMail.App.csproj -c Release -r ${{ matrix.rid }}
+          -p:Platform=${{ matrix.platform }} -p:PublishReadyToRun=false --self-contained true -o artifacts/publish-${{ matrix.rid }}
+      - name: Prove preview data is not in Release
+        run: |
+          $dll = Get-ChildItem artifacts/publish-${{ matrix.rid }} -Filter TaifaMail.dll | Select-Object -First 1
+          $bytes = [IO.File]::ReadAllBytes($dll.FullName)
+          $ascii = [Text.Encoding]::ASCII.GetString($bytes)
+          $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
+          $hits = @()
+          foreach ($needle in 'PreviewBoot', 'PreviewData', 'PreviewMail', 'PreviewAuth') { if ($ascii.Contains($needle)) { $hits += $needle } }
+          foreach ($needle in 'TAIFA_PREVIEW_FIXTURE_ONLY_DEBUG', '--preview-data', '--screenshots') { if ($utf16.Contains($needle)) { $hits += $needle } }
+          if ($hits.Count -gt 0) { Write-Error "Preview data found in the Release build: $($hits -join ', ')"; exit 1 }
+          Write-Host "Release assembly $($dll.Name) ($($dll.Length) bytes) contains none of the preview markers."
+      - name: Zip
+        run: Compress-Archive -Path artifacts/publish-${{ matrix.rid }}/* -DestinationPath artifacts/TaifaMail-windows-${{ matrix.rid }}-unsigned.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TaifaMail-windows-${{ matrix.rid }}-unsigned
+          path: windows/artifacts/TaifaMail-windows-${{ matrix.rid }}-unsigned.zip
+          retention-days: 14
+
+  ui-smoke:
+    name: UI smoke and screenshots
+    runs-on: windows-latest
+    needs: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build Debug x64 (the only build that contains preview data)
+        run: dotnet build src/TaifaMail.App/TaifaMail.App.csproj -c Debug -r win-x64 -p:Platform=x64 --self-contained true -o artifacts/debug-x64
+      - name: Prove preview data is in Debug
+        run: |
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path artifacts/debug-x64/TaifaMail.dll))
+          if (-not [Text.Encoding]::Unicode.GetString($bytes).Contains('TAIFA_PREVIEW_FIXTURE_ONLY_DEBUG')) { Write-Error 'Debug build is missing the preview fixtures'; exit 1 }
+      - name: Show display
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          [Windows.Forms.Screen]::AllScreens | ForEach-Object { "$($_.DeviceName) $($_.Bounds)" }
+      - name: Walk every screen and state
+        run: |
+          $out = (Resolve-Path .).Path + '\artifacts\screenshots'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $p = Start-Process -FilePath artifacts/debug-x64/TaifaMail.exe -ArgumentList '--preview-data', '--screenshots', $out -PassThru
+          if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Error 'The app did not finish the walk in time'; exit 1 }
+          Write-Host "exit code: $($p.ExitCode)"
+          if (Test-Path "$out/FAILED.txt") { Get-Content "$out/FAILED.txt"; exit 1 }
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+      - name: Check the screenshots are real
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $files = Get-ChildItem artifacts/screenshots -Filter *.png
+          Write-Host "screenshots: $($files.Count)"
+          if ($files.Count -lt 20) { Write-Error "expected 20 screenshots, found $($files.Count)"; exit 1 }
+          foreach ($f in $files) {
+            $bmp = [Drawing.Bitmap]::FromFile($f.FullName)
+            $seen = New-Object 'System.Collections.Generic.HashSet[int]'
+            for ($i = 0; $i -lt 4000; $i++) { [void]$seen.Add($bmp.GetPixel(($i * 37) % $bmp.Width, ($i * 91) % $bmp.Height).ToArgb()) }
+            Write-Host ("{0,-48} {1}x{2} colors={3}" -f $f.Name, $bmp.Width, $bmp.Height, $seen.Count)
+            $bmp.Dispose()
+            if ($seen.Count -lt 12) { Write-Error "$($f.Name) looks blank"; exit 1 }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: windows/artifacts/screenshots
+          retention-days: 14

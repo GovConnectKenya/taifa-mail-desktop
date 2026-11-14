@@ -42,4 +42,22 @@ public static class HtmlBody
         }
         return found;
     }
+
+    /// <summary>
+    /// Map from each anchor's href to the text a reader sees for it, so the link prompt can flag a visible host
+    /// that differs from the real one. The viewer runs no script, so the page itself cannot report this.
+    /// </summary>
+    public static Dictionary<string, string> LinkTexts(string html)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(html ?? "",
+            "<a\\s[^>]*?href\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')[^>]*>(.*?)</a>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline))
+        {
+            var href = WebUtility.HtmlDecode(m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value).Trim();
+            var text = WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Replace(m.Groups[3].Value, "<[^>]+>", "")).Trim();
+            if (href.Length > 0 && text.Length > 0) map.TryAdd(href, text);
+        }
+        return map;
+    }
 }

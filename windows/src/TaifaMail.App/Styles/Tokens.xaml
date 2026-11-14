@@ -1,0 +1,228 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Tokens from docs/native/DESIGN_SPEC.md sections 1 to 5. Do not add raw values in views. -->
+
+  <ResourceDictionary.ThemeDictionaries>
+    <ResourceDictionary x:Key="Light">
+      <SolidColorBrush x:Key="TmBgBrush" Color="#F8F3F0"/>
+      <SolidColorBrush x:Key="TmPanelBrush" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="TmPanel2Brush" Color="#F1EBE5"/>
+      <SolidColorBrush x:Key="TmPanel3Brush" Color="#E7DED5"/>
+      <SolidColorBrush x:Key="TmBorderBrush" Color="#E7DED4"/>
+      <SolidColorBrush x:Key="TmBorder2Brush" Color="#D6CBBF"/>
+      <SolidColorBrush x:Key="TmSelBorderBrush" Color="#99D6CBBF"/>
+      <SolidColorBrush x:Key="TmTextBrush" Color="#050100"/>
+      <SolidColorBrush x:Key="TmText2Brush" Color="#5B5650"/>
+      <SolidColorBrush x:Key="TmText3Brush" Color="#6A655E"/>
+      <SolidColorBrush x:Key="TmText4Brush" Color="#8F8A83"/>
+      <SolidColorBrush x:Key="TmAccentBrush" Color="#006900"/>
+      <SolidColorBrush x:Key="TmAccentHoverBrush" Color="#005A00"/>
+      <SolidColorBrush x:Key="TmOnAccentBrush" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="TmAccentFgBrush" Color="#006900"/>
+      <SolidColorBrush x:Key="TmAccentSoftBrush" Color="#14006900"/>
+      <SolidColorBrush x:Key="TmAccentSoft2Brush" Color="#24006900"/>
+      <SolidColorBrush x:Key="TmDangerBrush" Color="#860000"/>
+      <SolidColorBrush x:Key="TmDangerFgBrush" Color="#860000"/>
+      <SolidColorBrush x:Key="TmDangerSoftBrush" Color="#1A860000"/>
+      <SolidColorBrush x:Key="TmWarnBrush" Color="#B8862A"/>
+      <SolidColorBrush x:Key="TmWarnFgBrush" Color="#86600F"/>
+      <SolidColorBrush x:Key="TmWarnSoftBrush" Color="#21B8862A"/>
+      <SolidColorBrush x:Key="TmFlagBrush" Color="#B8862A"/>
+      <SolidColorBrush x:Key="TmTrackBrush" Color="#29786E64"/>
+      <SolidColorBrush x:Key="TmFocusBrush" Color="#B3006900"/>
+      <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="TmAccentSoftBrush"/>
+      <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="TmAccentSoft2Brush"/>
+      <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="TmAccentSoft2Brush"/>
+      <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
+      <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
+    </ResourceDictionary>
+    <ResourceDictionary x:Key="Dark">
+      <SolidColorBrush x:Key="TmBgBrush" Color="#0E0C0B"/>
+      <SolidColorBrush x:Key="TmPanelBrush" Color="#161312"/>
+      <SolidColorBrush x:Key="TmPanel2Brush" Color="#1D1A18"/>
+      <SolidColorBrush x:Key="TmPanel3Brush" Color="#262321"/>
+      <SolidColorBrush x:Key="TmBorderBrush" Color="#2B2725"/>
+      <SolidColorBrush x:Key="TmBorder2Brush" Color="#3A3532"/>
+      <SolidColorBrush x:Key="TmSelBorderBrush" Color="#993A3532"/>
+      <SolidColorBrush x:Key="TmTextBrush" Color="#F8F3F0"/>
+      <SolidColorBrush x:Key="TmText2Brush" Color="#B6B1AB"/>
+      <SolidColorBrush x:Key="TmText3Brush" Color="#9D978F"/>
+      <SolidColorBrush x:Key="TmText4Brush" Color="#7A756E"/>
+      <SolidColorBrush x:Key="TmAccentBrush" Color="#006900"/>
+      <SolidColorBrush x:Key="TmAccentHoverBrush" Color="#007A00"/>
+      <SolidColorBrush x:Key="TmOnAccentBrush" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="TmAccentFgBrush" Color="#1EA94E"/>
+      <SolidColorBrush x:Key="TmAccentSoftBrush" Color="#241EA94E"/>
+      <SolidColorBrush x:Key="TmAccentSoft2Brush" Color="#381EA94E"/>
+      <SolidColorBrush x:Key="TmDangerBrush" Color="#A31212"/>
+      <SolidColorBrush x:Key="TmDangerFgBrush" Color="#E8836F"/>
+      <SolidColorBrush x:Key="TmDangerSoftBrush" Color="#29E8836F"/>
+      <SolidColorBrush x:Key="TmWarnBrush" Color="#D9A441"/>
+      <SolidColorBrush x:Key="TmWarnFgBrush" Color="#E6B85C"/>
+      <SolidColorBrush x:Key="TmWarnSoftBrush" Color="#29D9A441"/>
+      <SolidColorBrush x:Key="TmFlagBrush" Color="#E6B85C"/>
+      <SolidColorBrush x:Key="TmTrackBrush" Color="#298C8C8C"/>
+      <SolidColorBrush x:Key="TmFocusBrush" Color="#B31EA94E"/>
+      <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="TmAccentSoftBrush"/>
+      <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="TmAccentSoft2Brush"/>
+      <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="TmAccentSoft2Brush"/>
+      <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
+      <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
+    </ResourceDictionary>
+  </ResourceDictionary.ThemeDictionaries>
+
+  <!-- Spacing scale (section 1) -->
+  <x:Double x:Key="Space1">4</x:Double>
+  <x:Double x:Key="Space2">8</x:Double>
+  <x:Double x:Key="Space3">12</x:Double>
+  <x:Double x:Key="Space4">16</x:Double>
+  <x:Double x:Key="Space5">20</x:Double>
+  <x:Double x:Key="Space6">24</x:Double>
+  <x:Double x:Key="Space8">32</x:Double>
+
+  <!-- Radii (section 4) -->
+  <CornerRadius x:Key="RadiusXs">4</CornerRadius>
+  <CornerRadius x:Key="RadiusCtl">8</CornerRadius>
+  <CornerRadius x:Key="RadiusCard">12</CornerRadius>
+  <CornerRadius x:Key="RadiusPanel">16</CornerRadius>
+
+  <!-- Fonts: Google Sans is not bundled; Segoe UI Variable is the specified fallback. -->
+  <FontFamily x:Key="TmFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+  <FontFamily x:Key="TmMono">JetBrains Mono, Cascadia Mono, Consolas</FontFamily>
+
+  <!-- Type scale (section 2) -->
+  <Style x:Key="TmCaption" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+    <Setter Property="FontSize" Value="11"/>
+    <Setter Property="LineHeight" Value="14"/>
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="Foreground" Value="{ThemeResource TmText3Brush}"/>
+  </Style>
+  <Style x:Key="TmMeta" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="LineHeight" Value="16"/>
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+    <Setter Property="Foreground" Value="{ThemeResource TmText3Brush}"/>
+  </Style>
+  <Style x:Key="TmBody" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="LineHeight" Value="18"/>
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+    <Setter Property="CharacterSpacing" Value="-8"/>
+    <Setter Property="Foreground" Value="{ThemeResource TmTextBrush}"/>
+  </Style>
+  <Style x:Key="TmBodyStrong" TargetType="TextBlock" BasedOn="{StaticResource TmBody}">
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <Style x:Key="TmReader" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="LineHeight" Value="22"/>
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+    <Setter Property="CharacterSpacing" Value="-8"/>
+    <Setter Property="IsTextSelectionEnabled" Value="True"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
+    <Setter Property="Foreground" Value="{ThemeResource TmTextBrush}"/>
+  </Style>
+  <Style x:Key="TmTitle" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+    <Setter Property="FontSize" Value="16"/>
+    <Setter Property="LineHeight" Value="22"/>
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="CharacterSpacing" Value="-8"/>
+    <Setter Property="Foreground" Value="{ThemeResource TmTextBrush}"/>
+  </Style>
+  <Style x:Key="TmDisplay" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+    <Setter Property="FontSize" Value="20"/>
+    <Setter Property="LineHeight" Value="26"/>
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="CharacterSpacing" Value="-8"/>
+    <Setter Property="Foreground" Value="{ThemeResource TmTextBrush}"/>
+  </Style>
+  <Style x:Key="TmHero" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+    <Setter Property="FontSize" Value="24"/>
+    <Setter Property="LineHeight" Value="30"/>
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="CharacterSpacing" Value="-8"/>
+    <Setter Property="Foreground" Value="{ThemeResource TmTextBrush}"/>
+  </Style>
+  <Style x:Key="TmMono" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource TmMono}"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="LineHeight" Value="16"/>
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+    <Setter Property="Foreground" Value="{ThemeResource TmText3Brush}"/>
+  </Style>
+
+  <!-- Brand green replaces the system accent for filled controls and selection. -->
+  <Color x:Key="SystemAccentColor">#006900</Color>
+  <Color x:Key="SystemAccentColorLight1">#006900</Color>
+  <Color x:Key="SystemAccentColorLight2">#006900</Color>
+  <Color x:Key="SystemAccentColorLight3">#006900</Color>
+  <Color x:Key="SystemAccentColorDark1">#005A00</Color>
+  <Color x:Key="SystemAccentColorDark2">#005A00</Color>
+  <Color x:Key="SystemAccentColorDark3">#005A00</Color>
+
+  <!-- Primary button: 32 high, brand green fill, white ink (section 6). -->
+  <Style x:Key="TmPrimaryButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+    <Setter Property="MinHeight" Value="32"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+    <Style.Resources>
+      <SolidColorBrush x:Key="AccentButtonBackground" Color="#006900"/>
+      <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#005A00"/>
+      <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#004A00"/>
+      <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent"/>
+    </Style.Resources>
+  </Style>
+  <Style x:Key="TmFieldBox" TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+    <Setter Property="MinHeight" Value="32"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
+  </Style>
+  <Style x:Key="TmFieldMono" TargetType="TextBox" BasedOn="{StaticResource TmFieldBox}">
+    <Setter Property="FontFamily" Value="{StaticResource TmMono}"/>
+  </Style>
+  <Style x:Key="TmFieldPassword" TargetType="PasswordBox" BasedOn="{StaticResource DefaultPasswordBoxStyle}">
+    <Setter Property="MinHeight" Value="32"/>
+    <Setter Property="CornerRadius" Value="8"/>
+  </Style>
+  <Style x:Key="TmTextButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+    <Setter Property="MinHeight" Value="32"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
+
+  <!-- Thread list row container: selection per section 5 (soft tint plus hairline, no heavy outline). -->
+  <Style x:Key="TmRowContainer" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Margin" Value="4,1,4,1"/>
+    <Setter Property="MinHeight" Value="0"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+    <Setter Property="UseSystemFocusVisuals" Value="False"/>
+    <Setter Property="FocusVisualPrimaryThickness" Value="0"/>
+    <Setter Property="FocusVisualSecondaryThickness" Value="0"/>
+  </Style>
+</ResourceDictionary>

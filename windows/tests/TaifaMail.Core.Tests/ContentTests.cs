@@ -76,3 +76,49 @@ public class HtmlBodyTests
         Assert.Equal("https://x.example/b", text.Substring(links[1].Start, links[1].Length));
     }
 }
+
+public class MessageCardTests
+{
+    [Fact] public void To_line_collapses_own_address_and_counts_rest()
+    {
+        Assert.Equal("to me, +2", Core.ViewModels.MessageCardVm.ToLineFor(new[] { "Me <me@x.test>", "a@x.test" }, new[] { "b@x.test" }, "ME@x.test"));
+        Assert.Equal("to Ada", Core.ViewModels.MessageCardVm.ToLineFor(new[] { "Ada <ada@x.test>" }, null, "me@x.test"));
+        Assert.Equal("to undisclosed recipients", Core.ViewModels.MessageCardVm.ToLineFor(null, null, "me@x.test"));
+    }
+
+    [Theory]
+    [InlineData(512, "512 B")]
+    [InlineData(2048, "2 KB")]
+    [InlineData(5 * 1024 * 1024, "5 MB")]
+    public void Sizes_are_human(long bytes, string text) => Assert.Equal(text, Core.ViewModels.MessageCardVm.FormatSize(bytes));
+}
+
+public class LocalSettingsTests
+{
+    [Fact] public void Round_trips_and_survives_a_corrupt_file()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "tm-settings-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            new Core.ViewModels.LocalSettings { Theme = "dark", Density = "compact" }.Save(path);
+            var loaded = Core.ViewModels.LocalSettings.Load(path);
+            Assert.Equal("dark", loaded.Theme);
+            Assert.Equal("compact", loaded.Density);
+            File.WriteAllText(path, "{ nope");
+            Assert.Equal("system", Core.ViewModels.LocalSettings.Load(path).Theme);
+        }
+        finally { File.Delete(path); }
+    }
+}
+
+public class LinkTextTests
+{
+    [Fact] public void Maps_href_to_visible_text_and_feeds_the_host_check()
+    {
+        var html = "<p><a href=\"https://evil.example/x?a=1&amp;b=2\"><b>https://bank.example.go.ke</b></a> and <a class='k' href='mailto:a@b.test'>write</a></p>";
+        var map = HtmlBody.LinkTexts(html);
+        Assert.Equal("https://bank.example.go.ke", map["https://evil.example/x?a=1&b=2"]);
+        Assert.Equal("write", map["mailto:a@b.test"]);
+        Assert.True(LinkSafety.Check("https://evil.example/x", map.First().Value).HostDiffersFromText);
+    }
+}

@@ -31,7 +31,10 @@ public sealed partial class MailShellViewModel : ObservableObject
     public string ApiBase { get; }
     public ObservableCollection<ApiFolder> Folders { get; } = new();
     public ObservableCollection<ThreadRow> Threads { get; } = new();
-    public ObservableCollection<ApiMailDetail> OpenMessages { get; } = new();
+    public ObservableCollection<MessageCardVm> OpenMessages { get; } = new();
+    public string OwnAddress { get; set; } = "";
+    /// <summary>Senders the user trusts for remote images (mailbox setting trusted_image_senders).</summary>
+    public HashSet<string> TrustedImageSenders { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     [ObservableProperty] private ApiFolder? _selectedFolder;
     [ObservableProperty] private ThreadRow? _selectedThread;
@@ -120,7 +123,7 @@ public sealed partial class MailShellViewModel : ObservableObject
     /// <summary>Incremental loading: fetches the next page and appends it. Safe to call repeatedly from the scroll handler.</summary>
     public async Task LoadMoreAsync(CancellationToken ct = default)
     {
-        if (LoadingMore || Loading || !HasMore || SelectedFolder is null) return;
+        if (LoadingMore || Loading || Searching || !HasMore || SelectedFolder is null) return;
         LoadingMore = true;
         var folder = SelectedFolder;
         try
@@ -196,7 +199,14 @@ public sealed partial class MailShellViewModel : ObservableObject
         {
             var window = await _api.ConversationAsync(row.Uid, row.Folder, 20, null, cts.Token);
             if (cts.IsCancellationRequested) return;
-            foreach (var m in window.Messages.OrderBy(m => m.Date, StringComparer.Ordinal)) OpenMessages.Add(m);
+            var ordered = window.Messages.OrderBy(m => DateTimeOffset.TryParse(m.Date, out var d) ? d : DateTimeOffset.MinValue).ToList();
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                var card = new MessageCardVm(ordered[i], OwnAddress, isLatest: i == ordered.Count - 1);
+                card.AllowImages = TrustedImageSenders.Contains(card.AvatarAddress);
+                OpenMessages.Add(card);
+            }
+            await ResolveCardAvatarsAsync(OpenMessages.ToList(), cts.Token);
             if (wasUnread)
             {
                 try
@@ -223,6 +233,28 @@ public sealed partial class MailShellViewModel : ObservableObject
         _ = previousUnseen;
     }
 
+    private async Task ResolveCardAvatarsAsync(IReadOnlyList<MessageCardVm> cards, CancellationToken ct)
+    {
+        var need = cards.Select(c => c.AvatarAddress).Where(a => a.Length > 0 && !_avatars.ContainsKey(a)).Distinct().Take(100).ToList();
+        if (need.Count > 0)
+        {
+            try
+            {
+                var res = await _api.AvatarsAsync(need, ct);
+                foreach (var (k, v) in res.Results) _avatars[AvatarRule.NormalizeAddress(k)] = v;
+                foreach (var a in need) _avatars.TryAdd(a, new AvatarBatchEntry(null, null, null, null));
+            }
+            catch (ApiRequestError) { }
+            catch (ApiTransportError) { }
+        }
+        var outgoing = SelectedFolder is not null && AvatarRule.IsOutgoingFolder(SelectedFolder.Path, Folders);
+        foreach (var c in cards)
+        {
+            _avatars.TryGetValue(c.AvatarAddress, out var entry);
+            c.Avatar = AvatarRule.Decide(c.AvatarAddress, c.DisplayName, entry, c.Auth, outgoing ? AvatarTrust.Open : AvatarTrust.Gated, ApiBase);
+        }
+    }
+
     private void AdjustUnseen(int delta)
     {
         if (SelectedFolder is null) return;
@@ -233,6 +265,41 @@ public sealed partial class MailShellViewModel : ObservableObject
         Folders[i] = updated;
         SelectedFolder = updated;
         OnPropertyChanged(nameof(TotalUnread));
+    }
+
+    [ObservableProperty] private string _searchText = "";
+    [ObservableProperty] private bool _searching;
+    private CancellationTokenSource? _searchCts;
+
+    /// <summary>Searches the current folder. An empty query returns to the folder list. Newer queries cancel older ones.</summary>
+    public async Task SearchAsync(string text, CancellationToken ct = default)
+    {
+        _searchCts?.Cancel();
+        text = (text ?? "").Trim();
+        SearchText = text;
+        if (SelectedFolder is null) return;
+        if (text.Length == 0) { Searching = false; await LoadFolderAsync(SelectedFolder, ct); return; }
+        var cts = _searchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        Searching = true;
+        Loading = true;
+        Error = null;
+        try
+        {
+            var res = await _api.SearchAsync(text, SelectedFolder.Path, PageSize, 0, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            var outgoing = AvatarRule.IsOutgoingFolder(SelectedFolder.Path, Folders);
+            Threads.Clear();
+            foreach (var m in res.Items)
+                Threads.Add(new ThreadRow(new ApiConversationSummary($"{m.Folder}:{m.Uid}", m, 1, !m.Seen, new List<long> { m.Uid }), outgoing));
+            Total = res.Total;
+            IsEmpty = Threads.Count == 0;
+            OnPropertyChanged(nameof(HasMore));
+            await ResolveAvatarsAsync(Threads, cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (ApiTransportError) { Offline = true; }
+        catch (ApiRequestError e) { Error = e.Message; }
+        finally { if (_searchCts == cts) Loading = false; }
     }
 
     public async Task ReconcileAsync(CancellationToken ct = default)

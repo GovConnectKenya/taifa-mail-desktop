@@ -13,19 +13,25 @@ public sealed partial class SignInViewModel : ObservableObject
 
     public SignInViewModel(IAuthApi auth) => _auth = auth;
 
-    [ObservableProperty] private SignInStep _step = SignInStep.Password;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(ShowPassword), nameof(ShowCode), nameof(ShowSecondFactor), nameof(CodeTitle))] private SignInStep _step = SignInStep.Password;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSubmitPassword), nameof(CanRequestCode))] private string _address = "";
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSubmitPassword))] private string _password = "";
     [ObservableProperty] private string _code = "";
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSubmitPassword), nameof(CanRequestCode))] private bool _busy;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanSubmitPassword), nameof(CanRequestCode), nameof(Idle))] private bool _busy;
     [ObservableProperty] private string? _error;
     [ObservableProperty] private string? _notice;
     [ObservableProperty] private bool _codeEmailSent;
     [ObservableProperty] private bool _offline;
 
+    public bool ShowPassword => Step == SignInStep.Password;
+    public bool ShowCode => Step == SignInStep.Code;
+    public bool ShowSecondFactor => Step == SignInStep.SecondFactor;
+    public string CodeTitle => Step == SignInStep.SecondFactor ? "Verification code" : "Sign-in code";
+
     public MailboxSession? Session { get; private set; }
     public event Action<MailboxSession>? SignedIn;
 
+    public bool Idle => !Busy;
     public bool CanSubmitPassword => !Busy && Address.Contains('@') && Password.Length > 0;
     public bool CanRequestCode => !Busy && Address.Contains('@');
 

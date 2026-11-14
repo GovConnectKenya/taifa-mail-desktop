@@ -38,5 +38,9 @@ public sealed partial class ThreadRow : ObservableObject
     [ObservableProperty] private bool _flagged;
     [ObservableProperty] private AvatarDecision? _avatar;
 
+    /// <summary>What a screen reader says for the row (spec section 14).</summary>
+    public string SpokenName =>
+        $"{DisplayName}, {Subject}, {TimeLabel.ForList(When, DateTimeOffset.Now)}, {(Unread ? "unread" : "read")}{(Flagged ? ", flagged" : "")}{(HasAttachment ? ", has attachments" : "")}";
+
     public DateTimeOffset When => DateTimeOffset.TryParse(Model.Latest.Date, out var d) ? d : DateTimeOffset.MinValue;
 }
