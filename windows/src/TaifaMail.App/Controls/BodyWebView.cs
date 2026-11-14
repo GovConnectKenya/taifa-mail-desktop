@@ -59,7 +59,7 @@ public sealed class BodyWebView : UserControl
     private static async Task<CoreWebView2Environment> EnvAsync()
     {
         await EnvGate.WaitAsync();
-        try { return _env ??= await CoreWebView2Environment.CreateAsync(null, UserDataFolder); }
+        try { return _env ??= await CoreWebView2Environment.CreateWithOptionsAsync(null, UserDataFolder, new CoreWebView2EnvironmentOptions()); }
         finally { EnvGate.Release(); }
     }
 
