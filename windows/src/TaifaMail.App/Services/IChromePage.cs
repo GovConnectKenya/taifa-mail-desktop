@@ -8,4 +8,6 @@ public interface IChromePage
     FrameworkElement TitleBarElement { get; }
     IEnumerable<FrameworkElement> InteractiveElements { get; }
     void SetCaptionInset(double inset);
+    /// <summary>Extra draggable areas besides the title element (the sidebar brand row).</summary>
+    IEnumerable<FrameworkElement> CaptionElements => Array.Empty<FrameworkElement>();
 }

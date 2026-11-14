@@ -7,11 +7,16 @@ namespace TaifaMail.Core.Models;
 
 public sealed record MailboxSession(string MailboxId, string Address, string? OrgId);
 
-public sealed record MailboxMe(string MailboxId, string Address, string? OrgId, string? DisplayName, string? Classification, string? AvatarUrl);
+public sealed record MailboxMe(string MailboxId, string Address, string? OrgId, string? DisplayName, string? Classification, string? AvatarUrl,
+    bool MustChangePassword = false, bool NeedsRecoveryEmail = false)
+{
+    /// <summary>First login setup is outstanding: the server also refuses mail access until it is done on the web.</summary>
+    public bool NeedsWebSetup => MustChangePassword || NeedsRecoveryEmail;
+}
 
 public sealed record SwitchableMailbox(string MailboxId, string Address, string? DisplayName, string? AvatarUrl, string? Access);
 
-public sealed record ApiFolder(string Name, string Path, string? SpecialUse, int Unseen, int Total);
+public sealed record ApiFolder(string Name, string Path, string? SpecialUse, int? Unseen, int? Total);
 
 public sealed record ApiFolderCount(string Path, int Unseen, int Total);
 
@@ -33,7 +38,7 @@ public sealed record ApiMailSummary(
     bool? SenderVerified = null,
     bool AuthWarned = false);
 
-public sealed record ApiMailList(string Folder, int Total, int Limit, int Offset, List<ApiMailSummary> Items);
+public sealed record ApiMailList(string Folder, int Total, int Limit, int Offset, List<ApiMailSummary> Items, bool Incomplete = false);
 
 public sealed record ApiConversationSummary(string ThreadKey, ApiMailSummary Latest, int Count, bool Unread, List<long>? Uids);
 
@@ -81,13 +86,13 @@ public sealed record ApiQuota(long UsedBytes, long? LimitBytes, double? Percent)
 
 public sealed record ApiResolved(string Folder, long Uid);
 
-public sealed record ApiContact(string Id, string DisplayName, List<ApiContactEmail>? Emails);
+public sealed record ApiContact(string Id, string? DisplayName, List<ApiContactEmail>? Emails);
 
-public sealed record ApiContactEmail(string Type, string Value, bool Primary);
+public sealed record ApiContactEmail(string? Type, string Value, bool Primary);
 
-public sealed record ApiContactList(List<ApiContact> Items);
+public sealed record ApiImageCapability(string Token, string ExpiresAt);
 
-public sealed record ApiFileInfo(string Id, string Filename, string Mime, long SizeBytes, string Status);
+public sealed record ApiFileInfo(string Id, string Filename, string Mime, long SizeBytes, string Status, string? ScanVerdict = null);
 
 public sealed record ApiUploadTarget(string Url, string Method, Dictionary<string, string>? Headers);
 
@@ -130,7 +135,11 @@ public sealed record ApiAutoResponder(
     bool Enabled, string Subject, string Html, string Text, string Mode,
     string? StartAt, string? EndAt, List<int> Days, int StartHour, int EndHour);
 
-public sealed record ApiMailBlock(string Id, string BlockType, string Name, string Html, string? Text, bool IsDefault);
+public sealed record ApiMailBlock(string Id, string BlockType, string Name, string Html, string? Text, bool IsDefault, System.Text.Json.JsonElement? Config = null)
+{
+    /// <summary>Built in the web signature builder: it has a structured config and must not be overwritten with plain text.</summary>
+    public bool IsStructured => Config is { ValueKind: not (System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined) };
+}
 
 public sealed record ApiMailboxBlocks(List<ApiMailBlock> Signatures, List<ApiMailBlock> Headers, List<ApiMailBlock> Footers);
 

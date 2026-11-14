@@ -13,6 +13,8 @@ public interface IComposeApi
     Task<ApiDraftResult> SaveDraftAsync(SendMailPayload payload, CancellationToken ct = default);
     Task DeleteDraftAsync(long uid, string folder, CancellationToken ct = default);
     Task<string> UploadAsync(string filename, string mime, long size, Stream content, CancellationToken ct = default);
+    /// <summary>The stored file status: pending, uploaded, scanning, ready, infected, expired, deleted.</summary>
+    Task<string> FileStatusAsync(string fileId, CancellationToken ct = default) => Task.FromResult("ready");
     Task DeleteUploadAsync(string fileId, CancellationToken ct = default);
     Task<IReadOnlyList<string>> SuggestAsync(string query, CancellationToken ct = default);
     Task<IReadOnlyList<string>> StageForwardAsync(long uid, string folder, CancellationToken ct = default);
@@ -34,10 +36,11 @@ public sealed class ComposeApi : IComposeApi
         return done.File.Id;
     }
     public Task DeleteUploadAsync(string fileId, CancellationToken ct = default) => _api.DeleteUploadAsync(fileId, ct);
+    public async Task<string> FileStatusAsync(string fileId, CancellationToken ct = default) => (await _api.FileStatusAsync(fileId, ct)).File.Status;
     public async Task<IReadOnlyList<string>> SuggestAsync(string query, CancellationToken ct = default)
     {
         var list = await _api.ContactsAsync(query, 8, ct);
-        return list.Items.SelectMany(c => (c.Emails ?? new()).Select(e => string.IsNullOrWhiteSpace(c.DisplayName) ? e.Value : $"{c.DisplayName} <{e.Value}>")).Take(8).ToList();
+        return list.SelectMany(c => (c.Emails ?? new()).Where(e => !string.IsNullOrWhiteSpace(e.Value)).Select(e => string.IsNullOrWhiteSpace(c.DisplayName) ? e.Value : $"{c.DisplayName} <{e.Value}>")).Take(8).ToList();
     }
     public async Task<IReadOnlyList<string>> StageForwardAsync(long uid, string folder, CancellationToken ct = default) =>
         (await _api.StageAttachmentsAsync(uid, folder, ct)).Files.Select(f => f.FileId).ToList();
@@ -45,7 +48,7 @@ public sealed class ComposeApi : IComposeApi
 
 public sealed record RecipientChip(string Raw, string Address, string Display, bool Valid);
 
-public enum AttachmentState { Uploading, Ready, Failed }
+public enum AttachmentState { Uploading, Scanning, Ready, Failed, Infected }
 
 public sealed partial class AttachmentVm : ObservableObject
 {
@@ -102,7 +105,7 @@ public sealed partial class ComposeViewModel : ObservableObject
     [ObservableProperty] private string? _error;
     [ObservableProperty] private string? _notice;
 
-    public bool CanSend => !Sending && To.Any(c => c.Valid) && !To.Any(c => !c.Valid) && !Cc.Any(c => !c.Valid) && !Bcc.Any(c => !c.Valid) && Attachments.All(a => a.State == AttachmentState.Ready);
+    public bool CanSend => !Sending && To.Any(c => c.Valid) && !To.Any(c => !c.Valid) && !Cc.Any(c => !c.Valid) && !Bcc.Any(c => !c.Valid) && Attachments.All(a => a.State == AttachmentState.Ready) && !SendUnconfirmed;
 
     public static IReadOnlyList<RecipientChip> Parse(string text)
     {
@@ -147,7 +150,20 @@ public sealed partial class ComposeViewModel : ObservableObject
         catch (Exception e) when (e is ApiRequestError or ApiTransportError) { return local; }
     }
 
-    public async Task AddAttachmentAsync(string name, string mime, long size, Stream content, CancellationToken ct = default)
+    private readonly List<Task> _uploads = new();
+    /// <summary>Poll interval while a file is scanned for viruses. Tests shorten it.</summary>
+    public TimeSpan ScanPoll { get; set; } = TimeSpan.FromSeconds(1.5);
+    public int ScanAttempts { get; set; } = 120;
+
+    public Task AddAttachmentAsync(string name, string mime, long size, Stream content, CancellationToken ct = default)
+    {
+        var task = UploadAndScanAsync(name, mime, size, content, ct);
+        lock (_uploads) _uploads.Add(task);
+        return task;
+    }
+
+    /// <summary>Upload, complete, then wait for the virus scan: a file is only attachable once it is ready.</summary>
+    private async Task UploadAndScanAsync(string name, string mime, long size, Stream content, CancellationToken ct)
     {
         var vm = new AttachmentVm(name, size, string.IsNullOrEmpty(mime) ? "application/octet-stream" : mime);
         Attachments.Add(vm);
@@ -155,7 +171,16 @@ public sealed partial class ComposeViewModel : ObservableObject
         try
         {
             vm.FileId = await _api.UploadAsync(vm.Name, vm.Mime, size, content, ct);
-            vm.State = AttachmentState.Ready;
+            vm.State = AttachmentState.Scanning;
+            for (var i = 0; i < ScanAttempts; i++)
+            {
+                var status = await _api.FileStatusAsync(vm.FileId, ct);
+                if (status == "ready") { vm.State = AttachmentState.Ready; break; }
+                if (status == "infected") { vm.State = AttachmentState.Infected; vm.Error = "This file was blocked by the virus scan."; break; }
+                if (status is "expired" or "deleted") { vm.State = AttachmentState.Failed; vm.Error = "This file is no longer available."; break; }
+                await Task.Delay(ScanPoll, ct);
+            }
+            if (vm.State == AttachmentState.Scanning) { vm.State = AttachmentState.Failed; vm.Error = "The virus scan did not finish. Remove the file and try again."; }
         }
         catch (Exception e) when (e is ApiRequestError or ApiTransportError)
         {
@@ -164,6 +189,14 @@ public sealed partial class ComposeViewModel : ObservableObject
         }
         OnPropertyChanged(nameof(CanSend));
         Touch();
+    }
+
+    /// <summary>Waits for every upload and scan in flight (a draft must not reference a file that is not ready).</summary>
+    public Task WaitForUploadsAsync()
+    {
+        Task[] pending;
+        lock (_uploads) pending = _uploads.ToArray();
+        return Task.WhenAll(pending);
     }
 
     public async Task RemoveAttachmentAsync(AttachmentVm a)
@@ -190,7 +223,7 @@ public sealed partial class ComposeViewModel : ObservableObject
         var quote = Seed.QuotedHtml ?? (Seed.QuotedText is null ? null : System.Net.WebUtility.HtmlEncode(Seed.QuotedText).Replace("\n", "<br>"));
         var html = body.Html + (quote is null ? "" : $"<br><div>{System.Net.WebUtility.HtmlEncode(Seed.QuoteHeader ?? "").Replace("\n", "<br>")}</div><blockquote style=\"margin:0 0 0 .8ex;border-left:2px solid #ccc;padding-left:1ex\">{quote}</blockquote>");
         var text = body.Text + (Seed.QuotedText is null ? "" : $"\n{Seed.QuoteHeader}\n" + string.Join('\n', Seed.QuotedText.Replace("\r\n", "\n").Split('\n').Select(l => "> " + l)));
-        var files = Attachments.Where(a => a.FileId is not null).Select(a => a.FileId!).Concat(_forwardFileIds).ToList();
+        var files = Attachments.Where(a => a.FileId is not null && a.State == AttachmentState.Ready).Select(a => a.FileId!).Concat(_forwardFileIds).ToList();
         return new SendMailPayload
         {
             To = To.Select(c => c.Address).ToList(),
@@ -212,7 +245,7 @@ public sealed partial class ComposeViewModel : ObservableObject
     /// <summary>Restarts the 3 second idle timer. Called on every edit.</summary>
     public void Touch()
     {
-        if (_closed || Sending) return;
+        if (_closed || Sending || _sendAttempted) return;
         _autosave?.Cancel();
         var cts = _autosave = new CancellationTokenSource();
         _ = Task.Run(async () =>
@@ -222,20 +255,28 @@ public sealed partial class ComposeViewModel : ObservableObject
         });
     }
 
+    private readonly SemaphoreSlim _draftGate = new(1, 1);
+    private bool _sendAttempted;
+
+    /// <summary>Saves are serialised: one at a time, each replacing the previous copy. A save waits for uploads that are still scanning.</summary>
     public async Task SaveDraftNowAsync(CancellationToken ct = default)
     {
-        if (_closed) return;
-        DraftState = "Saving";
+        if (_closed || _sendAttempted) return;
+        try { await WaitForUploadsAsync(); } catch (Exception) { }
+        await _draftGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (_closed || _sendAttempted) return;
+            DraftState = "Saving";
             var r = await _api.SaveDraftAsync(Payload(draft: true), ct);
-            if (_closed) { if (r.Uid is { } late) await SafeDelete(late, r.Folder); return; }
+            if (_closed || _sendAttempted) { if (r.Uid is { } late) await SafeDelete(late, r.Folder); return; }
             _draftUid = r.Uid;
             _draftFolder = r.Folder;
             DraftState = "Saved";
         }
         catch (OperationCanceledException) { }
         catch (Exception e) when (e is ApiRequestError or ApiTransportError) { DraftState = ""; }
+        finally { _draftGate.Release(); }
     }
 
     private async Task SafeDelete(long uid, string folder)
@@ -243,46 +284,70 @@ public sealed partial class ComposeViewModel : ObservableObject
         try { await _api.DeleteDraftAsync(uid, folder); } catch (Exception e) when (e is ApiRequestError or ApiTransportError) { }
     }
 
+    /// <summary>Waits for a save in flight, then removes the final stored copy.</summary>
+    private async Task DeleteStoredDraftAsync()
+    {
+        await _draftGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_draftUid is { } uid) { _draftUid = null; await SafeDelete(uid, _draftFolder); }
+        }
+        finally { _draftGate.Release(); }
+    }
+
     /// <summary>Discard removes any draft the autosave stored and never saves one.</summary>
     public async Task DiscardAsync()
     {
         _closed = true;
         _autosave?.Cancel();
-        if (_draftUid is { } uid) await SafeDelete(uid, _draftFolder);
+        await DeleteStoredDraftAsync();
         foreach (var a in Attachments.Where(a => a.FileId is not null).ToList()) { try { await _api.DeleteUploadAsync(a.FileId!); } catch (Exception e) when (e is ApiRequestError or ApiTransportError) { } }
     }
 
-    /// <summary>Closing the window with content saves it as a draft (spec 8.7).</summary>
+    /// <summary>Closing the window with content saves it as a draft (spec 8.7), unless a send is under way or was attempted.</summary>
     public async Task SaveOnCloseAsync()
     {
         _autosave?.Cancel();
-        if (_closed) return;
+        if (_closed || Sending || _sendAttempted) return;
         var hasContent = To.Count > 0 || Subject.Length > 0 || BodyProvider().Text.Trim().Length > 0 || Attachments.Count > 0;
         if (hasContent) await SaveDraftNowAsync();
         _closed = true;
     }
 
-    /// <summary>Returns true when the message went out and the window may close.</summary>
+    public const string UnconfirmedSend = "Taifa Mail did not confirm that the message was sent. Check your Sent folder before sending it again.";
+
+    /// <summary>Returns true when the message went out and the window may close. A send is never retried automatically.</summary>
     public async Task<bool> SendAsync(CancellationToken ct = default)
     {
         if (!CanSend) return false;
         _autosave?.Cancel();
         Sending = true;
+        _sendAttempted = true;
         Error = null;
         Notice = null;
         OnPropertyChanged(nameof(CanSend));
         try
         {
+            await _draftGate.WaitAsync(ct).ConfigureAwait(false);
+            _draftGate.Release();
             var result = await _api.SendAsync(Payload(draft: false), ct);
             var skipped = (result.Suppressed ?? new()).Concat(result.Refused ?? new()).ToList();
             _closed = true;
-            if (_draftUid is { } uid) await SafeDelete(uid, _draftFolder);
+            await DeleteStoredDraftAsync();
             if (skipped.Count > 0) Notice = "Not delivered to: " + string.Join(", ", skipped);
             return true;
         }
-        catch (Exception e) when (e is ApiRequestError or ApiTransportError)
+        catch (ApiTransportError)
         {
-            Error = e is ApiTransportError ? "Could not reach Taifa Mail." : e.Message;
+            // a timeout may have happened after the server accepted the message: never retry on its own
+            SendUnconfirmed = true;
+            Error = UnconfirmedSend;
+            return false;
+        }
+        catch (ApiRequestError e)
+        {
+            _sendAttempted = false;
+            Error = e.Message;
             return false;
         }
         finally
@@ -291,4 +356,6 @@ public sealed partial class ComposeViewModel : ObservableObject
             OnPropertyChanged(nameof(CanSend));
         }
     }
+
+    [ObservableProperty] private bool _sendUnconfirmed;
 }

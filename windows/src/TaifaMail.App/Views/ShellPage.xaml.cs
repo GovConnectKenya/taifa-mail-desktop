@@ -16,6 +16,7 @@ using TaifaMail.Core.Models;
 using TaifaMail.Core.Net;
 using TaifaMail.Core.Notifications;
 using TaifaMail.Core.Realtime;
+using TaifaMail.Core.Security;
 using TaifaMail.Core.ViewModels;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -44,7 +45,10 @@ public sealed partial class ShellPage : Page, IChromePage
     private SettingsWindow? _settings;
 
     public FrameworkElement TitleBarElement => TitleRow;
-    public IEnumerable<FrameworkElement> InteractiveElements => new FrameworkElement[] { SearchHost, CommandHost };
+    public IEnumerable<FrameworkElement> InteractiveElements => new FrameworkElement[] { PaneToggle, SearchHost, CommandHost };
+    public IEnumerable<FrameworkElement> CaptionElements => new FrameworkElement[] { BrandRow };
+    private bool _userPane;
+    private bool _foldersLoading = true;
     public void SetCaptionInset(double inset) => CaptionInsetColumn.Width = new GridLength(Math.Max(0, inset));
 
     public ShellPage(ShellContext ctx)
@@ -69,6 +73,8 @@ public sealed partial class ShellPage : Page, IChromePage
         Vm.OpenMessages.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateReaderState);
         Vm.PropertyChanged += OnVmChanged;
         Vm.Notice += (msg, undo) => DispatcherQueue.TryEnqueue(() => ShowToast(msg, undo));
+        Vm.ConfirmPermanentDelete = ConfirmDeleteForeverAsync;
+        ConfigureBodyView();
 
         // Windows shortcut table (docs/native/DESIGN_SPEC.md section 9)
         Accel(VirtualKey.F5, VirtualKeyModifiers.None, () => _ = Vm.ReconcileAsync(), allowInText: true);
@@ -78,7 +84,7 @@ public sealed partial class ShellPage : Page, IChromePage
         Accel(VirtualKey.F, VirtualKeyModifiers.Control, () => ReplyTo(ComposeMode.Forward), allowInText: false);
         Accel(VirtualKey.E, VirtualKeyModifiers.None, () => _ = Vm.ArchiveAsync(Targets()), allowInText: false);
         Accel(VirtualKey.Delete, VirtualKeyModifiers.None, () => _ = Vm.DeleteAsync(Targets()), allowInText: false);
-        Accel(VirtualKey.J, VirtualKeyModifiers.Control, () => _ = Vm.JunkAsync(Targets()), allowInText: true);
+        Accel(VirtualKey.J, VirtualKeyModifiers.Control, () => _ = Vm.IsJunkFolder ? Vm.NotJunkAsync(Targets()) : Vm.JunkAsync(Targets()), allowInText: true);
         Accel(VirtualKey.G, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => _ = Vm.ToggleFlagAsync(Targets()), allowInText: true);
         Accel(VirtualKey.U, VirtualKeyModifiers.Control, () => _ = Vm.SetReadAsync(Targets(), read: false), allowInText: true);
         Accel(VirtualKey.Q, VirtualKeyModifiers.Control, () => _ = Vm.SetReadAsync(Targets(), read: true), allowInText: true);
@@ -86,15 +92,29 @@ public sealed partial class ShellPage : Page, IChromePage
         Accel(VirtualKey.F, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => FocusSearch(all: true), allowInText: true);
         Accel(VirtualKey.Z, VirtualKeyModifiers.Control, () => { if (_lastUndo is { } u) { _lastUndo = null; _ = u(); HideToast(); } }, allowInText: false);
         Accel((VirtualKey)188, VirtualKeyModifiers.Control, OpenSettings, allowInText: true);
+        Accel(VirtualKey.B, VirtualKeyModifiers.Control, () => TogglePane(), allowInText: true);
+        SizeChanged += (_, e) => AutoPane(e.NewSize.Width);
 
         Loaded += async (_, _) =>
         {
-            UpdateListState();
-            UpdateReaderState();
-            await Vm.StartAsync();
-            try { _siblings = await _ctx.Auth.SwitchableAsync(); } catch (Exception) { }
-            await CheckNewMailAsync();
-            StartRealtime();
+            try
+            {
+                UpdateListState();
+                UpdateReaderState();
+                AutoPane(ActualWidth);
+                RebuildNav();
+                await Vm.StartAsync();
+                _foldersLoading = false;
+                RebuildNav();
+                try { _siblings = await _ctx.Auth.SwitchableAsync(); } catch (Exception) { }
+                await CheckNewMailAsync();
+                StartRealtime();
+            }
+            catch (Exception ex)
+            {
+                _foldersLoading = false;
+                Vm.Error = ex is ApiRequestError or ApiTransportError ? ex.Message : "Something went wrong while loading your mail.";
+            }
         };
         Unloaded += async (_, _) => await StopRealtimeAsync();
     }
@@ -166,7 +186,7 @@ public sealed partial class ShellPage : Page, IChromePage
 
     private void UpdateQuota()
     {
-        if (Vm.Quota is not { } q) { QuotaPanel.Visibility = Visibility.Collapsed; return; }
+        if (Vm.Quota is not { } q || !Nav.IsPaneOpen) { QuotaPanel.Visibility = Visibility.Collapsed; return; }
         QuotaPanel.Visibility = Visibility.Visible;
         QuotaBar.Value = q.Percent ?? (q.LimitBytes is > 0 ? 100.0 * q.UsedBytes / q.LimitBytes.Value : 0);
         QuotaText.Text = q.LimitBytes is { } lim ? $"{ApiAttachmentExt.Human(q.UsedBytes)} of {ApiAttachmentExt.Human(lim)} used" : $"{ApiAttachmentExt.Human(q.UsedBytes)} used";
@@ -206,10 +226,38 @@ public sealed partial class ShellPage : Page, IChromePage
         ReaderErrorText.Text = Vm.OpenUnavailableOffline ? "This message has not been opened on this computer yet." : Vm.OpenError ?? "";
         ReadBar.IsOpen = hasCards && !string.IsNullOrEmpty(Vm.OpenError);
         EarlierPill.Visibility = hasCards && Vm.HasMoreOlder ? Visibility.Visible : Visibility.Collapsed;
+        EarlierText.Text = Vm.EarlierCount > 0 ? $"Show earlier messages ({Vm.EarlierCount} more)" : "Show earlier messages";
         if (hasCards) { ReaderSubject.Text = Vm.OpenMessages[^1].Subject; PositionText.Text = Vm.OpenPosition; }
     }
 
     // ---- sidebar ----
+
+    private const double CompactBelowDip = 1100;
+
+    private void AutoPane(double width)
+    {
+        if (_userPane || width <= 0) return;
+        var wantOpen = width >= CompactBelowDip;
+        if (Nav.IsPaneOpen != wantOpen) Nav.IsPaneOpen = wantOpen;
+    }
+
+    private void TogglePane() { _userPane = true; Nav.IsPaneOpen = !Nav.IsPaneOpen; }
+    private void OnPaneToggle(object sender, RoutedEventArgs e) => TogglePane();
+    private void OnPaneClosing(NavigationView sender, NavigationViewPaneClosingEventArgs args) => DispatcherQueue.TryEnqueue(ApplyPaneState);
+    private void OnPaneStateChanged(NavigationView sender, object args) => DispatcherQueue.TryEnqueue(ApplyPaneState);
+
+    /// <summary>Icons only in the compact rail (66 wide, like the webmail), full rows when it is open.</summary>
+    private void ApplyPaneState()
+    {
+        var open = Nav.IsPaneOpen;
+        BrandText.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        ComposeLabel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        IdentityText.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        IdentityChevron.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        QuotaPanel.Visibility = open && Vm.Quota is not null ? Visibility.Visible : Visibility.Collapsed;
+        RebuildNav();
+        App.MainWindow?.RefreshChrome();
+    }
 
     private void RebuildNav()
     {
@@ -217,11 +265,17 @@ public sealed partial class ShellPage : Page, IChromePage
         try
         {
             Nav.MenuItems.Clear();
+            if (Vm.Folders.Count == 0 && _foldersLoading)
+            {
+                for (var i = 0; i < 6; i++)
+                    Nav.MenuItems.Add(new NavigationViewItem { Content = new SkeletonBar { Height = 14, Radius = 4, Margin = new Thickness(4, 0, 4, 0) }, IsHitTestVisible = false, MinHeight = 36, Height = 36, SelectsOnInvoked = false });
+                return;
+            }
             var addedHeader = false;
             NavigationViewItem? selected = null;
             foreach (var f in Vm.Folders)
             {
-                if (Fmt.IconFor(f) == "folder" && !addedHeader)
+                if (Fmt.IconFor(f) == "folder" && !addedHeader && Nav.IsPaneOpen)
                 {
                     addedHeader = true;
                     Nav.MenuItems.Add(new NavigationViewItemHeader { Content = "Folders" });
@@ -232,30 +286,57 @@ public sealed partial class ShellPage : Page, IChromePage
             }
             if (selected is not null) Nav.SelectedItem = selected;
         }
-        finally { _buildingNav = false; }
+        finally { _buildingNav = false; RestyleAll(); }
     }
 
     private static string Esc(string s) => System.Security.SecurityElement.Escape(s) ?? "";
 
     private NavigationViewItem BuildFolderItem(ApiFolder f)
     {
+        var open = Nav.IsPaneOpen;
         var badge = Fmt.FolderBadge(f);
-        var unreadCount = f.SpecialUse is { } su && su.Contains("draft", StringComparison.OrdinalIgnoreCase) ? 0 : f.Unseen;
-        var countBrush = unreadCount > 0 ? "{ThemeResource TmAccentInkBrush}" : "{ThemeResource TmText3Brush}";
-        var countFont = unreadCount > 0 ? "{StaticResource TmMonoSemi}" : "{StaticResource TmMonoMedium}";
-        var xaml = $@"<Grid xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:ctl='using:TaifaMail.App.Controls' ColumnSpacing='12' Height='36'>
+        var unreadCount = f.SpecialUse is { } su && su.Contains("draft", StringComparison.OrdinalIgnoreCase) ? 0 : f.Unseen ?? 0;
+        var unread = unreadCount > 0;
+        var countBrush = unread ? "{ThemeResource TmAccentInkBrush}" : "{ThemeResource TmText3Brush}";
+        var countFont = unread ? "{StaticResource TmMonoSemi}" : "{StaticResource TmMono}";
+        var baseFont = unread ? "{StaticResource TmFontSemi}" : "{StaticResource TmFont}";
+        var name = Esc(f.Name);
+        var xaml = $@"<Grid xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' xmlns:ctl='using:TaifaMail.App.Controls' ColumnSpacing='12' Height='36' Background='Transparent'>
   <Grid.ColumnDefinitions><ColumnDefinition Width='Auto'/><ColumnDefinition Width='*'/><ColumnDefinition Width='Auto'/></Grid.ColumnDefinitions>
-  <ctl:IconView IconName='{Fmt.IconFor(f)}' Size='16' VerticalAlignment='Center'/>
-  <TextBlock Grid.Column='1' Text='{Esc(f.Name)}' FontFamily='{{StaticResource TmFontMedium}}' FontSize='13' VerticalAlignment='Center' TextTrimming='CharacterEllipsis'/>
-  <TextBlock Grid.Column='2' Text='{Esc(badge)}' FontFamily='{countFont}' FontSize='11' Foreground='{countBrush}' VerticalAlignment='Center'/>
+  <ctl:IconView x:Name='Icon' IconName='{Fmt.IconFor(f)}' Size='15' VerticalAlignment='Center' Foreground='{{ThemeResource TmText2Brush}}' HorizontalAlignment='Center'/>
+  <Grid Grid.Column='1' x:Name='Labels' Visibility='{(open ? "Visible" : "Collapsed")}'>
+    <TextBlock x:Name='Muted' Text='{name}' FontFamily='{baseFont}' FontSize='13' Foreground='{{ThemeResource TmText2Brush}}' VerticalAlignment='Center' TextTrimming='CharacterEllipsis'/>
+    <TextBlock x:Name='Hover' Text='{name}' FontFamily='{baseFont}' FontSize='13' Foreground='{{ThemeResource TmTextBrush}}' VerticalAlignment='Center' TextTrimming='CharacterEllipsis' Visibility='Collapsed'/>
+    <TextBlock x:Name='Active' Text='{name}' FontFamily='{{StaticResource TmFontSemi}}' FontSize='13' Foreground='{{ThemeResource TmAccentInkBrush}}' VerticalAlignment='Center' TextTrimming='CharacterEllipsis' Visibility='Collapsed'/>
+  </Grid>
+  <TextBlock Grid.Column='2' Text='{Esc(badge)}' FontFamily='{countFont}' FontSize='11' Foreground='{countBrush}' VerticalAlignment='Center' Visibility='{(open ? "Visible" : "Collapsed")}'/>
 </Grid>";
-        var item = new NavigationViewItem { Content = (UIElement)XamlReader.Load(xaml), Tag = f, MinHeight = 36, Height = 36, CornerRadius = new CornerRadius(8), Margin = new Thickness(8, 1, 8, 1) };
+        var content = (Grid)XamlReader.Load(xaml);
+        var item = new NavigationViewItem { Content = content, Tag = f, MinHeight = 36, Height = 36, CornerRadius = new CornerRadius(8), Margin = new Thickness(8, 1, 8, 1) };
+        item.PointerEntered += (_, _) => RestyleItem(item, hover: true);
+        item.PointerExited += (_, _) => RestyleItem(item, hover: false);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, badge.Length > 0 ? $"{f.Name}, {badge}" : f.Name);
         return item;
     }
 
+    private static void RestyleItem(NavigationViewItem item, bool hover)
+    {
+        if (item.Content is not Grid g) return;
+        var active = item.IsSelected;
+        if (g.FindName("Muted") is not TextBlock muted || g.FindName("Hover") is not TextBlock hov || g.FindName("Active") is not TextBlock act) return;
+        act.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        hov.Visibility = !active && hover ? Visibility.Visible : Visibility.Collapsed;
+        muted.Visibility = !active && !hover ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RestyleAll()
+    {
+        foreach (var item in Nav.MenuItems.OfType<NavigationViewItem>()) RestyleItem(item, hover: false);
+    }
+
     private void OnFolderSelected(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
+        RestyleAll();
         if (_buildingNav || args.SelectedItemContainer?.Tag is not ApiFolder folder) return;
         if (Vm.SelectedFolder?.Path == folder.Path && Vm.Threads.Count > 0 && !Vm.Searching) return;
         SearchBox.Text = "";
@@ -336,9 +417,18 @@ public sealed partial class ShellPage : Page, IChromePage
     private void OnRowToggleRead(object sender, RoutedEventArgs e) { if (RowOf(sender) is { } r) _ = Vm.SetReadAsync(new[] { r }, read: r.Unread); }
     private void OnRowStar(object sender, RoutedEventArgs e) { if (RowOf(sender) is { } r) _ = Vm.ToggleFlagAsync(new[] { r }); }
 
-    private void OnRowContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    private static ThreadRow? RowFrom(DependencyObject? start)
     {
-        if (RowOf(sender) is not { } row) return;
+        for (var d = start; d is not null; d = VisualTreeHelper.GetParent(d))
+            if (d is FrameworkElement fe && fe.DataContext is ThreadRow r) return r;
+        return null;
+    }
+
+    /// <summary>Right click, Shift+F10 and the Menu key all arrive here; the keyboard uses the selected row.</summary>
+    private void OnListContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    {
+        var row = RowFrom(args.OriginalSource as DependencyObject) ?? ThreadList.SelectedItem as ThreadRow;
+        if (row is null) return;
         var rows = ThreadList.SelectedItems.OfType<ThreadRow>().Contains(row) ? ThreadList.SelectedItems.OfType<ThreadRow>().ToList() : new List<ThreadRow> { row };
         var menu = new MenuFlyout();
         void Add(string text, Action act, string? accel = null)
@@ -351,7 +441,8 @@ public sealed partial class ShellPage : Page, IChromePage
         if (rows.Count == 1) { Add("Reply", () => { _ = Vm.OpenAsync(row); ReplyTo(ComposeMode.Reply); }, "Ctrl+R"); menu.Items.Add(new MenuFlyoutSeparator()); }
         Add("Archive", () => _ = Vm.ArchiveAsync(rows), "E");
         Add("Delete", () => _ = Vm.DeleteAsync(rows), "Del");
-        Add("Mark as junk", () => _ = Vm.JunkAsync(rows), "Ctrl+J");
+        if (Vm.IsJunkFolder) Add("Not junk", () => _ = Vm.NotJunkAsync(rows), "Ctrl+J");
+        else Add("Mark as junk", () => _ = Vm.JunkAsync(rows), "Ctrl+J");
         menu.Items.Add(new MenuFlyoutSeparator());
         Add(rows.Any(r => r.Unread) ? "Mark as read" : "Mark as unread", () => _ = Vm.SetReadAsync(rows, read: rows.Any(r => r.Unread)), rows.Any(r => r.Unread) ? "Ctrl+Q" : "Ctrl+U");
         Add(rows.All(r => r.Flagged) ? "Remove star" : "Star", () => _ = Vm.ToggleFlagAsync(rows), "Ctrl+Shift+G");
@@ -364,8 +455,8 @@ public sealed partial class ShellPage : Page, IChromePage
             move.Items.Add(mi);
         }
         menu.Items.Add(move);
-        if (args.TryGetPosition(sender, out var pos)) menu.ShowAt((FrameworkElement)sender, new FlyoutShowOptions { Position = pos });
-        else menu.ShowAt((FrameworkElement)sender);
+        if (args.TryGetPosition(ThreadList, out var pos)) menu.ShowAt(ThreadList, new FlyoutShowOptions { Position = pos });
+        else menu.ShowAt(ThreadList);
         args.Handled = true;
     }
 
@@ -373,7 +464,7 @@ public sealed partial class ShellPage : Page, IChromePage
 
     private IReadOnlyList<ThreadRow> Open() => Vm.SelectedThread is { } r ? new[] { r } : Array.Empty<ThreadRow>();
     private void OnReaderArchive(object sender, RoutedEventArgs e) => _ = Vm.ArchiveAsync(Open());
-    private void OnReaderJunk(object sender, RoutedEventArgs e) => _ = Vm.JunkAsync(Open());
+    private void OnReaderJunk(object sender, RoutedEventArgs e) => _ = Vm.IsJunkFolder ? Vm.NotJunkAsync(Open()) : Vm.JunkAsync(Open());
     private void OnReaderDelete(object sender, RoutedEventArgs e) => _ = Vm.DeleteAsync(Open());
     private void OnReaderUnread(object sender, RoutedEventArgs e) => _ = Vm.SetReadAsync(Open(), read: false);
     private void OnReaderStar(object sender, RoutedEventArgs e) => _ = Vm.ToggleFlagAsync(Open());
@@ -409,6 +500,12 @@ public sealed partial class ShellPage : Page, IChromePage
 
     private async void OpenCompose(ComposeSeed seed)
     {
+        try { await OpenComposeCoreAsync(seed); }
+        catch (Exception ex) { ShowToast("Could not open the compose window. " + ex.Message, null); }
+    }
+
+    private async Task OpenComposeCoreAsync(ComposeSeed seed)
+    {
         if (_ctx.RealMail is null) { ShowToast("Compose is not available in preview mode.", null); return; }
         if (Vm.Offline) { ShowToast(MailShellViewModel.OfflineTip, null); return; }
         var cvm = new TaifaMail.Core.Compose.ComposeViewModel(new ComposeApi(_ctx.RealMail), _ctx.Me.Address, seed);
@@ -428,7 +525,7 @@ public sealed partial class ShellPage : Page, IChromePage
         ToastUndo.Visibility = undo is null ? Visibility.Collapsed : Visibility.Visible;
         ToastPill.Visibility = Visibility.Visible;
         ToastPill.Opacity = 1;
-        ToastPill.Translation = new System.Numerics.Vector3(0, 0, 0);
+        ToastPill.Translation = new System.Numerics.Vector3(0, 0, 32);
         _toastTimer?.Stop();
         _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(8) };
         _toastTimer.Tick += (_, _) => HideToast();
@@ -449,10 +546,13 @@ public sealed partial class ShellPage : Page, IChromePage
     {
         var undo = _toastUndo;
         HideToast();
-        if (undo is not null) await undo();
+        try { if (undo is not null) await undo(); }
+        catch (Exception) { ShowToast("Could not undo that", null); }
     }
 
     private void OnToastClose(object sender, RoutedEventArgs e) => HideToast();
+    private void OnToastEntered(object sender, PointerRoutedEventArgs e) => _toastTimer?.Stop();
+    private void OnToastExited(object sender, PointerRoutedEventArgs e) { if (ToastPill.Visibility == Visibility.Visible) _toastTimer?.Start(); }
 
     // ---- search ----
 
@@ -501,6 +601,18 @@ public sealed partial class ShellPage : Page, IChromePage
     {
         _draggingSplitter = false;
         ((UIElement)sender).ReleasePointerCapture(e.Pointer);
+        App.MainWindow?.RefreshChrome();
+    }
+
+    private void OnSplitterEntered(object sender, PointerRoutedEventArgs e) => SplitterLine.Width = 3;
+    private void OnSplitterExited(object sender, PointerRoutedEventArgs e) { if (!_draggingSplitter) SplitterLine.Width = 1; }
+
+    private void OnSplitterKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        var delta = e.Key == VirtualKey.Left ? -16 : e.Key == VirtualKey.Right ? 16 : 0;
+        if (delta == 0) return;
+        ListColumn.Width = new GridLength(Math.Clamp(ListColumn.ActualWidth + delta, 300, 480));
+        e.Handled = true;
     }
 
     // ---- reader messages ----
@@ -525,7 +637,7 @@ public sealed partial class ShellPage : Page, IChromePage
             void Render() => web.Show(card.Detail.Html!, card.AllowImages, ActualTheme == ElementTheme.Dark);
             web.LinkRequested += (uri, text) => { if (!card.LinksDisabled) _ = PromptAndOpenAsync(uri, text); };
             web.WheelForwarded += dy => ReaderScroll.ChangeView(null, ReaderScroll.VerticalOffset + dy, null, true);
-            web.FailedToStart += () => DispatcherQueue.TryEnqueue(() => host.Content = BuildPlainText(card.PlainText));
+            web.FailedToStart += () => DispatcherQueue.TryEnqueue(() => host.Content = BuildPlainText(card));
             card.PropertyChanged += (_, args) =>
             {
                 if (args.PropertyName == nameof(MessageCardVm.AllowImages)) { Render(); if (card.AllowImages) web.RemeasureSoon(); }
@@ -537,17 +649,19 @@ public sealed partial class ShellPage : Page, IChromePage
         }
         else
         {
-            host.Content = BuildPlainText(card.PlainText);
+            host.Content = BuildPlainText(card);
         }
     }
 
-    private RichTextBlock BuildPlainText(string text)
+    private RichTextBlock BuildPlainText(MessageCardVm card)
     {
+        var text = card.PlainText;
         var rtb = new RichTextBlock { FontFamily = (Microsoft.UI.Xaml.Media.FontFamily)Application.Current.Resources["TmFont"], FontSize = 14, LineHeight = 22, IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap };
         foreach (var block in text.Replace("\r\n", "\n").Split("\n\n"))
         {
             var p = new Paragraph();
-            var links = HtmlBody.FindLinks(block);
+            // a message whose links are disabled by the server shows URLs as plain text, never as links
+            var links = card.LinksDisabled ? Array.Empty<(int Start, int Length)>() : HtmlBody.FindLinks(block);
             var pos = 0;
             foreach (var (start, length) in links)
             {
@@ -571,6 +685,8 @@ public sealed partial class ShellPage : Page, IChromePage
         if (!check.Allowed || check.Uri is null) return;
         var body = new StackPanel { Spacing = 8 };
         body.Children.Add(new TextBlock { Text = check.Uri.ToString(), Style = (Style)Application.Current.Resources["TmMonoText"], TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true });
+        if (check.ShowBothForms)
+            body.Children.Add(new TextBlock { Text = $"Host: {check.DisplayHost}\nPunycode: {check.Host}", Style = (Style)Application.Current.Resources["TmMonoText"], TextWrapping = TextWrapping.Wrap });
         if (check.HostDiffersFromText)
             body.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Warning, Message = "The link text names a different site than the one this link opens." });
         var dialog = new ContentDialog
@@ -588,17 +704,39 @@ public sealed partial class ShellPage : Page, IChromePage
 
     // ---- attachments ----
 
+    private static string Origin(string apiBase) => Uri.TryCreate(apiBase, UriKind.Absolute, out var u) ? u.GetLeftPart(UriPartial.Authority) : apiBase;
+
+    /// <summary>Mark of the Web: the file is flagged as downloaded from the internet so Windows applies SmartScreen and Office protections.</summary>
+    private void WriteMotw(string path)
+    {
+        try { File.WriteAllText(path + ":Zone.Identifier", AttachmentSafety.ZoneIdentifier(Origin(_ctx.ApiBase))); }
+        catch (Exception) { /* not NTFS: nothing to mark */ }
+    }
+
     private async void OnAttachmentOpen(object sender, RoutedEventArgs e)
     {
-        var (card, att) = AttachmentOf(sender);
-        if (card is null || att is null) return;
         try
         {
+            var (card, att) = AttachmentOf(sender);
+            if (card is null || att is null) return;
             if (_ctx.RealMail is null) { await Notify("Attachments are not available in preview mode."); return; }
-            var dir = Path.Combine(Path.GetTempPath(), "TaifaMail", "att", Guid.NewGuid().ToString("N"));
+            if (AttachmentSafety.IsRisky(att.Filename))
+            {
+                // executables, scripts, containers and macro documents are never opened straight from the app
+                var d = new ContentDialog
+                {
+                    XamlRoot = XamlRoot, Title = "This file type is not opened from here",
+                    Content = $"{AttachmentSafety.SafeName(att.Filename)} can run code or contain macros. Save it and scan it before you open it.",
+                    PrimaryButtonText = "Save", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close, RequestedTheme = ActualTheme,
+                };
+                if (await d.ShowAsync() == ContentDialogResult.Primary) await SaveAttachmentAsync(card, att);
+                return;
+            }
+            var dir = Path.Combine(AppServices.AttachmentTempDir, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, SafeName(att.Filename));
+            var path = Path.Combine(dir, AttachmentSafety.SafeName(att.Filename));
             await using (var fs = File.Create(path)) await _ctx.RealMail.DownloadAttachmentAsync(card.Detail.Uid, att.PartId, card.Detail.Folder, fs);
+            WriteMotw(path);
             await Launcher.LaunchFileAsync(await StorageFile.GetFileFromPathAsync(path));
         }
         catch (Exception ex) { await Notify("Could not open the attachment. " + ex.Message); }
@@ -606,33 +744,33 @@ public sealed partial class ShellPage : Page, IChromePage
 
     private async void OnAttachmentSave(object sender, RoutedEventArgs e)
     {
-        var (card, att) = AttachmentOf(sender);
-        if (card is null || att is null) return;
         try
         {
-            if (_ctx.RealMail is null) { await Notify("Attachments are not available in preview mode."); return; }
-            var picker = new FileSavePicker { SuggestedFileName = Path.GetFileNameWithoutExtension(att.Filename) };
-            var ext = Path.GetExtension(att.Filename);
-            picker.FileTypeChoices.Add(string.IsNullOrEmpty(ext) ? "File" : ext.TrimStart('.').ToUpperInvariant() + " file", new List<string> { string.IsNullOrEmpty(ext) ? "." : ext });
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow));
-            var file = await picker.PickSaveFileAsync();
-            if (file is null) return;
-            await using var fs = File.Create(file.Path);
-            await _ctx.RealMail.DownloadAttachmentAsync(card.Detail.Uid, att.PartId, card.Detail.Folder, fs);
+            var (card, att) = AttachmentOf(sender);
+            if (card is null || att is null) return;
+            await SaveAttachmentAsync(card, att);
         }
         catch (Exception ex) { await Notify("Could not save the attachment. " + ex.Message); }
+    }
+
+    private async Task SaveAttachmentAsync(MessageCardVm card, ApiAttachment att)
+    {
+        if (_ctx.RealMail is null) { await Notify("Attachments are not available in preview mode."); return; }
+        var safe = AttachmentSafety.SafeName(att.Filename);
+        var picker = new FileSavePicker { SuggestedFileName = Path.GetFileNameWithoutExtension(safe) };
+        var ext = Path.GetExtension(safe);
+        picker.FileTypeChoices.Add(string.IsNullOrEmpty(ext) ? "File" : ext.TrimStart('.').ToUpperInvariant() + " file", new List<string> { string.IsNullOrEmpty(ext) ? "." : ext });
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow));
+        var file = await picker.PickSaveFileAsync();
+        if (file is null) return;
+        await using (var fs = File.Create(file.Path)) await _ctx.RealMail.DownloadAttachmentAsync(card.Detail.Uid, att.PartId, card.Detail.Folder, fs);
+        WriteMotw(file.Path);
     }
 
     private (MessageCardVm?, ApiAttachment?) AttachmentOf(object sender)
     {
         var button = (FrameworkElement)sender;
         return (FindCard(button), button.Tag as ApiAttachment);
-    }
-
-    private static string SafeName(string name)
-    {
-        foreach (var c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
-        return name.Length == 0 ? "attachment" : name;
     }
 
     private async Task Notify(string message) =>
@@ -686,7 +824,7 @@ public sealed partial class ShellPage : Page, IChromePage
         {
             var page = await _ctx.Mail.ConversationsAsync("INBOX", 20, 0);
             var latest = page.Items.Select(i => i.Latest).ToList();
-            var decision = NotifyPolicy.Decide(latest, _highWater, _ctx.Me.Address, _ctx.Settings.NewMailAlerts);
+            var decision = NotifyPolicy.Decide(latest, _highWater, _ctx.Me.Address, _ctx.Settings.NewMailAlerts, _ctx.Settings.ShowNotificationPreview);
             _highWater = decision.HighWater;
             if (!_ctx.IsPreview)
                 foreach (var t in NotifyPolicy.Collapse(decision.Toasts)) _ctx.Notifications?.Show(t);
@@ -704,6 +842,12 @@ public sealed partial class ShellPage : Page, IChromePage
 
     private async void OnToastActivated(string folder, long uid)
     {
+        try { await OpenFromToastAsync(folder, uid); }
+        catch (Exception) { }
+    }
+
+    private async Task OpenFromToastAsync(string folder, long uid)
+    {
         var inbox = Vm.Folders.FirstOrDefault(f => f.Path == folder) ?? Vm.Folders.FirstOrDefault(f => f.Path == "INBOX");
         if (inbox is null) return;
         if (Vm.SelectedFolder?.Path != inbox.Path || Vm.Searching) { SearchBox.Text = ""; await Vm.LoadFolderAsync(inbox); }
@@ -712,6 +856,44 @@ public sealed partial class ShellPage : Page, IChromePage
         if (row is null) return;
         ThreadList.SelectedItem = row;
         if (!ReferenceEquals(Vm.SelectedThread, row)) await Vm.OpenAsync(row);
+    }
+
+    // ---- body view wiring, confirmations ----
+
+    private (string Token, DateTimeOffset Expires)? _capability;
+
+    /// <summary>Gives the body viewer what it needs for the server image proxy: origin, mailbox, a capability and a cookie authenticated fetch.</summary>
+    private void ConfigureBodyView()
+    {
+        BodyWebView.ApiBase = _ctx.ApiBase;
+        BodyWebView.MailboxId = _ctx.Mail.MailboxId;
+        BodyWebView.ProxyFetcher = _ctx.Api is { } api ? url => api.TryGetBytesAsync(url) : null;
+        BodyWebView.CapabilityProvider = _ctx.RealMail is { } mail ? async () =>
+        {
+            try
+            {
+                if (_capability is { } c && c.Expires > DateTimeOffset.UtcNow.AddMinutes(5)) return c.Token;
+                var cap = await mail.ImageProxyCapabilityAsync();
+                _capability = (cap.Token, DateTimeOffset.TryParse(cap.ExpiresAt, out var exp) ? exp : DateTimeOffset.UtcNow.AddMinutes(10));
+                return cap.Token;
+            }
+            catch (Exception) { return null; }
+        } : null;
+    }
+
+    private async Task<bool> ConfirmDeleteForeverAsync(int count)
+    {
+        var d = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Delete forever?",
+            Content = count == 1 ? "This conversation will be deleted permanently. This cannot be undone." : $"These {count} conversations will be deleted permanently. This cannot be undone.",
+            PrimaryButtonText = "Delete forever",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            RequestedTheme = ActualTheme,
+        };
+        return await d.ShowAsync() == ContentDialogResult.Primary;
     }
 
     // ---- helpers ----

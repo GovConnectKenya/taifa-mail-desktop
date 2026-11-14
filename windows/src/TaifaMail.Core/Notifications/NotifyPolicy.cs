@@ -15,7 +15,7 @@ public sealed record NotifyDecision(IReadOnlyList<ToastInfo> Toasts, long HighWa
 /// </summary>
 public static class NotifyPolicy
 {
-    public static NotifyDecision Decide(IReadOnlyList<ApiMailSummary> inboxNewest, long? highWater, string ownAddress, bool alertsEnabled)
+    public static NotifyDecision Decide(IReadOnlyList<ApiMailSummary> inboxNewest, long? highWater, string ownAddress, bool alertsEnabled, bool showPreview = true)
     {
         var top = inboxNewest.Where(m => IsInbox(m.Folder)).Select(m => m.Uid).DefaultIfEmpty(0).Max();
         if (highWater is null) return new NotifyDecision(Array.Empty<ToastInfo>(), top);
@@ -24,10 +24,19 @@ public static class NotifyPolicy
             ? inboxNewest
                 .Where(m => IsInbox(m.Folder) && !m.Seen && m.Uid > highWater && AvatarRule.NormalizeAddress(m.FromAddr) != own)
                 .OrderBy(m => m.Uid)
-                .Select(m => new ToastInfo(string.IsNullOrWhiteSpace(m.FromName) ? m.FromAddr : m.FromName.Trim(), m.Subject.Length > 0 ? m.Subject : "(no subject)", m.Folder, m.Uid))
+                .Select(m => Toast(m, showPreview))
                 .ToList()
             : new List<ToastInfo>();
         return new NotifyDecision(toasts, Math.Max(highWater.Value, top));
+    }
+
+    /// <summary>A warned message never shows its subject; with the preview setting off every toast is generic.</summary>
+    private static ToastInfo Toast(ApiMailSummary m, bool showPreview)
+    {
+        var warned = !string.IsNullOrEmpty(m.AuthLevel) || m.AuthWarned;
+        if (!showPreview) return new ToastInfo("Taifa Mail", "New message", m.Folder, m.Uid);
+        var sender = string.IsNullOrWhiteSpace(m.FromName) ? m.FromAddr : m.FromName.Trim();
+        return new ToastInfo(sender, warned ? "New message" : (m.Subject.Length > 0 ? m.Subject : "(no subject)"), m.Folder, m.Uid);
     }
 
     private static bool IsInbox(string folder) => string.Equals(folder, "INBOX", StringComparison.OrdinalIgnoreCase);

@@ -33,6 +33,9 @@ public interface IMailApi
     Task<ApiBatchResult> BatchArchiveAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) => throw new NotSupportedException();
     Task<ApiBatchResult> BatchDeleteAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) => throw new NotSupportedException();
     Task<ApiBatchResult> BatchSpamAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiBatchResult> BatchNotSpamAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiBatchResult> BatchPermanentAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiMailList> MessagesAsync(string folder, int limit = 50, int offset = 0, CancellationToken ct = default) => throw new NotSupportedException();
     Task<ApiResolved> ResolveAsync(string messageId, string folder, CancellationToken ct = default) => throw new NotSupportedException();
     Task<ApiConversationWindow> OlderAsync(long uid, string folder, long before, CancellationToken ct = default) => throw new NotSupportedException();
 }

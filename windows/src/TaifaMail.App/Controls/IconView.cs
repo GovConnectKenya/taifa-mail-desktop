@@ -42,7 +42,13 @@ public sealed class IconView : UserControl
     {
         if (string.IsNullOrEmpty(IconName)) { _path.Data = null; return; }
         if (IconData.Paths.TryGetValue(IconName, out var d))
+        {
             _path.Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), d);
+            var filled = IconData.Filled.Contains(IconName);
+            _path.StrokeThickness = filled ? 0 : 1.5;
+            if (filled) _path.SetBinding(ShapePath.FillProperty, new Microsoft.UI.Xaml.Data.Binding { Source = this, Path = new PropertyPath(nameof(Foreground)) });
+            else _path.ClearValue(ShapePath.FillProperty);
+        }
         _canvas.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
         _canvas.RenderTransform = Mirror ? new ScaleTransform { ScaleX = -1 } : null;
     }

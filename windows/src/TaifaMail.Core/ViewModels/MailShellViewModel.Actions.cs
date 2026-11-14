@@ -1,5 +1,3 @@
-using CommunityToolkit.Mvvm.ComponentModel;
-using TaifaMail.Core.Avatars;
 using TaifaMail.Core.Models;
 using TaifaMail.Core.Net;
 
@@ -35,15 +33,31 @@ public sealed partial class MailShellViewModel
     public Task ArchiveAsync(IReadOnlyList<ThreadRow> rows) =>
         MoveLikeAsync(rows, "Archived", FolderByRole("archive"), (f, u) => _api.BatchArchiveAsync(f, u));
 
-    public Task DeleteAsync(IReadOnlyList<ThreadRow> rows) =>
-        MoveLikeAsync(rows, "Moved to Trash", FolderByRole("trash"), (f, u) => _api.BatchDeleteAsync(f, u));
+    /// <summary>In Trash and Junk delete means delete forever (batch/permanent), asked first. Elsewhere it moves to Trash.</summary>
+    public async Task DeleteAsync(IReadOnlyList<ThreadRow> rows)
+    {
+        if (rows.Count == 0) return;
+        if (IsTrashFolder || IsJunkFolder)
+        {
+            if (Blocked()) return;
+            if (ConfirmPermanentDelete is null || !await ConfirmPermanentDelete(rows.Count)) return;
+            await MoveLikeAsync(rows, "Deleted forever", null, (f, u) => _api.BatchPermanentAsync(f, u));
+            return;
+        }
+        await MoveLikeAsync(rows, "Moved to Trash", FolderByRole("trash"), (f, u) => _api.BatchDeleteAsync(f, u));
+    }
 
     public Task JunkAsync(IReadOnlyList<ThreadRow> rows) =>
         MoveLikeAsync(rows, "Moved to Junk", FolderByRole("junk"), (f, u) => _api.BatchSpamAsync(f, u));
 
+    /// <summary>"Not junk": the message goes back to the Inbox (batch/not-spam).</summary>
+    public Task NotJunkAsync(IReadOnlyList<ThreadRow> rows) =>
+        MoveLikeAsync(rows, "Moved to Inbox", null, (f, u) => _api.BatchNotSpamAsync(f, u));
+
     public Task MoveToAsync(IReadOnlyList<ThreadRow> rows, string destination) =>
         MoveLikeAsync(rows, $"Moved to {Folders.FirstOrDefault(f => f.Path == destination)?.Name ?? destination}", destination, (f, u) => _api.BatchMoveAsync(f, u, destination));
 
+    /// <summary>Actions run on the folder the list was loaded for (where the uids live), not on the latest message's folder.</summary>
     private async Task MoveLikeAsync(IReadOnlyList<ThreadRow> rows, string message, string? destination, Func<string, IReadOnlyCollection<long>, Task<ApiBatchResult>> call)
     {
         if (rows.Count == 0 || Blocked()) return;
@@ -52,34 +66,47 @@ public sealed partial class MailShellViewModel
         foreach (var (r, _) in snapshot) Threads.Remove(r);
         if (openWasAffected) { SelectedThread = null; OpenMessages.Clear(); }
         IsEmpty = Threads.Count == 0;
-        var unreadMoved = snapshot.Count(x => x.Row.Unread);
-        if (unreadMoved > 0) AdjustUnseen(-unreadMoved);
+        var unreadByFolder = snapshot.Where(x => x.Row.Unread).GroupBy(x => x.Row.ActionFolder).ToDictionary(g => g.Key, g => g.Count());
+        foreach (var (folder, n) in unreadByFolder) AdjustUnseen(folder, -n);
+
+        int requested = 0, succeeded = 0;
         try
         {
-            foreach (var g in rows.GroupBy(r => r.Folder))
+            foreach (var g in rows.GroupBy(r => r.ActionFolder))
             {
-                var result = await call(g.Key, g.SelectMany(r => r.Uids).Distinct().ToList());
-                if (!result.Ok && (result.Succeeded?.Count ?? 0) == 0) throw new ApiRequestError("The server refused the change.", 0);
+                var uids = g.SelectMany(r => r.Uids).Distinct().ToList();
+                var result = await call(g.Key, uids);
+                requested += uids.Count;
+                succeeded += result.Succeeded?.Count ?? (result.Ok ? uids.Count : 0);
             }
         }
         catch (Exception e) when (e is ApiRequestError or ApiTransportError)
         {
             foreach (var (r, i) in snapshot) Threads.Insert(Math.Min(i, Threads.Count), r);
             IsEmpty = Threads.Count == 0;
-            if (unreadMoved > 0) AdjustUnseen(+unreadMoved);
+            foreach (var (folder, n) in unreadByFolder) AdjustUnseen(folder, +n);
             if (e is ApiTransportError) Offline = true;
             Notice?.Invoke(e is ApiTransportError ? OfflineTip : "Could not complete that. Nothing was changed.", null);
             return;
         }
         OnPropertyChanged(nameof(HasMore));
-        Func<Task>? undo = destination is null ? null : async () =>
+        if (succeeded < requested)
+        {
+            // partial result: the server is the truth, so refresh and say what happened
+            await ReconcileAsync();
+            Notice?.Invoke(succeeded == 0 ? "Could not complete that. Nothing was changed." : $"{succeeded} of {requested} done. {requested - succeeded} could not be changed.", null);
+            return;
+        }
+        // undo needs the new uid of each moved message, which the API only gives per message id: offered for single messages
+        var singles = snapshot.All(x => x.Row.Uids.Count == 1 && x.Row.Model.Count == 1);
+        Func<Task>? undo = destination is null || !singles ? null : async () =>
         {
             try
             {
                 foreach (var (r, _) in snapshot)
                 {
                     var found = await _api.ResolveAsync(r.Model.Latest.MessageId, destination);
-                    await _api.BatchMoveAsync(destination, new[] { found.Uid }, r.Folder);
+                    await _api.BatchMoveAsync(destination, new[] { found.Uid }, r.ActionFolder);
                 }
             }
             catch (Exception e) when (e is ApiRequestError or ApiTransportError) { Notice?.Invoke("Could not undo that", null); }
@@ -103,18 +130,18 @@ public sealed partial class MailShellViewModel
         });
     }
 
-    /// <summary>Marks the rows read or unread, keeping the folder's unseen count in step.</summary>
+    /// <summary>Marks the rows read or unread, keeping each folder's unseen count in step.</summary>
     public async Task SetReadAsync(IReadOnlyList<ThreadRow> rows, bool read)
     {
         if (rows.Count == 0 || Blocked()) return;
         var changing = rows.Where(r => r.Unread == read).ToList();
         if (changing.Count == 0) return;
         foreach (var r in changing) r.Unread = !read;
-        AdjustUnseen(read ? -changing.Count : +changing.Count);
+        foreach (var g in changing.GroupBy(r => r.ActionFolder)) AdjustUnseen(g.Key, read ? -g.Count() : +g.Count());
         if (!await TryFlags(changing, seen: read))
         {
             foreach (var r in changing) r.Unread = read;
-            AdjustUnseen(read ? +changing.Count : -changing.Count);
+            foreach (var g in changing.GroupBy(r => r.ActionFolder)) AdjustUnseen(g.Key, read ? +g.Count() : -g.Count());
         }
     }
 
@@ -122,7 +149,7 @@ public sealed partial class MailShellViewModel
     {
         try
         {
-            foreach (var g in rows.GroupBy(r => r.Folder))
+            foreach (var g in rows.GroupBy(r => r.ActionFolder))
                 await _api.BatchFlagsAsync(g.Key, g.SelectMany(r => r.Uids).Distinct().ToList(), seen, flagged);
             return true;
         }

@@ -32,6 +32,7 @@ public sealed class TaifaApiClient : IDisposable
         inner ??= new SocketsHttpHandler
         {
             UseCookies = false,
+            AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         };
@@ -51,11 +52,14 @@ public sealed class TaifaApiClient : IDisposable
         _jar.Clear();
     }
 
-    private async Task<string> EnsureCsrfAsync(CancellationToken ct)
+    private async Task<string> EnsureCsrfAsync(CancellationToken ct, bool fresh = false)
     {
-        if (_csrf.Length > 0) return _csrf;
-        var cookie = _jar.CookieValue("tfm_csrf");
-        if (!string.IsNullOrEmpty(cookie)) return _csrf = cookie;
+        if (!fresh)
+        {
+            if (_csrf.Length > 0) return _csrf;
+            var cookie = _jar.CookieValue("tfm_csrf");
+            if (!string.IsNullOrEmpty(cookie)) return _csrf = cookie;
+        }
         using var req = new HttpRequestMessage(HttpMethod.Get, new Uri(BaseUri, "auth/csrf"));
         using var res = await SendRawAsync(req, ct).ConfigureAwait(false);
         string? token = null;
@@ -107,13 +111,19 @@ public sealed class TaifaApiClient : IDisposable
             if (res.StatusCode == HttpStatusCode.Forbidden && attempt == 0 && ErrorCode(text) == "csrf_invalid")
             {
                 _csrf = "";
+                await EnsureCsrfAsync(ct, fresh: true).ConfigureAwait(false);
                 continue;
             }
             if (res.StatusCode == HttpStatusCode.Unauthorized && attempt == 0 && !IsLoginPath(path))
             {
-                if (await RefreshAsync(ct).ConfigureAwait(false)) continue;
-                SessionExpired?.Invoke();
+                switch (await RefreshSharedAsync(ct).ConfigureAwait(false))
+                {
+                    case RefreshOutcome.Renewed: continue;
+                    case RefreshOutcome.Rejected: SessionExpired?.Invoke(); break;
+                    default: throw new ApiTransportError("Taifa Mail is not answering right now. Your session is kept; try again shortly.");
+                }
             }
+            if ((int)res.StatusCode is >= 300 and < 400) throw new ApiRequestError("Taifa Mail answered with an unexpected redirect.", (int)res.StatusCode, "redirect");
             if (!res.IsSuccessStatusCode) throw ToError(res.StatusCode, text);
             return text;
         }
@@ -129,10 +139,27 @@ public sealed class TaifaApiClient : IDisposable
         if (!string.IsNullOrEmpty(c)) _csrf = c;
     }
 
-    /// <summary>One refresh at a time; concurrent 401s wait for the first and reuse its outcome.</summary>
-    private async Task<bool> RefreshAsync(CancellationToken ct)
+    public enum RefreshOutcome { Renewed, Rejected, Transient }
+
+    private Task<RefreshOutcome>? _refreshTask;
+    private readonly object _refreshLock = new();
+
+    /// <summary>All concurrent 401s share one in flight refresh. Only 401 or 403 from the refresh ends the session.</summary>
+    private Task<RefreshOutcome> RefreshSharedAsync(CancellationToken ct)
     {
-        await _refreshGate.WaitAsync(ct).ConfigureAwait(false);
+        lock (_refreshLock)
+        {
+            return _refreshTask is { IsCompleted: false } running ? running : _refreshTask = RefreshAsync(CancellationToken.None);
+        }
+    }
+
+    public static RefreshOutcome Classify(HttpStatusCode status) =>
+        status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ? RefreshOutcome.Rejected
+        : (int)status is >= 200 and < 300 ? RefreshOutcome.Renewed
+        : RefreshOutcome.Transient;
+
+    private async Task<RefreshOutcome> RefreshAsync(CancellationToken ct)
+    {
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(BaseUri, "auth/mailbox/refresh"));
@@ -140,9 +167,10 @@ public sealed class TaifaApiClient : IDisposable
             req.Headers.TryAddWithoutValidation("X-CSRF-Token", await EnsureCsrfAsync(ct).ConfigureAwait(false));
             using var res = await SendRawAsync(req, ct).ConfigureAwait(false);
             TrackCsrf();
-            return res.IsSuccessStatusCode;
+            return Classify(res.StatusCode);
         }
-        finally { _refreshGate.Release(); }
+        catch (ApiTransportError) { return RefreshOutcome.Transient; }
+        catch (ApiRequestError) { return RefreshOutcome.Transient; }
     }
 
     public async Task<T> GetAsync<T>(string path, CancellationToken ct = default) =>
@@ -208,7 +236,8 @@ public sealed class TaifaApiClient : IDisposable
     private static T Decode<T>(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return default!;
-        return JsonSerializer.Deserialize<T>(text, TaifaJson.Options)!;
+        try { return JsonSerializer.Deserialize<T>(text, TaifaJson.Options)!; }
+        catch (JsonException e) { throw new ApiRequestError("Taifa Mail sent a reply this version cannot read.", 502, "bad_reply") { }.WithInner(e); }
     }
 
     private static string? ErrorCode(string body)

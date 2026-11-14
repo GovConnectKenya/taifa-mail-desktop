@@ -86,8 +86,21 @@ public sealed class MailApi : IMailApi
     public Task<ApiConversationWindow> OlderAsync(long uid, string folder, long before, CancellationToken ct = default) =>
         ConversationAsync(uid, folder, 20, before, ct);
 
-    public Task<ApiContactList> ContactsAsync(string q, int limit = 8, CancellationToken ct = default) =>
-        _api.GetAsync<ApiContactList>("/v1/mailbox/contacts/" + Q(("q", q), ("limit", limit)), ct);
+    /// <summary>The contacts endpoint answers a bare JSON array (contacts_book.py), not an envelope.</summary>
+    public Task<List<ApiContact>> ContactsAsync(string q, int limit = 8, CancellationToken ct = default) =>
+        _api.GetAsync<List<ApiContact>>("/v1/mailbox/contacts/" + Q(("q", q), ("limit", limit)), ct);
+
+    public Task<ApiFileEnvelope> FileStatusAsync(string fileId, CancellationToken ct = default) =>
+        _api.GetAsync<ApiFileEnvelope>($"/v1/files/{Uri.EscapeDataString(fileId)}", ct);
+
+    public Task<ApiImageCapability> ImageProxyCapabilityAsync(CancellationToken ct = default) =>
+        _api.GetAsync<ApiImageCapability>(P("/image-proxy-capability"), ct);
+
+    public Task<ApiBatchResult> BatchNotSpamAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) =>
+        _api.PostAsync<ApiBatchResult>(P("/messages/batch/not-spam" + Q(("folder", folder))), new { uids }, ct);
+
+    public Task<ApiBatchResult> BatchPermanentAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) =>
+        _api.PostAsync<ApiBatchResult>(P("/messages/batch/permanent" + Q(("folder", folder))), new { uids }, ct);
 
     public Task<ApiFileTicket> CreateUploadAsync(string filename, string mime, long size, CancellationToken ct = default) =>
         _api.PostAsync<ApiFileTicket>("/v1/files/", new { filename, mime, size, access = "link", mailbox_id = MailboxId, expires_in_days = (int?)null }, ct);

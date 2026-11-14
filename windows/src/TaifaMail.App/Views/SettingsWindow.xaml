@@ -41,15 +41,19 @@
           <TextBlock Text="Notifications" Style="{StaticResource TmDisplay}"/>
           <ToggleSwitch x:Name="AlertsToggle" Header="New mail notifications" OnContent="On" OffContent="Off" Toggled="OnAlertsToggled"/>
           <ToggleSwitch x:Name="BadgeToggle" Header="Taskbar badge with the Inbox unread count" OnContent="On" OffContent="Off" Toggled="OnBadgeToggled"/>
-          <TextBlock Text="Notifications arrive while Taifa Mail is running." Style="{StaticResource TmMeta}"/>
+          <ToggleSwitch x:Name="PreviewToggle" Header="Show sender and subject in notifications" OnContent="On" OffContent="Off" Toggled="OnPreviewToggled"/>
+          <TextBlock Text="Notifications arrive while Taifa Mail is running. With the preview off they only say there is a new message." Style="{StaticResource TmMeta}" TextWrapping="Wrap"/>
         </StackPanel>
         <StackPanel x:Name="SignaturePane" Spacing="12" Visibility="Collapsed">
           <TextBlock Text="Signature" Style="{StaticResource TmDisplay}"/>
           <ProgressBar x:Name="SignatureLoading" IsIndeterminate="True"/>
           <InfoBar x:Name="SignatureError" Severity="Error" IsClosable="False" IsOpen="False"/>
+          <InfoBar x:Name="SignatureWeb" Severity="Informational" IsClosable="False" IsOpen="False" Message="This signature was built on the web. Edit it there so its layout is kept.">
+            <InfoBar.ActionButton><Button Content="Edit on the web" Click="OnEditSignatureOnWeb" Style="{StaticResource TmTextButton}"/></InfoBar.ActionButton>
+          </InfoBar>
           <TextBox x:Name="SignatureBox" Style="{StaticResource TmFieldBox}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" AutomationProperties.Name="Signature"/>
           <StackPanel Orientation="Horizontal" Spacing="12">
-            <Button Content="Save" Style="{StaticResource TmPrimaryButton}" Click="OnSaveSignature"/>
+            <Button x:Name="SaveSignatureButton" Content="Save" Style="{StaticResource TmPrimaryButton}" Click="OnSaveSignature"/>
             <TextBlock x:Name="SignatureSaved" Style="{StaticResource TmMeta}" VerticalAlignment="Center"/>
           </StackPanel>
         </StackPanel>
@@ -67,7 +71,7 @@
           </ComboBox>
           <StackPanel x:Name="AutoHours" Orientation="Horizontal" Spacing="12" Visibility="Collapsed">
             <NumberBox x:Name="AutoStartHour" Header="Work starts at (hour)" Minimum="0" Maximum="23" SpinButtonPlacementMode="Compact"/>
-            <NumberBox x:Name="AutoEndHour" Header="Work ends at (hour)" Minimum="0" Maximum="24" SpinButtonPlacementMode="Compact"/>
+            <NumberBox x:Name="AutoEndHour" Header="Work ends at (hour)" Minimum="0" Maximum="23" SpinButtonPlacementMode="Compact"/>
           </StackPanel>
           <StackPanel x:Name="AutoRange" Orientation="Horizontal" Spacing="12" Visibility="Collapsed">
             <CalendarDatePicker x:Name="AutoStart" Header="From"/>

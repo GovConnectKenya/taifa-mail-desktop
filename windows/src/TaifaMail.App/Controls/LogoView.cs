@@ -12,13 +12,18 @@ namespace TaifaMail.App.Controls;
 public sealed class LogoView : UserControl
 {
     private readonly Image _image = new() { Stretch = Stretch.Uniform };
+    private readonly TextBlock _fallback = new() { Text = "Taifa Mail", Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+    private readonly Grid _host = new();
 
     public static readonly DependencyProperty HeightPxProperty = DependencyProperty.Register(nameof(HeightPx), typeof(double), typeof(LogoView), new PropertyMetadata(24.0, (d, _) => ((LogoView)d).Apply()));
 
     public LogoView()
     {
         IsTabStop = false;
-        Content = _image;
+        _host.Children.Add(_image);
+        _host.Children.Add(_fallback);
+        Content = _host;
+        _image.ImageFailed += (_, _) => _fallback.Visibility = Visibility.Visible;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, "Taifa Mail");
         Loaded += (_, _) => Apply();
         ActualThemeChanged += (_, _) => Apply();
@@ -32,7 +37,9 @@ public sealed class LogoView : UserControl
         // The artwork's viewBox is 287 by 282.
         _image.Width = HeightPx * 287.0 / 282.0;
         var file = ActualTheme == ElementTheme.Dark ? "taifa_logo_white.svg" : "taifa_logo.svg";
-        var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Logo", file);
-        if (File.Exists(path)) _image.Source = new SvgImageSource(new Uri(path)) { RasterizePixelHeight = HeightPx * 3 };
+        _fallback.Visibility = Visibility.Collapsed;
+        var svg = new SvgImageSource(new Uri("ms-appx:///Assets/Logo/" + file)) { RasterizePixelHeight = HeightPx * 3 };
+        svg.OpenFailed += (_, _) => _fallback.Visibility = Visibility.Visible;
+        _image.Source = svg;
     }
 }

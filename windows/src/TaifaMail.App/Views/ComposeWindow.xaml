@@ -48,11 +48,11 @@
     </StackPanel>
 
     <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="2" Padding="12,6">
-      <Button Style="{StaticResource TmToolButton}" Click="OnBold" ToolTipService.ToolTip="Bold (Ctrl+B)" AutomationProperties.Name="Bold"><TextBlock Text="B" FontFamily="{StaticResource TmFontSemi}" FontSize="14" Foreground="{ThemeResource TmText2Brush}"/></Button>
-      <Button Style="{StaticResource TmToolButton}" Click="OnItalic" ToolTipService.ToolTip="Italic (Ctrl+I)" AutomationProperties.Name="Italic"><TextBlock Text="I" FontFamily="{StaticResource TmFont}" FontStyle="Italic" FontSize="14" Foreground="{ThemeResource TmText2Brush}"/></Button>
-      <Button Style="{StaticResource TmToolButton}" Click="OnBullets" ToolTipService.ToolTip="Bulleted list" AutomationProperties.Name="Bulleted list"><TextBlock Text="&#8226;&#8801;" FontFamily="{StaticResource TmFont}" FontSize="14" Foreground="{ThemeResource TmText2Brush}"/></Button>
-      <Button Style="{StaticResource TmToolButton}" Click="OnNumbers" ToolTipService.ToolTip="Numbered list" AutomationProperties.Name="Numbered list"><TextBlock Text="1." FontFamily="{StaticResource TmFont}" FontSize="13" Foreground="{ThemeResource TmText2Brush}"/></Button>
-      <Button Style="{StaticResource TmToolButton}" Click="OnLink" ToolTipService.ToolTip="Insert link" AutomationProperties.Name="Insert link"><TextBlock Text="Link" FontFamily="{StaticResource TmFontMedium}" FontSize="12" Foreground="{ThemeResource TmText2Brush}"/></Button>
+      <Button Style="{StaticResource TmToolButton}" Click="OnBold" ToolTipService.ToolTip="Bold (Ctrl+B)" AutomationProperties.Name="Bold"><ctl:IconView IconName="bold" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+      <Button Style="{StaticResource TmToolButton}" Click="OnItalic" ToolTipService.ToolTip="Italic (Ctrl+I)" AutomationProperties.Name="Italic"><ctl:IconView IconName="italic" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+      <Button Style="{StaticResource TmToolButton}" Click="OnBullets" ToolTipService.ToolTip="Bulleted list" AutomationProperties.Name="Bulleted list"><ctl:IconView IconName="list-bullet" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+      <Button Style="{StaticResource TmToolButton}" Click="OnNumbers" ToolTipService.ToolTip="Numbered list" AutomationProperties.Name="Numbered list"><ctl:IconView IconName="list-number" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+      <Button Style="{StaticResource TmToolButton}" Click="OnLink" ToolTipService.ToolTip="Insert link" AutomationProperties.Name="Insert link"><ctl:IconView IconName="link" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
       <Border Width="1" Height="16" Margin="6,0" Background="{ThemeResource TmBorderBrush}"/>
       <Button Style="{StaticResource TmToolButton}" Click="OnAttach" ToolTipService.ToolTip="Attach files" AutomationProperties.Name="Attach files"><ctl:IconView IconName="attach" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
     </StackPanel>
@@ -70,7 +70,7 @@
               <TextBlock Text="{x:Bind Name}" Style="{StaticResource TmBody}" TextTrimming="CharacterEllipsis" MaxWidth="260"/>
               <TextBlock Text="{x:Bind svc:Fmt.AttachmentLine(SizeText, State), Mode=OneWay}" Style="{StaticResource TmCaption}"/>
             </StackPanel>
-            <Button Grid.Column="1" Style="{StaticResource TmToolButton}" Click="OnRemoveAttachment" Tag="{x:Bind}" AutomationProperties.Name="Remove attachment"><ctl:IconView IconName="close" Size="16" Foreground="{ThemeResource TmText3Brush}"/></Button>
+            <Button Grid.Column="1" Style="{StaticResource TmToolButton}" Click="OnRemoveAttachment" Tag="{x:Bind}" AutomationProperties.Name="Remove attachment"><ctl:IconView IconName="close-plain" Size="16" Foreground="{ThemeResource TmText3Brush}"/></Button>
           </Grid>
         </DataTemplate>
       </ItemsControl.ItemTemplate>

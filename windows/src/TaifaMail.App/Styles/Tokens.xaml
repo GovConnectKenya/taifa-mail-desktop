@@ -12,23 +12,12 @@
       <Color x:Key="SystemAccentColorLight1">#008C51</Color>
       <Color x:Key="SystemAccentColorLight2">#008C51</Color>
       <Color x:Key="SystemAccentColorLight3">#008C51</Color>
-      <Color x:Key="SystemAccentColorDark1">#00643A</Color>
-      <Color x:Key="SystemAccentColorDark2">#00643A</Color>
-      <Color x:Key="SystemAccentColorDark3">#00643A</Color>
-      <StaticResource x:Key="NavigationViewDefaultPaneBackground" ResourceKey="TmSidebarBrush"/>
-      <StaticResource x:Key="NavigationViewExpandedPaneBackground" ResourceKey="TmSidebarBrush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundSelected" ResourceKey="TmAccentSoftBrush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundSelectedPointerOver" ResourceKey="TmAccentSoftBrush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundSelectedPressed" ResourceKey="TmAccentSoftBrush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
-      <StaticResource x:Key="NavigationViewItemForegroundSelected" ResourceKey="TmAccentInkBrush"/>
-      <StaticResource x:Key="NavigationViewItemForegroundSelectedPointerOver" ResourceKey="TmAccentInkBrush"/>
-      <StaticResource x:Key="NavigationViewItemForegroundSelectedPressed" ResourceKey="TmAccentInkBrush"/>
+      <Color x:Key="SystemAccentColorDark1">#00864E</Color>
+      <Color x:Key="SystemAccentColorDark2">#00864E</Color>
+      <Color x:Key="SystemAccentColorDark3">#00864E</Color>
       <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="Transparent"/>
       <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent"/>
       <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent"/>
-
       <SolidColorBrush x:Key="TmBgBrush" Color="#F5F8F6"/>
       <SolidColorBrush x:Key="TmPanelBrush" Color="#FFFFFF"/>
       <SolidColorBrush x:Key="TmSidebarBrush" Color="#FFFFFF"/>
@@ -59,8 +48,23 @@
       <SolidColorBrush x:Key="TmFlagBrush" Color="#8A6400"/>
       <SolidColorBrush x:Key="TmTrackBrush" Color="#E6ECE8"/>
       <SolidColorBrush x:Key="TmFocusBrush" Color="#008C51"/>
+      <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="TmSkeletonSheenBrush" Color="#F4F7F5"/>
+      <SolidColorBrush x:Key="TmSelectedRowHoverBrush" Color="#33008C51"/>
+      <StaticResource x:Key="NavigationViewDefaultPaneBackground" ResourceKey="TmSidebarBrush"/>
+      <StaticResource x:Key="NavigationViewExpandedPaneBackground" ResourceKey="TmSidebarBrush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundSelected" ResourceKey="TmAccentSoftBrush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundSelectedPointerOver" ResourceKey="TmAccentSoftBrush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundSelectedPressed" ResourceKey="TmAccentSoftBrush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
+      <StaticResource x:Key="NavigationViewItemForegroundSelected" ResourceKey="TmAccentInkBrush"/>
+      <StaticResource x:Key="NavigationViewItemForegroundSelectedPointerOver" ResourceKey="TmAccentInkBrush"/>
+      <StaticResource x:Key="NavigationViewItemForegroundSelectedPressed" ResourceKey="TmAccentInkBrush"/>
       <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="TmSelectedRowBrush"/>
-      <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="TmSelectedRowBrush"/>
       <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="TmSelectedRowBrush"/>
       <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
       <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
@@ -70,10 +74,13 @@
       <StaticResource x:Key="AccentButtonForeground" ResourceKey="TmOnAccentBrush"/>
       <StaticResource x:Key="AccentButtonForegroundPointerOver" ResourceKey="TmOnAccentBrush"/>
       <StaticResource x:Key="AccentButtonForegroundPressed" ResourceKey="TmOnAccentBrush"/>
-      <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent"/>
-      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
-      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
-      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
+      <StaticResource x:Key="ButtonBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
+      <StaticResource x:Key="ButtonBackgroundPressed" ResourceKey="TmPanel3Brush"/>
+      <StaticResource x:Key="ButtonBorderBrushPointerOver" ResourceKey="TmBorder2Brush"/>
+      <StaticResource x:Key="ButtonBorderBrushPressed" ResourceKey="TmBorder2Brush"/>
+      <StaticResource x:Key="FocusVisualPrimaryBrush" ResourceKey="TmFocusBrush"/>
+      <StaticResource x:Key="FocusVisualSecondaryBrush" ResourceKey="TmPanelBrush"/>
+      <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="TmSelectedRowHoverBrush"/>
     </ResourceDictionary>
     <ResourceDictionary x:Key="Dark">
       <SolidColorBrush x:Key="TmSelectedRowBrush" Color="#291EA94E"/>
@@ -85,20 +92,9 @@
       <Color x:Key="SystemAccentColorDark1">#1A8F44</Color>
       <Color x:Key="SystemAccentColorDark2">#1A8F44</Color>
       <Color x:Key="SystemAccentColorDark3">#1A8F44</Color>
-      <StaticResource x:Key="NavigationViewDefaultPaneBackground" ResourceKey="TmSidebarBrush"/>
-      <StaticResource x:Key="NavigationViewExpandedPaneBackground" ResourceKey="TmSidebarBrush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundSelected" ResourceKey="TmAccentSoftBrush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundSelectedPointerOver" ResourceKey="TmAccentSoftBrush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundSelectedPressed" ResourceKey="TmAccentSoftBrush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
-      <StaticResource x:Key="NavigationViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
-      <StaticResource x:Key="NavigationViewItemForegroundSelected" ResourceKey="TmAccentInkBrush"/>
-      <StaticResource x:Key="NavigationViewItemForegroundSelectedPointerOver" ResourceKey="TmAccentInkBrush"/>
-      <StaticResource x:Key="NavigationViewItemForegroundSelectedPressed" ResourceKey="TmAccentInkBrush"/>
       <SolidColorBrush x:Key="NavigationViewSelectionIndicatorForeground" Color="Transparent"/>
       <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent"/>
       <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent"/>
-
       <SolidColorBrush x:Key="TmBgBrush" Color="#101010"/>
       <SolidColorBrush x:Key="TmPanelBrush" Color="#161616"/>
       <SolidColorBrush x:Key="TmSidebarBrush" Color="#141414"/>
@@ -129,8 +125,23 @@
       <SolidColorBrush x:Key="TmFlagBrush" Color="#E0B22E"/>
       <SolidColorBrush x:Key="TmTrackBrush" Color="#1A1A1A"/>
       <SolidColorBrush x:Key="TmFocusBrush" Color="#1EA94E"/>
+      <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
+      <SolidColorBrush x:Key="TmSkeletonSheenBrush" Color="#262626"/>
+      <SolidColorBrush x:Key="TmSelectedRowHoverBrush" Color="#331EA94E"/>
+      <StaticResource x:Key="NavigationViewDefaultPaneBackground" ResourceKey="TmSidebarBrush"/>
+      <StaticResource x:Key="NavigationViewExpandedPaneBackground" ResourceKey="TmSidebarBrush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundSelected" ResourceKey="TmAccentSoftBrush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundSelectedPointerOver" ResourceKey="TmAccentSoftBrush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundSelectedPressed" ResourceKey="TmAccentSoftBrush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
+      <StaticResource x:Key="NavigationViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
+      <StaticResource x:Key="NavigationViewItemForegroundSelected" ResourceKey="TmAccentInkBrush"/>
+      <StaticResource x:Key="NavigationViewItemForegroundSelectedPointerOver" ResourceKey="TmAccentInkBrush"/>
+      <StaticResource x:Key="NavigationViewItemForegroundSelectedPressed" ResourceKey="TmAccentInkBrush"/>
       <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="TmSelectedRowBrush"/>
-      <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="TmSelectedRowBrush"/>
       <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="TmSelectedRowBrush"/>
       <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
       <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
@@ -140,10 +151,13 @@
       <StaticResource x:Key="AccentButtonForeground" ResourceKey="TmOnAccentBrush"/>
       <StaticResource x:Key="AccentButtonForegroundPointerOver" ResourceKey="TmOnAccentBrush"/>
       <StaticResource x:Key="AccentButtonForegroundPressed" ResourceKey="TmOnAccentBrush"/>
-      <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent"/>
-      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
-      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
-      <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
+      <StaticResource x:Key="ButtonBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
+      <StaticResource x:Key="ButtonBackgroundPressed" ResourceKey="TmPanel3Brush"/>
+      <StaticResource x:Key="ButtonBorderBrushPointerOver" ResourceKey="TmBorder2Brush"/>
+      <StaticResource x:Key="ButtonBorderBrushPressed" ResourceKey="TmBorder2Brush"/>
+      <StaticResource x:Key="FocusVisualPrimaryBrush" ResourceKey="TmFocusBrush"/>
+      <StaticResource x:Key="FocusVisualSecondaryBrush" ResourceKey="TmPanelBrush"/>
+      <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="TmSelectedRowHoverBrush"/>
     </ResourceDictionary>
   </ResourceDictionary.ThemeDictionaries>
 
@@ -173,7 +187,7 @@
   <Style x:Key="TmCaption" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{StaticResource TmFontMedium}"/>
     <Setter Property="FontSize" Value="11"/>
-    <Setter Property="LineHeight" Value="14"/>
+    <Setter Property="LineHeight" Value="16"/>
     <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
     <Setter Property="Foreground" Value="{ThemeResource TmText3Brush}"/>
   </Style>
@@ -187,7 +201,7 @@
   <Style x:Key="TmBody" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
     <Setter Property="FontSize" Value="13"/>
-    <Setter Property="LineHeight" Value="18"/>
+    <Setter Property="LineHeight" Value="20"/>
     <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
     <Setter Property="CharacterSpacing" Value="-8"/>
     <Setter Property="Foreground" Value="{ThemeResource TmTextBrush}"/>
@@ -301,6 +315,16 @@
     <Setter Property="CornerRadius" Value="0"/>
     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
     <Setter Property="VerticalContentAlignment" Value="Stretch"/>
-    <Setter Property="UseSystemFocusVisuals" Value="False"/>
+    <Setter Property="UseSystemFocusVisuals" Value="True"/>
+    <Setter Property="AutomationProperties.Name" Value="{Binding SpokenName}"/>
+  </Style>
+
+  <!-- Small outlined pill: Try again (32 high, 12/500). -->
+  <Style x:Key="TmPillSmall" TargetType="Button" BasedOn="{StaticResource TmPillButton}">
+    <Setter Property="MinHeight" Value="32"/>
+    <Setter Property="Height" Value="32"/>
+    <Setter Property="Padding" Value="14,0"/>
+    <Setter Property="CornerRadius" Value="16"/>
+    <Setter Property="FontSize" Value="12"/>
   </Style>
 </ResourceDictionary>

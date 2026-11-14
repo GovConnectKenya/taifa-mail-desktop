@@ -45,13 +45,18 @@ public sealed class CookieJarHandler : DelegatingHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        string header;
-        lock (_gate) header = _jar.GetCookieHeader(request.RequestUri ?? _origin);
-        if (header.Length > 0) request.Headers.TryAddWithoutValidation("Cookie", header);
+        // Cookies belong to the API host only: never attached to, or accepted from, any other host.
+        var sameHost = string.Equals((request.RequestUri ?? _origin).Host, _origin.Host, StringComparison.OrdinalIgnoreCase);
+        if (sameHost)
+        {
+            string header;
+            lock (_gate) header = _jar.GetCookieHeader(request.RequestUri ?? _origin);
+            if (header.Length > 0) request.Headers.TryAddWithoutValidation("Cookie", header);
+        }
 
         var response = await base.SendAsync(request, ct).ConfigureAwait(false);
 
-        if (response.Headers.TryGetValues("Set-Cookie", out var values))
+        if (sameHost && response.Headers.TryGetValues("Set-Cookie", out var values))
         {
             lock (_gate)
             {

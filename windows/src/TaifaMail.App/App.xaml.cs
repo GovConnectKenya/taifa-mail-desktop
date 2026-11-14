@@ -16,14 +16,17 @@ public partial class App : Application
         {
             // Last resort: log the type only. Never write message content or addresses to disk.
             try { File.AppendAllText(Path.Combine(AppServices.DataDir, "crash.log"), $"{DateTime.UtcNow:O} {e.Exception.GetType().FullName}\n"); } catch (Exception) { }
+            // Bad data or a failed request must not end the session: keep running unless the failure is fatal.
+            e.Handled = e.Exception is not (OutOfMemoryException or AccessViolationException or StackOverflowException);
         };
     }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
+        Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00FFFFFF");
         BodyWebView.WipeProfile();
         MainWindow = new MainWindow();
-        MainWindow.Closed += (_, _) => BodyWebView.WipeProfile();
+        MainWindow.Closed += (_, _) => { BodyWebView.WipeProfile(); AppServices.PurgeAttachments(); };
         MainWindow.Activate();
 
 #if PREVIEW_DATA

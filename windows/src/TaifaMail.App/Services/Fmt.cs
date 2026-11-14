@@ -8,9 +8,10 @@ namespace TaifaMail.App.Services;
 /// <summary>Small pure helpers used from x:Bind function bindings.</summary>
 public static class Fmt
 {
-    private static readonly Microsoft.UI.Xaml.Media.FontFamily Medium = new("ms-appx:///Assets/Fonts/GoogleSans-Medium.ttf#Google Sans Medium");
-    private static readonly Microsoft.UI.Xaml.Media.FontFamily Semi = new("ms-appx:///Assets/Fonts/GoogleSans-SemiBold.ttf#Google Sans SemiBold");
-    private static readonly Microsoft.UI.Xaml.Media.FontFamily Regular = new("ms-appx:///Assets/Fonts/GoogleSans-Regular.ttf#Google Sans");
+    // One definition: the font families live in Styles/Tokens.xaml.
+    private static Microsoft.UI.Xaml.Media.FontFamily Medium => (Microsoft.UI.Xaml.Media.FontFamily)Application.Current.Resources["TmFontMedium"];
+    private static Microsoft.UI.Xaml.Media.FontFamily Semi => (Microsoft.UI.Xaml.Media.FontFamily)Application.Current.Resources["TmFontSemi"];
+    private static Microsoft.UI.Xaml.Media.FontFamily Regular => (Microsoft.UI.Xaml.Media.FontFamily)Application.Current.Resources["TmFont"];
 
     /// <summary>Sender: 500 when read, 700 (the SemiBold file, the heaviest Google Sans ships) when unread.</summary>
     public static Microsoft.UI.Xaml.Media.FontFamily SenderFont(bool unread) => unread ? Semi : Medium;
@@ -20,7 +21,7 @@ public static class Fmt
     public static double AvatarSize(bool compact) => compact ? 32 : 36;
     public static Visibility ShowAndNot(bool a, bool b) => a && !b ? Visibility.Visible : Visibility.Collapsed;
     public static string Unreadline(int total, int unread) => unread > 0 ? $"{total:N0} \u00b7 {unread:N0} unread" : $"{total:N0}";
-    public static string AttachmentLine(string size, TaifaMail.Core.Compose.AttachmentState state) => state switch { TaifaMail.Core.Compose.AttachmentState.Uploading => size + " \u00b7 Uploading", TaifaMail.Core.Compose.AttachmentState.Failed => size + " \u00b7 Failed", _ => size };
+    public static string AttachmentLine(string size, TaifaMail.Core.Compose.AttachmentState state) => state switch { TaifaMail.Core.Compose.AttachmentState.Uploading => size + " \u00b7 Uploading", TaifaMail.Core.Compose.AttachmentState.Scanning => size + " \u00b7 Scanning", TaifaMail.Core.Compose.AttachmentState.Infected => size + " \u00b7 Blocked by the virus scan", TaifaMail.Core.Compose.AttachmentState.Failed => size + " \u00b7 Failed", _ => size };
     public static string CountBadge(int n) => n > 99 ? "99+" : n.ToString();
 
     public static FontWeight Weight(bool unread) => unread ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal;
@@ -40,7 +41,9 @@ public static class Fmt
     public static string Time(DateTimeOffset when) => TimeLabel.ForList(when, DateTimeOffset.Now);
     public static string Long(DateTimeOffset when) => when == DateTimeOffset.MinValue ? "" : when.ToLocalTime().ToString("d MMM yyyy, HH:mm");
     public static string Badge(int count) => count > 99 ? "99+" : count.ToString();
-    public static string FolderBadge(ApiFolder f) => f.SpecialUse is { } su && su.Contains("draft", StringComparison.OrdinalIgnoreCase) ? (f.Total > 0 ? Badge(f.Total) : "") : (f.Unseen > 0 ? Badge(f.Unseen) : "");
+    public static string FolderBadge(ApiFolder f) => f.SpecialUse is { } su && su.Contains("draft", StringComparison.OrdinalIgnoreCase) ? (f.Total is > 0 ? Badge(f.Total.Value) : "") : (f.Unseen is > 0 ? Badge(f.Unseen.Value) : "");
+    /// <summary>File names shown in the UI never carry bidi controls or path characters.</summary>
+    public static string SafeName(string name) => TaifaMail.Core.Security.AttachmentSafety.SafeName(name);
     public static string Size(long bytes) => MessageCardVm.FormatSize(bytes);
     public static string CountText(int n) => n.ToString();
     public static string IconFor(ApiFolder f)

@@ -12,13 +12,33 @@ namespace TaifaMail.Core.Cache;
 /// </summary>
 public sealed class OfflineCache : IDisposable
 {
-    private readonly SqliteConnection _db;
+    private SqliteConnection _db = null!;
     private readonly object _gate = new();
+    private readonly string _path;
+    private readonly ICacheProtector? _protector;
 
-    public OfflineCache(string path)
+    public OfflineCache(string path, ICacheProtector? protector = null)
     {
-        if (path != ":memory:") Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        _db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        _path = path;
+        _protector = protector;
+        Open();
+    }
+
+    /// <summary>Stored JSON is protected when a protector is supplied (DPAPI, current user): the file alone reveals no mail.</summary>
+    private string Seal(string json) => _protector is null ? json : "enc:" + Convert.ToBase64String(_protector.Protect(System.Text.Encoding.UTF8.GetBytes(json)));
+
+    private string? Unseal(string stored)
+    {
+        if (!stored.StartsWith("enc:", StringComparison.Ordinal)) return _protector is null ? stored : null;
+        if (_protector is null) return null;
+        try { return System.Text.Encoding.UTF8.GetString(_protector.Unprotect(Convert.FromBase64String(stored[4..]))); }
+        catch (Exception) { return null; }
+    }
+
+    private void Open()
+    {
+        if (_path != ":memory:") Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        _db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = _path, Pooling = false }.ToString());
         _db.Open();
         Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         Exec(@"CREATE TABLE IF NOT EXISTS folders(mailbox TEXT NOT NULL, json TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY(mailbox));
@@ -41,7 +61,7 @@ public sealed class OfflineCache : IDisposable
             using var c = _db.CreateCommand();
             c.CommandText = "INSERT OR REPLACE INTO folders(mailbox,json,saved_at) VALUES($m,$j,$t)";
             c.Parameters.AddWithValue("$m", mailbox);
-            c.Parameters.AddWithValue("$j", JsonSerializer.Serialize(folders, TaifaJson.Options));
+            c.Parameters.AddWithValue("$j", Seal(JsonSerializer.Serialize(folders, TaifaJson.Options)));
             c.Parameters.AddWithValue("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
             c.ExecuteNonQuery();
         }
@@ -54,7 +74,7 @@ public sealed class OfflineCache : IDisposable
             using var c = _db.CreateCommand();
             c.CommandText = "SELECT json FROM folders WHERE mailbox=$m";
             c.Parameters.AddWithValue("$m", mailbox);
-            return c.ExecuteScalar() is string s ? JsonSerializer.Deserialize<List<ApiFolder>>(s, TaifaJson.Options) : null;
+            return c.ExecuteScalar() is string s && Unseal(s) is { } json ? JsonSerializer.Deserialize<List<ApiFolder>>(json, TaifaJson.Options) : null;
         }
     }
 
@@ -81,7 +101,7 @@ public sealed class OfflineCache : IDisposable
                 ins.Parameters.AddWithValue("$m", mailbox);
                 ins.Parameters.AddWithValue("$f", folder);
                 ins.Parameters.AddWithValue("$p", pos++);
-                ins.Parameters.AddWithValue("$j", JsonSerializer.Serialize(it, TaifaJson.Options));
+                ins.Parameters.AddWithValue("$j", Seal(JsonSerializer.Serialize(it, TaifaJson.Options)));
                 ins.ExecuteNonQuery();
             }
             using (var meta = _db.CreateCommand())
@@ -109,7 +129,7 @@ public sealed class OfflineCache : IDisposable
                 c.Parameters.AddWithValue("$m", mailbox);
                 c.Parameters.AddWithValue("$f", folder);
                 using var r = c.ExecuteReader();
-                while (r.Read()) items.Add(JsonSerializer.Deserialize<ApiConversationSummary>(r.GetString(0), TaifaJson.Options)!);
+                while (r.Read()) { if (Unseal(r.GetString(0)) is { } json) items.Add(JsonSerializer.Deserialize<ApiConversationSummary>(json, TaifaJson.Options)!); }
             }
             if (items.Count == 0) return null;
             using var m = _db.CreateCommand();
@@ -132,7 +152,7 @@ public sealed class OfflineCache : IDisposable
                 c.Parameters.AddWithValue("$m", mailbox);
                 c.Parameters.AddWithValue("$f", folder);
                 c.Parameters.AddWithValue("$u", uid);
-                c.Parameters.AddWithValue("$j", JsonSerializer.Serialize(window, TaifaJson.Options));
+                c.Parameters.AddWithValue("$j", Seal(JsonSerializer.Serialize(window, TaifaJson.Options)));
                 c.Parameters.AddWithValue("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 c.ExecuteNonQuery();
             }
@@ -153,7 +173,7 @@ public sealed class OfflineCache : IDisposable
             c.Parameters.AddWithValue("$m", mailbox);
             c.Parameters.AddWithValue("$f", folder);
             c.Parameters.AddWithValue("$u", uid);
-            return c.ExecuteScalar() is string s ? JsonSerializer.Deserialize<ApiConversationWindow>(s, TaifaJson.Options) : null;
+            return c.ExecuteScalar() is string s && Unseal(s) is { } json ? JsonSerializer.Deserialize<ApiConversationWindow>(json, TaifaJson.Options) : null;
         }
     }
 
@@ -163,5 +183,37 @@ public sealed class OfflineCache : IDisposable
         lock (_gate) Exec("DELETE FROM folders; DELETE FROM threads; DELETE FROM meta; DELETE FROM bodies;");
     }
 
+    /// <summary>Sign out: closes the connection and deletes the database with its -wal and -shm files, then starts a fresh empty one.</summary>
+    public void Wipe()
+    {
+        lock (_gate)
+        {
+            if (_path == ":memory:") { Exec("DELETE FROM folders; DELETE FROM threads; DELETE FROM meta; DELETE FROM bodies;"); return; }
+            _db.Dispose();
+            SqliteConnection.ClearAllPools();
+            foreach (var f in new[] { _path, _path + "-wal", _path + "-shm" })
+            {
+                try { if (File.Exists(f)) File.Delete(f); } catch (IOException) { }
+            }
+            Open();
+        }
+    }
+
     public void Dispose() => _db.Dispose();
+}
+
+/// <summary>Protects cached JSON at rest.</summary>
+public interface ICacheProtector
+{
+    byte[] Protect(byte[] data);
+    byte[] Unprotect(byte[] data);
+}
+
+/// <summary>DPAPI, current user scope: only this Windows account can read the cache.</summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
+public sealed class DpapiCacheProtector : ICacheProtector
+{
+    private static readonly byte[] Entropy = System.Text.Encoding.UTF8.GetBytes("taifa-mail-windows-cache-v1");
+    public byte[] Protect(byte[] data) => System.Security.Cryptography.ProtectedData.Protect(data, Entropy, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+    public byte[] Unprotect(byte[] data) => System.Security.Cryptography.ProtectedData.Unprotect(data, Entropy, System.Security.Cryptography.DataProtectionScope.CurrentUser);
 }

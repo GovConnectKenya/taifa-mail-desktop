@@ -22,6 +22,8 @@ public sealed partial class SignInViewModel : ObservableObject
     [ObservableProperty] private string? _notice;
     [ObservableProperty] private bool _codeEmailSent;
     [ObservableProperty] private bool _offline;
+    /// <summary>"Remember my address": the only thing kept after sign out, and only when ticked.</summary>
+    [ObservableProperty] private bool _remember;
 
     public bool ShowPassword => Step == SignInStep.Password;
     public bool ShowCode => Step == SignInStep.Code;

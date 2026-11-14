@@ -32,6 +32,7 @@ public sealed class AppController
             {
                 var me = await _svc.Auth.MeAsync();
                 if (gen != _generation) return;
+                if (me.NeedsWebSetup) { ShowWebSetup(me); return; }
                 _svc.Settings.LastMailboxId = me.MailboxId;
                 _svc.Settings.LastAddress = me.Address;
                 _svc.SaveSettings();
@@ -52,14 +53,26 @@ public sealed class AppController
         {
             _svc.Settings.LastMailboxId = session.MailboxId;
             _svc.Settings.LastAddress = session.Address;
+            _svc.Settings.RememberedAddress = vm.Remember ? session.Address : null;
             _svc.SaveSettings();
             MailboxMe me;
             try { me = await _svc.Auth.MeAsync(); }
             catch (Exception) { me = new MailboxMe(session.MailboxId, session.Address, session.OrgId, null, null, null); }
-            ShowShell(me);
+            if (me.NeedsWebSetup) ShowWebSetup(me); else ShowShell(me);
         };
-        if (_svc.Settings.LastAddress is { } last) vm.Address = last;
+        if (_svc.Settings.RememberedAddress is { } last) { vm.Address = last; vm.Remember = true; }
         _window.Show(new SignInPage(vm, sessionEnded));
+    }
+
+    /// <summary>First login setup (new password, recovery email) is done on the web; the server refuses mail access until then.</summary>
+    public void ShowWebSetup(MailboxMe me)
+    {
+        _generation++;
+        _window.Show(new WebSetupPage(me.Address, async () =>
+        {
+            await _svc.SignOutAsync();
+            ShowSignIn(sessionEnded: false);
+        }));
     }
 
     public void ShowShell(MailboxMe me)
@@ -90,8 +103,9 @@ public sealed class AppController
                 try
                 {
                     await _svc.Auth.SwitchAsync(mailboxId);
-                    _svc.Cache.Clear();
+                    _svc.Cache.Wipe();
                     _svc.Images.Clear();
+                    AppServices.PurgeAttachments();
                     var next = await _svc.Auth.MeAsync();
                     _svc.Settings.LastMailboxId = next.MailboxId;
                     _svc.Settings.LastAddress = next.Address;

@@ -11,6 +11,9 @@ public sealed class LocalSettings
     public bool TaskbarBadge { get; set; } = true;
     public string? LastMailboxId { get; set; }
     public string? LastAddress { get; set; }
+    /// <summary>Only set when the user ticked "Remember my address"; used to prefill sign in. Cleared with the session otherwise.</summary>
+    public string? RememberedAddress { get; set; }
+    public bool ShowNotificationPreview { get; set; } = true;
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

@@ -59,7 +59,7 @@ public sealed class RecipientBox : UserControl
             var items = await _vm.SuggestAsync(text, _thread, cts.Token);
             if (!cts.IsCancellationRequested) sender.ItemsSource = items;
         }
-        catch (OperationCanceledException) { }
+        catch (Exception) { /* suggestions are a convenience: a bad reply or a dropped connection just shows none */ }
     }
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
@@ -74,10 +74,10 @@ public sealed class RecipientBox : UserControl
         {
             var bg = chip.Valid ? "{ThemeResource TmPanel2Brush}" : "{ThemeResource TmDangerSoftBrush}";
             var fg = chip.Valid ? "{ThemeResource TmTextBrush}" : "{ThemeResource TmDangerFgBrush}";
-            var xaml = $@"<Border xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' CornerRadius='12' Height='24' Padding='10,0,2,0' Margin='0,2,6,2' Background='{bg}'>
+            var xaml = $@"<Border xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:ctl='using:TaifaMail.App.Controls' CornerRadius='12' Height='24' Padding='10,0,2,0' Margin='0,2,6,2' Background='{bg}'>
   <StackPanel Orientation='Horizontal' Spacing='2'>
     <TextBlock x:Name='Label' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' FontFamily='{{StaticResource TmFontMedium}}' FontSize='12' Foreground='{fg}' VerticalAlignment='Center'/>
-    <Button x:Name='Remove' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' Width='20' Height='20' MinWidth='0' MinHeight='0' Padding='0' CornerRadius='10' Background='Transparent' BorderThickness='0' Content='&#215;' FontSize='13' Foreground='{fg}'/>
+    <Button x:Name='Remove' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' Width='20' Height='20' MinWidth='0' MinHeight='0' Padding='0' CornerRadius='10' Background='Transparent' BorderThickness='0' Foreground='{fg}'><ctl:IconView IconName='close-plain' Size='12'/></Button>
   </StackPanel>
 </Border>";
             var root = (Border)XamlReader.Load(xaml);

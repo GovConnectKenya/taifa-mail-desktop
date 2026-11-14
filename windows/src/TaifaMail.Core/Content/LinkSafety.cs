@@ -2,7 +2,11 @@ using System.Globalization;
 
 namespace TaifaMail.Core.Content;
 
-public sealed record LinkCheck(bool Allowed, string Scheme, string Host, string DisplayHost, bool HostDiffersFromText, Uri? Uri);
+public sealed record LinkCheck(bool Allowed, string Scheme, string Host, string DisplayHost, bool HostDiffersFromText, Uri? Uri)
+{
+    /// <summary>True when the host is not plain ASCII or mixes scripts: the prompt then shows both forms.</summary>
+    public bool ShowBothForms => Host.Length > 0 && !string.Equals(Host, DisplayHost, StringComparison.OrdinalIgnoreCase) || LinkSafety.MixesScripts(DisplayHost);
+}
 
 /// <summary>
 /// Host check shown before any link leaves the app (spec section 13). Only http, https and mailto are
@@ -27,6 +31,18 @@ public static class LinkSafety
         var host = uri.IdnHost.ToLowerInvariant();
         var shown = DecodeHost(host);
         return new LinkCheck(true, scheme, host, shown, TextNamesOtherHost(visibleText, host), uri);
+    }
+
+    /// <summary>A label that mixes Latin letters with letters of another script (a common look-alike trick).</summary>
+    public static bool MixesScripts(string host)
+    {
+        foreach (var label in host.Split('.'))
+        {
+            var latin = label.Any(c => c is >= 'a' and <= 'z');
+            var other = label.Any(c => c > 127 && char.IsLetter(c));
+            if (latin && other) return true;
+        }
+        return false;
     }
 
     public static string DecodeHost(string host)

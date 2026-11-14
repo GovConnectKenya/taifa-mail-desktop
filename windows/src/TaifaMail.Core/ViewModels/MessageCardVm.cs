@@ -17,7 +17,7 @@ public sealed partial class MessageCardVm : ObservableObject
         AvatarAddress = address;
         DisplayName = name.Length > 0 ? name : address;
         (Initials, PlaceholderColor) = AvatarRule.Placeholder(address, name);
-        Auth = new MessageAuth(detail.AuthWarning?.Level is "warning" or "danger" ? detail.AuthWarning.Level : null, detail.SenderVerified, detail.AuthWarning is not null && detail.AuthWarning.Level is not ("info" or null));
+        Auth = new MessageAuth(detail.AuthWarning is not null ? (detail.AuthWarning.Level ?? "info") : null, detail.SenderVerified, AuthWarned: detail.AuthWarning is not null);
     }
 
     public ApiMailDetail Detail { get; }

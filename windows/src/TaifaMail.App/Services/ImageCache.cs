@@ -34,6 +34,19 @@ public sealed class ImageCache
         Directory.CreateDirectory(dir);
     }
 
+    private readonly Queue<string> _byteOrder = new();
+    private const int MaxByteTasks = 300;
+
+    /// <summary>Completed byte tasks are evicted oldest first so the dictionary cannot grow without bound.</summary>
+    private void TrackBytes(string url)
+    {
+        lock (_lruGate)
+        {
+            _byteOrder.Enqueue(url);
+            while (_byteOrder.Count > MaxByteTasks) _bytes.TryRemove(_byteOrder.Dequeue(), out _);
+        }
+    }
+
     private static string Key(string url, int px) => url + "|" + px;
     private string FilePath(string url)
     {
@@ -55,7 +68,7 @@ public sealed class ImageCache
                 return hit;
             }
         }
-        var data = await _bytes.GetOrAdd(url, u => Task.Run(() => LoadBytesAsync(u)));
+        var data = await _bytes.GetOrAdd(url, u => { TrackBytes(u); return Task.Run(() => LoadBytesAsync(u)); });
         if (data is null) { _bytes.TryRemove(url, out _); return null; }
         using var stream = new InMemoryRandomAccessStream();
         await stream.WriteAsync(data.AsBuffer());
@@ -87,6 +100,7 @@ public sealed class ImageCache
     public void Clear()
     {
         _bytes.Clear();
+        lock (_lruGate) _byteOrder.Clear();
         lock (_lruGate) { _images.Clear(); _lru.Clear(); }
         try { foreach (var f in Directory.EnumerateFiles(_dir, "*.img")) File.Delete(f); } catch (IOException) { }
     }

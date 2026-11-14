@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ctl="using:TaifaMail.App.Controls"
     xmlns:svc="using:TaifaMail.App.Services">
-  <Grid>
+  <Grid Background="{ThemeResource TmBgBrush}">
     <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition Height="*"/></Grid.RowDefinitions>
     <Grid x:Name="TitleRow" Background="Transparent">
       <StackPanel Orientation="Horizontal" Spacing="8" Margin="16,0,0,0" VerticalAlignment="Center">
@@ -41,6 +41,7 @@
                          KeyDown="OnFieldKeyDown"/>
           </StackPanel>
           <InfoBar Severity="Error" IsClosable="False" IsOpen="{x:Bind svc:Fmt.HasText(Vm.Error), Mode=OneWay}" Message="{x:Bind Vm.Error, Mode=OneWay}"/>
+          <CheckBox Content="Remember my address" IsChecked="{x:Bind Vm.Remember, Mode=TwoWay}" FontFamily="{StaticResource TmFont}" MinHeight="32"/>
           <Button x:Name="SignInButton" Style="{StaticResource TmPrimaryButton}" HorizontalAlignment="Stretch" Height="40"
                   IsEnabled="{x:Bind Vm.CanSubmitPassword, Mode=OneWay}" Click="OnSignIn" AutomationProperties.Name="Sign in">
             <Grid>

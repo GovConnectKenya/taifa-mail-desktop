@@ -16,8 +16,9 @@ namespace TaifaMail.App;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    public static readonly SizeInt32 DefaultSize = new(1280, 800);
-    public static readonly SizeInt32 MinimumSize = new(900, 600);
+    // Sizes are in effective pixels (DIP); they are scaled by the monitor DPI when applied.
+    public const int DefaultWidthDip = 1280, DefaultHeightDip = 800, MinWidthDip = 900, MinHeightDip = 600;
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     private Page? _page;
 
@@ -30,7 +31,14 @@ public sealed partial class MainWindow : Window
             SystemBackdrop = new MicaBackdrop();
             Root.Background = new SolidColorBrush(Colors.Transparent);
         }
-        AppWindow.Resize(DefaultSize);
+        var scale = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
+        if (scale <= 0) scale = 1;
+        AppWindow.Resize(new SizeInt32((int)(DefaultWidthDip * scale), (int)(DefaultHeightDip * scale)));
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.PreferredMinimumWidth = (int)(MinWidthDip * scale);
+            presenter.PreferredMinimumHeight = (int)(MinHeightDip * scale);
+        }
         AppWindow.Title = "Taifa Mail";
         var ico = Path.Combine(AppContext.BaseDirectory, "Assets", "taifa.ico");
         if (File.Exists(ico)) AppWindow.SetIcon(ico);
@@ -40,11 +48,6 @@ public sealed partial class MainWindow : Window
         bar.PreferredHeightOption = TitleBarHeightOption.Tall;
         Root.ActualThemeChanged += (_, _) => ApplyCaptionColors();
         Root.SizeChanged += (_, _) => UpdateChrome();
-        AppWindow.Changed += (_, e) =>
-        {
-            if (e.DidSizeChange && (AppWindow.Size.Width < MinimumSize.Width || AppWindow.Size.Height < MinimumSize.Height))
-                AppWindow.Resize(new SizeInt32(Math.Max(AppWindow.Size.Width, MinimumSize.Width), Math.Max(AppWindow.Size.Height, MinimumSize.Height)));
-        };
         ApplyCaptionColors();
     }
 
@@ -54,25 +57,27 @@ public sealed partial class MainWindow : Window
     private void ApplyCaptionColors()
     {
         var dark = Root.ActualTheme == ElementTheme.Dark;
-        var fg = dark ? Colors.White : Colors.Black;
-        AppWindow.TitleBar.ButtonForegroundColor = fg;
-        AppWindow.TitleBar.ButtonHoverForegroundColor = fg;
-        AppWindow.TitleBar.ButtonHoverBackgroundColor = dark ? Windows.UI.Color.FromArgb(25, 255, 255, 255) : Windows.UI.Color.FromArgb(25, 0, 0, 0);
-        AppWindow.TitleBar.ButtonInactiveForegroundColor = dark ? Windows.UI.Color.FromArgb(255, 157, 151, 143) : Windows.UI.Color.FromArgb(255, 106, 101, 94);
+        // Colours come from the design tokens: surface2 for hover, border1 for pressed, mutedSoft for inactive.
+        AppWindow.TitleBar.ButtonForegroundColor = dark ? Windows.UI.Color.FromArgb(255, 0xEC, 0xEC, 0xEC) : Windows.UI.Color.FromArgb(255, 0, 0, 0);
+        AppWindow.TitleBar.ButtonHoverForegroundColor = AppWindow.TitleBar.ButtonForegroundColor;
+        AppWindow.TitleBar.ButtonPressedForegroundColor = AppWindow.TitleBar.ButtonForegroundColor;
+        AppWindow.TitleBar.ButtonHoverBackgroundColor = dark ? Windows.UI.Color.FromArgb(255, 0x24, 0x24, 0x24) : Windows.UI.Color.FromArgb(255, 0xED, 0xF3, 0xEF);
+        AppWindow.TitleBar.ButtonPressedBackgroundColor = dark ? Windows.UI.Color.FromArgb(255, 0x2E, 0x2E, 0x2E) : Windows.UI.Color.FromArgb(255, 0xDC, 0xE5, 0xDF);
+        AppWindow.TitleBar.ButtonInactiveForegroundColor = dark ? Windows.UI.Color.FromArgb(255, 0x94, 0x94, 0x94) : Windows.UI.Color.FromArgb(255, 0x5C, 0x6F, 0x67);
     }
 
     /// <summary>Swaps the page and wires the title bar for it.</summary>
     public void Show(Page page)
     {
-        if (_page is not null) _page.LayoutUpdated -= OnPageLayout;
         _page = page;
         Host.Content = page;
-        page.LayoutUpdated += OnPageLayout;
-        page.Loaded += (_, _) => UpdateChrome();
+        page.Loaded += (_, _) => RefreshChrome();
+        page.SizeChanged += (_, _) => RefreshChrome();
         UpdateChrome();
     }
 
-    private void OnPageLayout(object? sender, object e) => UpdateChrome();
+    /// <summary>Recomputes drag and pass through regions. Called on load, resize and pane or column changes only.</summary>
+    public void RefreshChrome() => UpdateChrome();
 
     private void UpdateChrome()
     {
@@ -90,7 +95,16 @@ public sealed partial class MainWindow : Window
                 var b = el.TransformToVisual(null).TransformBounds(new Windows.Foundation.Rect(0, 0, el.ActualWidth, el.ActualHeight));
                 rects.Add(new RectInt32((int)(b.X * scale), (int)(b.Y * scale), (int)(b.Width * scale), (int)(b.Height * scale)));
             }
-            InputNonClientPointerSource.GetForWindowId(AppWindow.Id).SetRegionRects(NonClientRegionKind.Passthrough, rects.ToArray());
+            var source = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
+            source.SetRegionRects(NonClientRegionKind.Passthrough, rects.ToArray());
+            var caption = new List<RectInt32>();
+            foreach (var el in page.CaptionElements)
+            {
+                if (el.ActualWidth <= 0 || el.XamlRoot is null) continue;
+                var b = el.TransformToVisual(null).TransformBounds(new Windows.Foundation.Rect(0, 0, el.ActualWidth, el.ActualHeight));
+                caption.Add(new RectInt32((int)(b.X * scale), (int)(b.Y * scale), (int)(b.Width * scale), (int)(b.Height * scale)));
+            }
+            source.SetRegionRects(NonClientRegionKind.Caption, caption.ToArray());
         }
         catch (Exception) { /* title bar wiring is cosmetic; never let it break a page */ }
     }

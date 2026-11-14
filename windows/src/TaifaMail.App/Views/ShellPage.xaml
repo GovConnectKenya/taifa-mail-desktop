@@ -12,14 +12,14 @@
     <DataTemplate x:Key="ThreadRowTemplate" x:DataType="vm:ThreadRow">
       <Grid Padding="{x:Bind svc:Fmt.RowPad(Compact), Mode=OneWay}" ColumnSpacing="12" Background="Transparent"
             BorderThickness="0,0,0,1" BorderBrush="{ThemeResource TmBorderSoftBrush}"
-            PointerEntered="OnRowPointerEntered" PointerExited="OnRowPointerExited" ContextRequested="OnRowContextRequested"
+            PointerEntered="OnRowPointerEntered" PointerExited="OnRowPointerExited"
             AutomationProperties.Name="{x:Bind SpokenName}">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
         <ctl:AvatarView Size="{x:Bind svc:Fmt.AvatarSize(Compact), Mode=OneWay}" VerticalAlignment="Top" Decision="{x:Bind Avatar, Mode=OneWay}" Initials="{x:Bind Initials}" FillColor="{x:Bind PlaceholderColor}"/>
-        <StackPanel Grid.Column="1" Spacing="2">
+        <StackPanel Grid.Column="1" Spacing="4">
           <Grid ColumnSpacing="8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource TmBody}" FontFamily="{x:Bind svc:Fmt.SenderFont(Unread), Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
@@ -98,7 +98,7 @@
                     <ctl:IconView IconName="attach" Size="16" VerticalAlignment="Center" Foreground="{ThemeResource TmText2Brush}"/>
                     <Button Grid.Column="1" Style="{StaticResource TmTextButton}" Padding="0" HorizontalContentAlignment="Left" Click="OnAttachmentOpen" Tag="{x:Bind}" AutomationProperties.Name="{x:Bind Filename}">
                       <StackPanel>
-                        <TextBlock Text="{x:Bind Filename}" Style="{StaticResource TmBody}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
+                        <TextBlock Text="{x:Bind svc:Fmt.SafeName(Filename)}" Style="{StaticResource TmBody}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
                         <TextBlock Text="{x:Bind svc:Fmt.Size(Size)}" Style="{StaticResource TmCaption}"/>
                       </StackPanel>
                     </Button>
@@ -115,20 +115,20 @@
     </DataTemplate>
   </Page.Resources>
 
-  <Grid x:Name="Root" Background="{ThemeResource TmBgBrush}">
+  <Grid x:Name="Root" Background="Transparent">
     <NavigationView x:Name="Nav" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed" IsSettingsVisible="False"
-                    IsPaneToggleButtonVisible="False" OpenPaneLength="256" IsPaneOpen="True" CompactModeThresholdWidth="0" ExpandedModeThresholdWidth="0"
+                    IsPaneToggleButtonVisible="False" OpenPaneLength="256" CompactPaneLength="66" IsPaneOpen="True" PaneOpening="OnPaneStateChanged" PaneClosing="OnPaneClosing" CompactModeThresholdWidth="0" ExpandedModeThresholdWidth="0"
                     Background="Transparent" SelectionChanged="OnFolderSelected" AlwaysShowHeader="False">
       <NavigationView.PaneHeader>
         <StackPanel Spacing="12" Padding="12,0,12,0">
-          <StackPanel Orientation="Horizontal" Spacing="8" Height="48" Margin="4,0,0,0">
+          <StackPanel x:Name="BrandRow" Orientation="Horizontal" Spacing="8" Height="48" Margin="4,0,0,0" Background="Transparent">
             <ctl:LogoView HeightPx="32" VerticalAlignment="Center"/>
-            <TextBlock Text="Taifa Mail" Style="{StaticResource TmTitle}" VerticalAlignment="Center"/>
+            <TextBlock x:Name="BrandText" Text="Taifa Mail" Style="{StaticResource TmTitle}" VerticalAlignment="Center"/>
           </StackPanel>
           <Button x:Name="ComposeButton" Style="{StaticResource TmComposeButton}" Click="OnCompose" AutomationProperties.Name="Compose" ToolTipService.ToolTip="New message (Ctrl+N)">
             <StackPanel Orientation="Horizontal" Spacing="8">
               <ctl:IconView IconName="compose" Size="18" Foreground="White"/>
-              <TextBlock Text="Compose" FontFamily="{StaticResource TmFontSemi}" FontSize="13" Foreground="White"/>
+              <TextBlock x:Name="ComposeLabel" Text="Compose" FontFamily="{StaticResource TmFontSemi}" FontSize="13" Foreground="White"/>
             </StackPanel>
           </Button>
         </StackPanel>
@@ -143,18 +143,18 @@
             <Grid ColumnSpacing="8">
               <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
               <ctl:AvatarView x:Name="IdentityAvatar" Size="28" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+              <StackPanel x:Name="IdentityText" Grid.Column="1" VerticalAlignment="Center">
                 <TextBlock x:Name="IdentityName" Style="{StaticResource TmBodyStrong}" TextTrimming="CharacterEllipsis"/>
                 <TextBlock x:Name="IdentityAddress" Style="{StaticResource TmMonoText}" TextTrimming="CharacterEllipsis"/>
               </StackPanel>
-              <ctl:IconView Grid.Column="2" IconName="chevron-up" Size="16" Foreground="{ThemeResource TmText3Brush}" VerticalAlignment="Center"/>
+              <ctl:IconView x:Name="IdentityChevron" Grid.Column="2" IconName="chevron-up" Size="16" Foreground="{ThemeResource TmText3Brush}" VerticalAlignment="Center"/>
             </Grid>
             <Button.Flyout><MenuFlyout x:Name="IdentityFlyout" Opening="OnIdentityOpening"/></Button.Flyout>
           </Button>
         </StackPanel>
       </NavigationView.PaneFooter>
 
-      <Grid x:Name="ContentGrid" Background="{ThemeResource TmBgBrush}">
+      <Grid x:Name="ContentGrid" Background="Transparent">
         <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition Height="*"/></Grid.RowDefinitions>
 
         <!-- toolbar row: search and refresh; empty space drags the window -->
@@ -163,23 +163,26 @@
             <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
             <ColumnDefinition x:Name="CaptionInsetColumn" Width="138"/>
           </Grid.ColumnDefinitions>
-          <Grid x:Name="SearchHost" Width="360" Height="32" Margin="16,0,0,0" CornerRadius="8" Background="{ThemeResource TmPanel2Brush}" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="8" Margin="12,0,0,0" VerticalAlignment="Center">
+          <Button x:Name="PaneToggle" Style="{StaticResource TmToolButton}" Click="OnPaneToggle" ToolTipService.ToolTip="Show or hide the folders (Ctrl+B)" AutomationProperties.Name="Toggle folders"><ctl:IconView IconName="menu" Size="18" Foreground="{ThemeResource TmText2Brush}"/></Button>
+          <Grid x:Name="SearchHost" Width="360" Height="32" CornerRadius="8" Background="{ThemeResource TmPanel2Brush}" VerticalAlignment="Center">
             <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <ctl:IconView IconName="search" Size="16" Foreground="{ThemeResource TmText3Brush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             <TextBox x:Name="SearchBox" Grid.Column="1" PlaceholderText="Search in this folder" BorderThickness="0" Background="Transparent" MinHeight="32"
                      AutomationProperties.Name="Search" VerticalAlignment="Center" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" FontFamily="{StaticResource TmFont}"/>
           </Grid>
+          </StackPanel>
           <StackPanel x:Name="CommandHost" Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
             <Button Style="{StaticResource TmToolButton}" Click="OnRefresh" ToolTipService.ToolTip="Refresh (F5)" AutomationProperties.Name="Refresh"><ctl:IconView IconName="refresh" Size="18" Foreground="{ThemeResource TmText2Brush}"/></Button>
             <Button Style="{StaticResource TmToolButton}" Click="OnOpenSettings" ToolTipService.ToolTip="Settings (Ctrl+,)" AutomationProperties.Name="Settings"><ctl:IconView IconName="settings" Size="18" Foreground="{ThemeResource TmText2Brush}"/></Button>
           </StackPanel>
         </Grid>
 
-        <Grid x:Name="Panes" Grid.Row="1">
+        <Grid x:Name="Panes" Grid.Row="1" Background="{ThemeResource TmBgBrush}">
           <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="ListColumn" Width="392" MinWidth="300" MaxWidth="480"/>
+            <ColumnDefinition x:Name="ListColumn" Width="4*" MinWidth="300" MaxWidth="480"/>
             <ColumnDefinition Width="Auto"/>
-            <ColumnDefinition Width="*" MinWidth="420"/>
+            <ColumnDefinition Width="6*" MinWidth="420"/>
           </Grid.ColumnDefinitions>
 
           <!-- Thread list: same ground as the reader -->
@@ -207,39 +210,47 @@
             <Grid Grid.Row="2">
               <ListView x:Name="ThreadList" ItemsSource="{x:Bind Vm.Threads}" ItemTemplate="{StaticResource ThreadRowTemplate}" ItemContainerStyle="{StaticResource TmRowContainer}"
                         SelectionMode="Extended" SelectionChanged="OnThreadSelectionChanged" IsItemClickEnabled="False" ShowsScrollingPlaceholders="False" Loaded="OnThreadListLoaded"
-                        AutomationProperties.Name="Messages"/>
+                        AutomationProperties.Name="Messages" ContextRequested="OnListContextRequested"/>
               <ItemsControl x:Name="Skeleton" IsHitTestVisible="False" Visibility="Collapsed">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Grid Padding="20,12" ColumnSpacing="12" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource TmBorderSoftBrush}">
                       <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                      <Ellipse Width="36" Height="36" Fill="{ThemeResource TmTrackBrush}" VerticalAlignment="Top"/>
+                      <ctl:SkeletonBar Width="36" Height="36" Radius="18" VerticalAlignment="Top"/>
                       <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
-                        <Border Height="10" Width="160" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-                        <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-                        <Border Height="10" Width="220" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+                        <ctl:SkeletonBar Height="10" Width="160" HorizontalAlignment="Left"/>
+                        <ctl:SkeletonBar Height="10"/>
+                        <ctl:SkeletonBar Height="10" Width="220" HorizontalAlignment="Left"/>
                       </StackPanel>
                     </Grid>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
-              <StackPanel x:Name="EmptyState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Padding="24">
+              <StackPanel x:Name="EmptyState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6" Padding="24">
                 <ctl:LogoView x:Name="EmptyLogo" HeightPx="40" HorizontalAlignment="Center" Visibility="Collapsed"/>
-                <TextBlock Text="Nothing here" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center"/>
+                <TextBlock Text="Nothing here" FontFamily="{StaticResource TmFontSemi}" FontSize="13" Foreground="{ThemeResource TmTextBrush}" HorizontalAlignment="Center"/>
                 <TextBlock x:Name="EmptyHint" Text="No messages match this view." Style="{StaticResource TmMeta}" HorizontalAlignment="Center"/>
               </StackPanel>
               <StackPanel x:Name="ErrorState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Padding="24" MaxWidth="320">
-                <TextBlock x:Name="ErrorTitle" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
-                <TextBlock x:Name="ErrorMessage" Style="{StaticResource TmMeta}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
-                <Button Content="Try again" Style="{StaticResource TmPillButton}" HorizontalAlignment="Center" Click="OnRefresh" Margin="0,8,0,0"/>
+                <Grid Width="56" Height="56" HorizontalAlignment="Center" Margin="0,0,0,4">
+                  <Ellipse Fill="{ThemeResource TmDangerSoftBrush}"/>
+                  <ctl:IconView IconName="warning" Size="24" Foreground="{ThemeResource TmDangerFgBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Grid>
+                <TextBlock x:Name="ErrorTitle" FontFamily="{StaticResource TmFontSemi}" FontSize="14" Foreground="{ThemeResource TmTextBrush}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+                <TextBlock x:Name="ErrorMessage" FontFamily="{StaticResource TmFont}" FontSize="13" Foreground="{ThemeResource TmText2Brush}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+                <Button Style="{StaticResource TmPillSmall}" HorizontalAlignment="Center" Click="OnRefresh" Margin="0,8,0,0">
+                  <StackPanel Orientation="Horizontal" Spacing="6"><ctl:IconView IconName="refresh" Size="12" Foreground="{ThemeResource TmTextBrush}"/><TextBlock Text="Try again" FontFamily="{StaticResource TmFontMedium}" FontSize="12"/></StackPanel>
+                </Button>
               </StackPanel>
               <ProgressBar x:Name="MoreBar" IsIndeterminate="True" Height="2" VerticalAlignment="Bottom" Visibility="{x:Bind svc:Fmt.Show(Vm.LoadingMore), Mode=OneWay}"/>
             </Grid>
           </Grid>
 
-          <Border x:Name="Splitter" Grid.Column="1" Width="9" Background="Transparent" PointerPressed="OnSplitterPressed" PointerMoved="OnSplitterMoved" PointerReleased="OnSplitterReleased" PointerCaptureLost="OnSplitterReleased">
-            <Border Width="1" HorizontalAlignment="Center" Background="{ThemeResource TmBorderBrush}"/>
-          </Border>
+          <ctl:ResizeGrip x:Name="Splitter" Grid.Column="1" Width="9" Background="Transparent" IsTabStop="True" UseSystemFocusVisuals="True" AutomationProperties.Name="Resize the message list"
+                          PointerPressed="OnSplitterPressed" PointerMoved="OnSplitterMoved" PointerReleased="OnSplitterReleased" PointerCaptureLost="OnSplitterReleased"
+                          PointerEntered="OnSplitterEntered" PointerExited="OnSplitterExited" KeyDown="OnSplitterKeyDown">
+            <Border x:Name="SplitterLine" Width="1" HorizontalAlignment="Center" Background="{ThemeResource TmBorderBrush}"/>
+          </ctl:ResizeGrip>
 
           <!-- Reader: flat thread on the page ground -->
           <Grid Grid.Column="2" Background="{ThemeResource TmBgBrush}">
@@ -271,7 +282,7 @@
                   <InfoBar x:Name="ReadBar" IsClosable="True" Severity="Warning" Margin="28,0,28,12" Message="Could not mark as read"/>
                   <Grid x:Name="EarlierPill" Visibility="Collapsed" Height="32" Margin="28,0,28,12" HorizontalAlignment="Left" Background="Transparent" Tapped="OnShowEarlier">
                     <Rectangle RadiusX="16" RadiusY="16" Stroke="{ThemeResource TmBorder2Brush}" StrokeDashArray="3 3" StrokeThickness="1"/>
-                    <TextBlock Text="Show earlier messages" Style="{StaticResource TmBody}" VerticalAlignment="Center" Margin="16,0"/>
+                    <TextBlock x:Name="EarlierText" Text="Show earlier messages" Style="{StaticResource TmBody}" VerticalAlignment="Center" Margin="16,0"/>
                   </Grid>
                   <ItemsControl x:Name="Cards" ItemsSource="{x:Bind Vm.OpenMessages}" ItemTemplate="{StaticResource MessageTemplate}"/>
                 </StackPanel>
@@ -293,11 +304,11 @@
               <TextBlock x:Name="ReaderEmptyHint" Text="Choose a message from the list to read it here." Style="{StaticResource TmMeta}" HorizontalAlignment="Center" TextAlignment="Center"/>
             </StackPanel>
             <StackPanel x:Name="ReaderSkeleton" Visibility="Collapsed" Padding="28" Spacing="12" VerticalAlignment="Top">
-              <Border Height="20" Width="320" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-              <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-              <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-              <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-              <Border Height="10" Width="220" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+              <ctl:SkeletonBar Height="20" Width="320" HorizontalAlignment="Left"/>
+              <ctl:SkeletonBar Height="10"/>
+              <ctl:SkeletonBar Height="10"/>
+              <ctl:SkeletonBar Height="10"/>
+              <ctl:SkeletonBar Height="10" Width="220" HorizontalAlignment="Left"/>
             </StackPanel>
             <StackPanel x:Name="ReaderError" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" MaxWidth="360">
               <TextBlock x:Name="ReaderErrorTitle" Text="Couldn't load this message" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center" TextAlignment="Center"/>
@@ -311,12 +322,13 @@
 
     <!-- In-app toast (ToastPill, spec 16) -->
     <Border x:Name="ToastPill" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,24" MinHeight="44" MaxWidth="420" Padding="20,12,12,12" CornerRadius="8"
-            BorderThickness="1" BorderBrush="{ThemeResource TmBorderBrush}" Background="{ThemeResource TmPanelBrush}" Opacity="0" Visibility="Collapsed" Translation="0,12,0">
+            BorderThickness="1" BorderBrush="{ThemeResource TmBorderBrush}" Background="{ThemeResource TmPanelBrush}" Opacity="0" Visibility="Collapsed" Translation="0,12,0" PointerEntered="OnToastEntered" PointerExited="OnToastExited">
+      <Border.Shadow><ThemeShadow/></Border.Shadow>
       <Grid ColumnSpacing="12">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <TextBlock x:Name="ToastText" FontFamily="{StaticResource TmFontMedium}" FontSize="13" Foreground="{ThemeResource TmTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+        <TextBlock x:Name="ToastText" AutomationProperties.LiveSetting="Polite" FontFamily="{StaticResource TmFontMedium}" FontSize="13" Foreground="{ThemeResource TmTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
         <Button x:Name="ToastUndo" Grid.Column="1" Content="Undo" Style="{StaticResource TmTextButton}" Foreground="{ThemeResource TmAccentInkBrush}" FontFamily="{StaticResource TmFontSemi}" Click="OnToastUndo"/>
-        <Button Grid.Column="2" Style="{StaticResource TmToolButton}" Click="OnToastClose" AutomationProperties.Name="Close"><ctl:IconView IconName="close" Size="16" Foreground="{ThemeResource TmText3Brush}"/></Button>
+        <Button Grid.Column="2" Style="{StaticResource TmToolButton}" Width="40" Height="40" Click="OnToastClose" AutomationProperties.Name="Close"><ctl:IconView IconName="close-plain" Size="16" Foreground="{ThemeResource TmText3Brush}"/></Button>
       </Grid>
     </Border>
   </Grid>

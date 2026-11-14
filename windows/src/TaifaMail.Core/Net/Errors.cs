@@ -12,6 +12,8 @@ public sealed class ApiRequestError : Exception
     }
 
     public bool IsAuth => Status == 401;
+
+    internal ApiRequestError WithInner(Exception e) { Data["inner"] = e.GetType().Name; return this; }
 }
 
 /// <summary>The server could not be reached (offline, DNS, TLS, timeout).</summary>

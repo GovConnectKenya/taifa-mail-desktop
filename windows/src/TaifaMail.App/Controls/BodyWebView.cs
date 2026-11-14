@@ -2,15 +2,15 @@ using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
-using TaifaMail.App.Services;
 using TaifaMail.Core.Content;
-using Windows.System;
+using TaifaMail.Core.Security;
 
 namespace TaifaMail.App.Controls;
 
 /// <summary>
 /// The only web content in the app: the HTML body of one received message.
-/// Locked down: script off, no in-view navigation, remote loads denied until allowed for this message,
+/// Locked down: script off, one navigation only (our own document), downloads and frames cancelled,
+/// remote loads denied (images only through the server image proxy once allowed for this message),
 /// no dev tools, copy only in the context menu, app private data folder wiped at start and exit,
 /// height reported from layout so the reader scrolls as one column.
 /// </summary>
@@ -18,6 +18,13 @@ public sealed class BodyWebView : UserControl
 {
     private static CoreWebView2Environment? _env;
     private static readonly SemaphoreSlim EnvGate = new(1, 1);
+    private const string FontHost = "taifa-fonts.local";
+
+    /// <summary>Set by the shell: the API origin, the mailbox, and a way to fetch a proxied image with the session cookies.</summary>
+    public static Func<string, Task<byte[]?>>? ProxyFetcher { get; set; }
+    public static string ApiBase { get; set; } = "";
+    public static string MailboxId { get; set; } = "";
+    public static Func<Task<string?>>? CapabilityProvider { get; set; }
 
     public static string UserDataFolder { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TaifaMail", "webview");
 
@@ -25,11 +32,14 @@ public sealed class BodyWebView : UserControl
     private Dictionary<string, string> _linkTexts = new();
     private bool _allowImages;
     private bool _ready;
+    private bool _allowNextNavigation;
     private string? _pendingDoc;
 
     /// <summary>Raised when the page wants to scroll (wheel over the view); the reader scrolls its column.</summary>
     public event Action<double>? WheelForwarded;
     public event Action<string, string?>? LinkRequested;
+    public event Action? FailedToStart;
+    public bool Failed { get; private set; }
 
     public BodyWebView()
     {
@@ -49,10 +59,7 @@ public sealed class BodyWebView : UserControl
     private static async Task<CoreWebView2Environment> EnvAsync()
     {
         await EnvGate.WaitAsync();
-        try
-        {
-            return _env ??= await CoreWebView2Environment.CreateWithOptionsAsync(null, UserDataFolder, new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = "--disable-features=msSmartScreenProtection" });
-        }
+        try { return _env ??= await CoreWebView2Environment.CreateAsync(null, UserDataFolder); }
         finally { EnvGate.Release(); }
     }
 
@@ -75,27 +82,26 @@ public sealed class BodyWebView : UserControl
             s.AreHostObjectsAllowed = false;
             s.IsBuiltInErrorPageEnabled = false;
             core.NavigationStarting += OnNavigationStarting;
+            core.FrameNavigationStarting += (_, e) => e.Cancel = true;
+            core.DownloadStarting += (_, e) => { e.Cancel = true; e.Handled = true; };
             core.NewWindowRequested += (_, e) => { e.Handled = true; Raise(e.Uri); };
             core.ContextMenuRequested += (_, e) =>
             {
                 var items = e.MenuItems;
                 for (var i = items.Count - 1; i >= 0; i--) if (items[i].Name != "copy") items.RemoveAt(i);
             };
+            // Our own fonts, served from the app folder through a virtual host (read only, never the network).
+            core.SetVirtualHostNameToFolderMapping(FontHost, Path.Combine(AppContext.BaseDirectory, "Assets", "Fonts"), CoreWebView2HostResourceAccessKind.Allow);
             core.AddWebResourceRequestedFilter("http://*", CoreWebView2WebResourceContext.All);
             core.AddWebResourceRequestedFilter("https://*", CoreWebView2WebResourceContext.All);
-            core.WebResourceRequested += (_, e) =>
-            {
-                // Even when images are allowed for this message, only images may load: no css, fonts, frames or scripts.
-                if (_allowImages && e.ResourceContext == CoreWebView2WebResourceContext.Image) return;
-                e.Response = env.CreateWebResourceResponse(null, 403, "Blocked", "");
-            };
+            core.WebResourceRequested += async (_, e) => await OnResourceAsync(env, e);
             core.NavigationCompleted += async (_, _) => { await InstallWheelAsync(); await MeasureAsync(); };
             core.WebMessageReceived += (_, e) =>
             {
                 if (double.TryParse(e.TryGetWebMessageAsString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var dy)) WheelForwarded?.Invoke(dy);
             };
             _ready = true;
-            if (_pendingDoc is not null) core.NavigateToString(_pendingDoc);
+            if (_pendingDoc is not null) Navigate(_pendingDoc);
         }
         catch (Exception)
         {
@@ -105,14 +111,48 @@ public sealed class BodyWebView : UserControl
         }
     }
 
-    public bool Failed { get; private set; }
-    public event Action? FailedToStart;
+    private async Task OnResourceAsync(CoreWebView2Environment env, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        try
+        {
+            if (!Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var u)) { e.Response = env.CreateWebResourceResponse(null, 403, "Blocked", ""); return; }
+            if (u.Host == FontHost) return;
+            // Images allowed for this message go through the server image proxy, fetched here with the session cookies.
+            if (_allowImages && e.ResourceContext == CoreWebView2WebResourceContext.Image && ImageProxy.IsProxyRequest(u, ApiBase, MailboxId) && ProxyFetcher is { } fetch)
+            {
+                var deferral = e.GetDeferral();
+                try
+                {
+                    var bytes = await fetch(e.Request.Uri);
+                    if (bytes is { Length: > 0 })
+                    {
+                        var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+                        await stream.WriteAsync(System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.AsBuffer(bytes));
+                        stream.Seek(0);
+                        e.Response = env.CreateWebResourceResponse(stream, 200, "OK", "Content-Type: image/*\nCache-Control: no-store");
+                    }
+                    else e.Response = env.CreateWebResourceResponse(null, 404, "Not found", "");
+                }
+                finally { deferral.Complete(); }
+                return;
+            }
+            e.Response = env.CreateWebResourceResponse(null, 403, "Blocked", "");
+        }
+        catch (Exception)
+        {
+            try { e.Response = env.CreateWebResourceResponse(null, 403, "Blocked", ""); } catch (Exception) { }
+        }
+    }
 
+    /// <summary>Only our own document may load: the first navigation we start ourselves. Everything else is cancelled.</summary>
     private void OnNavigationStarting(CoreWebView2 sender, CoreWebView2NavigationStartingEventArgs e)
     {
         var uri = e.Uri ?? "";
-        var ours = !e.IsUserInitiated && (uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase) || uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase));
-        if (ours) return;
+        if (_allowNextNavigation && !e.IsUserInitiated && (uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase) || uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase)))
+        {
+            _allowNextNavigation = false;
+            return;
+        }
         e.Cancel = true;
         if (e.IsUserInitiated) Raise(uri);
     }
@@ -123,13 +163,32 @@ public sealed class BodyWebView : UserControl
         LinkRequested?.Invoke(uri, text);
     }
 
-    public void Show(string html, bool allowImages, bool dark)
+    private void Navigate(string doc)
     {
-        _allowImages = allowImages;
-        _linkTexts = HtmlBody.LinkTexts(html);
-        var colors = dark ? new BodyColors("#F8F3F0", "#1EA94E", "#161312") : new BodyColors("#050100", "#006900", "#FFFFFF");
-        var doc = HtmlBody.Wrap(html, allowImages, dark, colors);
-        if (_ready) _web.CoreWebView2.NavigateToString(doc); else _pendingDoc = doc;
+        _allowNextNavigation = true;
+        _web.CoreWebView2.NavigateToString(doc);
+    }
+
+    /// <summary>Renders the message. Never throws: a body that cannot be shown here falls back to plain text.</summary>
+    public async void Show(string html, bool allowImages, bool dark)
+    {
+        try
+        {
+            _allowImages = allowImages;
+            if (allowImages && CapabilityProvider is { } cap && await cap() is { Length: > 0 } token)
+                html = ImageProxy.Rewrite(html, ApiBase, MailboxId, token);
+            _linkTexts = HtmlBody.LinkTexts(html);
+            var colors = dark ? new BodyColors("#ECECEC", "#8ADBAA") : new BodyColors("#000000", "#00643A");
+            var imgOrigin = allowImages ? ApiBase : null;
+            var doc = HtmlBody.Wrap(html, allowImages, dark, colors, "https://" + FontHost, imgOrigin);
+            if (!HtmlBody.FitsNavigateToString(doc)) { Failed = true; FailedToStart?.Invoke(); return; }
+            if (_ready) Navigate(doc); else _pendingDoc = doc;
+        }
+        catch (Exception)
+        {
+            Failed = true;
+            FailedToStart?.Invoke();
+        }
     }
 
     private async Task InstallWheelAsync()
@@ -152,7 +211,8 @@ public sealed class BodyWebView : UserControl
     /// <summary>Re-measure after remote images arrive.</summary>
     public async void RemeasureSoon()
     {
-        foreach (var ms in new[] { 400, 1500, 4000 }) { await Task.Delay(ms); await MeasureAsync(); }
+        try { foreach (var ms in new[] { 400, 1500, 4000 }) { await Task.Delay(ms); await MeasureAsync(); } }
+        catch (Exception) { }
     }
 
     public void Close()

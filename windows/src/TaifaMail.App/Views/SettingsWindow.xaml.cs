@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media;
 using TaifaMail.App.Services;
 using TaifaMail.Core.Models;
 using TaifaMail.Core.Net;
+using TaifaMail.Core.ViewModels;
 using Windows.Graphics;
 
 namespace TaifaMail.App.Views;
@@ -43,6 +44,7 @@ public sealed partial class SettingsWindow : Window
         DensityChoice.SelectedIndex = ctx.Settings.Density == "compact" ? 1 : 0;
         AlertsToggle.IsOn = ctx.Settings.NewMailAlerts;
         BadgeToggle.IsOn = ctx.Settings.TaskbarBadge;
+        PreviewToggle.IsOn = ctx.Settings.ShowNotificationPreview;
         AccountAddress.Text = ctx.Me.Address;
         _init = true;
     }
@@ -80,6 +82,7 @@ public sealed partial class SettingsWindow : Window
     }
 
     private void OnAlertsToggled(object sender, RoutedEventArgs e) { if (!_init) return; _ctx.Settings.NewMailAlerts = AlertsToggle.IsOn; _ctx.SaveSettings(); }
+    private void OnPreviewToggled(object sender, RoutedEventArgs e) { if (!_init) return; _ctx.Settings.ShowNotificationPreview = PreviewToggle.IsOn; _ctx.SaveSettings(); }
     private void OnBadgeToggled(object sender, RoutedEventArgs e) { if (!_init) return; _ctx.Settings.TaskbarBadge = BadgeToggle.IsOn; _ctx.SaveSettings(); _badgeChanged(); }
 
     // ---- signature ----
@@ -92,16 +95,26 @@ public sealed partial class SettingsWindow : Window
             if (_api is null) throw new ApiTransportError("Not available in preview mode.");
             var blocks = await _api.BlocksAsync();
             _signature = blocks.Signatures.FirstOrDefault(b => b.IsDefault) ?? blocks.Signatures.FirstOrDefault();
-            SignatureBox.Text = _signature?.Text ?? "";
+            // a signature with a structured config was built in the web builder: show it read only, never overwrite it
+            var structured = _signature?.IsStructured == true;
+            SignatureBox.Text = !string.IsNullOrWhiteSpace(_signature?.Text) ? _signature!.Text! : TaifaMail.Core.Content.HtmlText.Strip(_signature?.Html ?? "");
+            SignatureBox.IsReadOnly = structured;
+            SaveSignatureButton.IsEnabled = !structured;
+            SignatureWeb.IsOpen = structured;
             SignatureError.IsOpen = false;
         }
         catch (Exception e) when (e is ApiRequestError or ApiTransportError) { SignatureError.Message = "Couldn't load your signature. " + e.Message; SignatureError.IsOpen = true; _loadedSignature = false; }
         finally { SignatureLoading.Visibility = Visibility.Collapsed; }
     }
 
+    private async void OnEditSignatureOnWeb(object sender, RoutedEventArgs e)
+    {
+        try { await Windows.System.Launcher.LaunchUriAsync(new Uri("https://mail.govconnect.ke")); } catch (Exception) { }
+    }
+
     private async void OnSaveSignature(object sender, RoutedEventArgs e)
     {
-        if (_api is null) return;
+        if (_api is null || _signature?.IsStructured == true) return;
         SignatureSaved.Text = "";
         var text = SignatureBox.Text.Replace("\r\n", "\n").Replace('\r', '\n');
         var html = WebUtility.HtmlEncode(text).Replace("\n", "<br>");
@@ -151,21 +164,12 @@ public sealed partial class SettingsWindow : Window
         if (_api is null || _auto is null) return;
         AutoSaved.Text = "";
         var mode = (AutoMode.SelectedItem as ComboBoxItem)?.Tag as string ?? "always";
-        var text = AutoMessage.Text.Replace("\r\n", "\n").Replace('\r', '\n');
-        var config = _auto with
-        {
-            Enabled = AutoEnabled.IsOn,
-            Subject = AutoSubject.Text,
-            Text = text,
-            Html = WebUtility.HtmlEncode(text).Replace("\n", "<br>"),
-            Mode = mode,
-            StartAt = mode == "date_range" ? AutoStart.Date?.ToString("o") : null,
-            EndAt = mode == "date_range" ? AutoEnd.Date?.ToString("o") : null,
-            StartHour = double.IsNaN(AutoStartHour.Value) ? _auto.StartHour : (int)AutoStartHour.Value,
-            EndHour = double.IsNaN(AutoEndHour.Value) ? _auto.EndHour : (int)AutoEndHour.Value,
-        };
+        var (config, error) = AutoReplyForm.Build(_auto, AutoEnabled.IsOn, AutoSubject.Text, AutoMessage.Text, mode, AutoStart.Date, AutoEnd.Date,
+            double.IsNaN(AutoStartHour.Value) ? _auto.StartHour : (int)AutoStartHour.Value, double.IsNaN(AutoEndHour.Value) ? _auto.EndHour : (int)AutoEndHour.Value);
+        if (config is null) { AutoError.Message = error ?? "Check the form."; AutoError.IsOpen = true; return; }
         try { _auto = await _api.SetAutoResponderAsync(config); AutoError.IsOpen = false; AutoSaved.Text = "Saved"; }
         catch (Exception ex) when (ex is ApiRequestError or ApiTransportError) { AutoError.Message = ex is ApiTransportError ? "Could not reach Taifa Mail." : ex.Message; AutoError.IsOpen = true; }
+        catch (Exception) { AutoError.Message = "Could not save your auto-reply."; AutoError.IsOpen = true; }
     }
 
     // ---- account ----

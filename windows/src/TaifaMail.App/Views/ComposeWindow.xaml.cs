@@ -90,10 +90,10 @@ public sealed partial class ComposeWindow : Window
             {
                 var blocks = await new SettingsApi(_ctx.Api).BlocksAsync();
                 var sig = blocks.Signatures.FirstOrDefault(b => b.IsDefault) ?? blocks.Signatures.FirstOrDefault();
-                if (sig is not null) signature = sig.Text ?? "";
+                if (sig is not null) signature = !string.IsNullOrWhiteSpace(sig.Text) ? sig.Text! : TaifaMail.Core.Content.HtmlText.Strip(sig.Html);
             }
         }
-        catch (Exception e) when (e is ApiRequestError or ApiTransportError) { }
+        catch (Exception) { }
         var text = "\r\r" + (signature.Length > 0 ? "-- \r" + signature.Replace("\r\n", "\r").Replace("\n", "\r") : "");
         Editor.Document.SetText(TextSetOptions.None, text);
         Editor.Document.Selection.SetRange(0, 0);

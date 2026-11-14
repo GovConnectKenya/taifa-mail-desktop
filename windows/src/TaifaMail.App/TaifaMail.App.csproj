@@ -41,6 +41,7 @@
 
   <ItemGroup>
     <Content Include="Assets\**\*.svg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\*.*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Logo\*.*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\taifa.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\NOTICE-icons.txt" CopyToOutputDirectory="PreserveNewest" />
