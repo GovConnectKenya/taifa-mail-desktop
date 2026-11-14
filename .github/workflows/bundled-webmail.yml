@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       webmail_ref:
-        description: taifa-mail branch, tag or commit to bundle (main, or a pinned sha)
+        description: taifa-mail commit or branch to bundle instead of the WEBMAIL_REF pin (leave empty for the pin)
         required: false
-        default: main
+        default: ''
 
 permissions:
   contents: read
@@ -41,6 +41,7 @@ jobs:
             files: |
               release/*.dmg
               release/*.zip
+              release/latest-mac.yml
           - os: windows-latest
             args: '--win'
             files: |
@@ -48,6 +49,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # The UI is built from GovConnectKenya/taifa-mail, which is private. The
       # job stops here, with this message, rather than packaging an app without
@@ -62,17 +65,29 @@ jobs:
             exit 1
           fi
 
-      # A dispatch builds the ref it is given (default main). A push builds
-      # feat/webmail-desktop-build, which is taifa-mail main plus the three
-      # desktop build files, until those files are merged to main; then this
-      # fallback becomes 'main' too.
+      # The pinned commit (WEBMAIL_REF), unless a dispatch names another one;
+      # stage-webmail.mjs then allows the unpinned bundle and says so.
+      - name: Choose the webmail commit
+        id: pin
+        shell: bash
+        env:
+          OVERRIDE: ${{ inputs.webmail_ref }}
+        run: |
+          if [ -n "$OVERRIDE" ]; then
+            echo "ref=$OVERRIDE" >> "$GITHUB_OUTPUT"
+            echo "TAIFA_ALLOW_UNPINNED=1" >> "$GITHUB_ENV"
+          else
+            echo "ref=$(tr -d '[:space:]' < WEBMAIL_REF)" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out the webmail (taifa-mail)
         uses: actions/checkout@v4
         with:
           repository: GovConnectKenya/taifa-mail
-          ref: ${{ inputs.webmail_ref || 'feat/webmail-desktop-build' }}
+          ref: ${{ steps.pin.outputs.ref }}
           token: ${{ secrets.TAIFA_MAIL_READ_TOKEN }}
           path: taifa-mail
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -99,6 +114,10 @@ jobs:
 
       - name: Package (unsigned, not published)
         run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - name: Mark the macOS feed with its minimum system version
+        if: matrix.os == 'macos-latest'
+        run: node scripts/set-min-macos.mjs
 
       - name: Upload the unsigned installers
         uses: actions/upload-artifact@v4

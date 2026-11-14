@@ -10,6 +10,11 @@
 //
 // A package must never ship without its UI, so any problem here is a hard
 // failure: no bundle, no index.html, no fonts.
+//
+// WEBMAIL_REF (repo root) pins the exact taifa-mail commit a build bundles, so
+// a release is reproducible and says which webmail it carries. The bundle must
+// come from that commit; TAIFA_ALLOW_UNPINNED=1 relaxes this for a deliberate
+// try of another commit (a dispatched branch build), never for a release.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,10 +41,20 @@ if (process.argv.includes('--build')) {
   execFileSync(process.execPath, ['scripts/build-desktop.mjs'], { cwd: webmail, stdio: 'inherit' });
 }
 
+const pinned = fs.readFileSync(path.join(root, 'WEBMAIL_REF'), 'utf8').trim();
+const allowUnpinned = process.env.TAIFA_ALLOW_UNPINNED === '1';
+
 for (const required of ['index.html', '_app', 'fonts', 'desktop-bundle.json']) {
   if (!fs.existsSync(path.join(bundle, required))) {
     fail(`${path.join(bundle, required)} is missing. Build it with: node scripts/stage-webmail.mjs --build`);
   }
+}
+
+const built = JSON.parse(fs.readFileSync(path.join(bundle, 'desktop-bundle.json'), 'utf8'));
+if (built.commit !== pinned) {
+  const msg = `the bundle was built from ${built.commit}, WEBMAIL_REF pins ${pinned}`;
+  if (!allowUnpinned) fail(`${msg}. Check out the pinned commit (or update WEBMAIL_REF) and rebuild.`);
+  console.warn(`stage-webmail: WARNING ${msg} (TAIFA_ALLOW_UNPINNED=1)`);
 }
 
 fs.rmSync(target, { recursive: true, force: true });
