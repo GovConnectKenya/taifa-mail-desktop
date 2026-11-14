@@ -89,9 +89,10 @@ jobs:
           $bytes = [IO.File]::ReadAllBytes($dll.FullName)
           $ascii = [Text.Encoding]::ASCII.GetString($bytes)
           $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
+          $utf16b = [Text.Encoding]::Unicode.GetString($bytes, 1, $bytes.Length - 2)
           $hits = @()
           foreach ($needle in 'PreviewBoot', 'PreviewData', 'PreviewMail', 'PreviewAuth') { if ($ascii.Contains($needle)) { $hits += $needle } }
-          foreach ($needle in 'TAIFA_PREVIEW_FIXTURE_ONLY_DEBUG', '--preview-data', '--screenshots') { if ($utf16.Contains($needle)) { $hits += $needle } }
+          foreach ($needle in 'TAIFA_PREVIEW_FIXTURE_ONLY_DEBUG', '--preview-data', '--screenshots') { if ($utf16.Contains($needle) -or $utf16b.Contains($needle)) { $hits += $needle } }
           if ($hits.Count -gt 0) { Write-Error "Preview data found in the Release build: $($hits -join ', ')"; exit 1 }
           Write-Host "Release assembly $($dll.Name) ($($dll.Length) bytes) contains none of the preview markers."
       - name: Zip
@@ -115,5 +116,5 @@ jobs:
       - name: Prove preview data is in Debug
         run: |
           $bytes = [IO.File]::ReadAllBytes((Resolve-Path artifacts/debug-x64/TaifaMail.dll))
-          if (-not [Text.Encoding]::Unicode.GetString($bytes).Contains('TAIFA_PREVIEW_FIXTURE_ONLY_DEBUG')) { Write-Error 'Debug build is missing the preview fixtures'; exit 1 }
+          if (-not [Text.Encoding]::ASCII.GetString($bytes).Contains('PreviewBoot')) { Write-Error 'Debug build is missing the preview fixtures'; exit 1 }
           Write-Host 'Debug assembly contains the preview fixtures.'
