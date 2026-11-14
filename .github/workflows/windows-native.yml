@@ -70,10 +70,13 @@ jobs:
               $out = & $xc.FullName (Join-Path $in.DirectoryName 'bisect-input.json') (Join-Path $in.DirectoryName 'bisect-output.json') 2>&1 | Out-String
               "{0} -> exit {1}; stdout: [{2}]; output.json exists: {3}" -f $label, $LASTEXITCODE, $out.Trim(), (Test-Path (Join-Path $in.DirectoryName 'bisect-output.json'))
             }
-            $all = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json
-            $e = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $e.XamlPages = @(); $e.XamlApplications = @(); Try-Run 'nothing' $e
-            $e = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $e.XamlPages = @(); Try-Run 'application only' $e
-            $e = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $e.XamlApplications = @(); $e.XamlPages = @($json.XamlPages | Where-Object { $_.ItemSpec -like '*SignInPage*' }); Try-Run 'SignInPage without application' $e
+            $e = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $e.XamlPages = @(); $e.XamlApplications = @(); $e.ReferenceAssemblies = @(); Try-Run 'nothing, no references' $e
+            $e = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $e.XamlPages = @(); $e.XamlApplications = @(); $e.ReferenceAssemblies = @($json.ReferenceAssemblies | Where-Object { $_.ItemSpec -notlike '*TaifaMail*' -and $_.ItemSpec -notlike '*Toolkit*' }); Try-Run 'nothing, without our assemblies' $e
+            "== no arguments"
+            & $xc.FullName 2>&1 | Out-String | Write-Host
+            "exit $LASTEXITCODE"
+            "== application event log, last 15 minutes"
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-15) } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'XamlCompiler|Markup' } | Select-Object -First 4 | ForEach-Object { $_.Message.Substring(0, [Math]::Min(1800, $_.Message.Length)) }
             "== references sample"
             $json.ReferenceAssemblies | Select-Object -First 3 | ForEach-Object { $_.ItemSpec }
             "== dotnet and msbuild"
