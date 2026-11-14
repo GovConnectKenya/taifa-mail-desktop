@@ -108,6 +108,22 @@ Two further benefits of the real origin:
   in a browser: the renderer is sandboxed, context-isolated, without Node, and
   without a bridge. The trust boundary is the same as the thin shell's.
 
+## Same pages as the browser
+
+The app appends `TaifaMailApp/<version>` to the user agent, deliberately not the
+0.1.x token `TaifaMailDesktop`. The webmail treats `TaifaMailDesktop` as "the old
+thin shell" (`isDesktopShell()`): it hides the passkey button and its "or"
+divider, hides the workspace-account link, and switches new-mail notifications
+on by default. Those branches were written for 0.1.x on Electron 31. With the
+new token the webmail takes exactly its browser code paths, so every auth and
+onboarding page is the web page. Checked pixel for pixel against a browser build
+of the same commit (/login, the sign-in code screen, /mailbox-2fa) and against
+the live site for the routes reachable signed out.
+
+Consequence: new-mail notifications follow the web flow. The webmail's own
+prompt or the Settings toggle turns them on; the app grants the permission
+without a second OS prompt.
+
 ## Desktop integration
 
 - macOS title bar: `hiddenInset`, traffic lights at x 18, y 22 (as in Spaci).
@@ -137,8 +153,12 @@ Two further benefits of the real origin:
 
 ## Known limits
 
-- Passkeys: Electron has no WebAuthn UI, as in 0.1.x. Password and emailed
-  sign-in codes work.
+- Passkeys: the button is shown exactly as on the web. On macOS, Electron 45
+  exposes the WebAuthn API but has no authenticator UI: the platform
+  authenticator reports unavailable and a request never answers (measured: still
+  pending after 7s with a 5s timeout), so passkey sign-in does not complete on
+  macOS. On Windows, Chromium uses the native Windows Hello API; not yet tested
+  on a Windows machine. Password and emailed sign-in codes work everywhere.
 - "Sign in with SSO" leaves the app for the identity provider (the navigation
   lock sends it to the browser), so SSO sign-in completes in the browser, not in
   the app. Unchanged from 0.1.x.
