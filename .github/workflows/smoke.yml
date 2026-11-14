@@ -231,17 +231,24 @@ jobs:
           echo "CHECK PASS codesign verify"
 
       - name: Launch and wait for the process
+        timeout-minutes: 3
         run: |
-          set -euo pipefail
-          open -n "$RUNNER_TEMP/app/Taifa Mail.app"
+          set -uo pipefail
+          APP="$RUNNER_TEMP/app/Taifa Mail.app"
+          # open returns once LaunchServices has the app; run it in the background so a stall is visible
+          open -n "$APP" > "$RUNNER_TEMP/open.log" 2>&1 &
+          OPENPID=$!
           for i in $(seq 1 60); do
             if pgrep -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' >/dev/null; then echo "process up after ${i}s"; break; fi
             sleep 1
           done
-          pgrep -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' >/dev/null || { echo "CHECK FAIL process never started"; exit 1; }
+          echo "open still running: $(kill -0 $OPENPID 2>/dev/null && echo yes || echo no)"
+          cat "$RUNNER_TEMP/open.log"
+          ps -axo pid,etime,command | grep -i 'taifa' | grep -v grep | cut -c1-200 || true
+          if ! pgrep -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' >/dev/null; then echo "CHECK FAIL process never started"; exit 1; fi
           echo "CHECK PASS process started"
           sleep 12
-          pgrep -fl 'Taifa Mail' | head
+
       - name: Screenshot
         run: |
           mkdir -p shots
