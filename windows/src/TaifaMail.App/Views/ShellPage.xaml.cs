@@ -421,7 +421,7 @@ public sealed partial class ShellPage : Page, IChromePage
         var check = LinkSafety.Check(uri, visibleText);
         if (!check.Allowed || check.Uri is null) return;
         var body = new StackPanel { Spacing = 8 };
-        body.Children.Add(new TextBlock { Text = check.Uri.ToString(), Style = (Style)Application.Current.Resources["TmMono"], TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true });
+        body.Children.Add(new TextBlock { Text = check.Uri.ToString(), Style = (Style)Application.Current.Resources["TmMonoText"], TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true });
         if (check.HostDiffersFromText)
             body.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Warning, Message = "The link text names a different site than the one this link opens." });
         var dialog = new ContentDialog

@@ -184,7 +184,7 @@
     <Setter Property="CharacterSpacing" Value="-8"/>
     <Setter Property="Foreground" Value="{ThemeResource TmTextBrush}"/>
   </Style>
-  <Style x:Key="TmMono" TargetType="TextBlock">
+  <Style x:Key="TmMonoText" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{StaticResource TmMono}"/>
     <Setter Property="FontSize" Value="12"/>
     <Setter Property="LineHeight" Value="16"/>
