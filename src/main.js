@@ -640,8 +640,6 @@ function setAboutPanel() {
     applicationName: 'Taifa Mail',
     applicationVersion: app.getVersion(),
     version: info ? `webmail ${info.webmail} (${String(info.commit).slice(0, 9)})` : 'live webmail',
-    copyright: 'Taifa Mail, RCFI. Kenya.',
-    website: 'https://mail.govconnect.ke',
     iconPath: brandingPath('icon.png'),
   });
 }
