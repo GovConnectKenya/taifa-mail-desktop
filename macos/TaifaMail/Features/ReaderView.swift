@@ -8,13 +8,15 @@ struct ReaderView: View {
     @State private var pendingLink: URL?
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             if store.selection.count > 1 {
-                EmptyState(icon: .mail, title: "\(store.selection.count) messages selected", hint: "Use the toolbar to archive, delete or move them.")
+                EmptyState(icon: .mail, title: "\(store.selection.count) messages selected", hint: "Use the list toolbar to archive, delete or move them.")
             } else if let r = store.reader {
+                ReaderToolbar(store: store)
                 content(r)
+                if r.status != .unavailableOffline { ReaderFooter(store: store, reader: r) }
             } else {
-                EmptyState(icon: .mail, title: "Select a message", hint: "Choose a conversation from the list to read it.")
+                EmptyState(icon: .mail, title: "Select a conversation", hint: "Choose a message from the list to read it here.")
                     .accessibilityIdentifier("reader-empty")
             }
         }
@@ -36,33 +38,42 @@ struct ReaderView: View {
         switch r.status {
         case .loading where r.messages.isEmpty:
             ScrollView { VStack(alignment: .leading, spacing: Space.s4) {
-                SkeletonBar(width: 280, height: 16)
+                SkeletonBar(width: 280, height: 20)
                 HStack(spacing: Space.s3) { Circle().fill(Theme.track).frame(width: 40, height: 40); VStack(alignment: .leading, spacing: Space.s2) { SkeletonBar(width: 160); SkeletonBar(width: 220, height: 8) } }
                 ForEach(0..<5, id: \.self) { _ in SkeletonBar(height: 10) }
-            }.padding(Space.s6) }.accessibilityIdentifier("reader-skeleton")
+            }.padding(Space.s7) }.accessibilityIdentifier("reader-skeleton")
         case .failed(let m) where r.messages.isEmpty:
-            VStack { Banner(kind: .danger, icon: .danger, message: "Could not load this message. \(m)", actionTitle: "Retry") { store.retryReader() }.padding(Space.s6); Spacer() }
+            VStack(spacing: Space.s3) {
+                Text("Couldn't load this message").taifa(.subhead).foregroundStyle(Theme.text)
+                Text(m).taifa(.meta).foregroundStyle(Theme.text3)
+                Button("Try again") { store.retryReader() }.buttonStyle(OutlinePillStyle())
+            }.padding(Space.s8).frame(maxWidth: .infinity, maxHeight: .infinity)
         case .unavailableOffline:
             EmptyState(icon: .wifi, title: "Not available offline", hint: "This message is not available offline.")
         default:
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: Space.s3) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(r.subject.isEmpty ? "(no subject)" : r.subject).taifa(.title).foregroundStyle(Theme.text)
-                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                            Spacer()
-                            if r.messages.count > 1 { Text("\(r.messages.count) messages").taifa(.meta).foregroundStyle(Theme.text3) }
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(r.subject.isEmpty ? "(no subject)" : r.subject).font(Fonts.sans(20, .semibold)).tracking(-0.2)
+                            .foregroundStyle(Theme.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            .padding(.bottom, Space.s1)
+                        if store.isOffline { Banner(kind: .warn, icon: .wifi, message: "Offline. Showing the last synced mail.").padding(.vertical, Space.s2) }
+                        if r.hasMoreOlder {
+                            Button { Task { await store.loadOlder() } } label: {
+                                HStack(spacing: Space.s2) {
+                                    if r.loadingOlder { ProgressView().controlSize(.small) }
+                                    Text(r.loadingOlder ? "Loading" : "Show earlier messages")
+                                }
+                                .taifa(.body).foregroundStyle(Theme.text2).frame(maxWidth: .infinity).padding(.vertical, Space.s2)
+                                .overlay(RoundedRectangle(cornerRadius: Radius.ctl).strokeBorder(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                            }.buttonStyle(.plain).hoverFill().padding(.top, Space.s1).padding(.bottom, Space.s3).accessibilityIdentifier("show-earlier")
                         }
-                        if store.isOffline { Banner(kind: .warn, icon: .wifi, message: "Offline. Showing the last synced mail.") }
-                        ForEach(r.messages) { m in
-                            MessageCard(message: m, reader: r, app: app, store: store, isLast: m.id == r.messages.last?.id) { pendingLink = $0 }
-                                .id(m.id)
+                        ForEach(Array(r.messages.enumerated()), id: \.element.id) { i, m in
+                            MessageRow(message: m, reader: r, app: app, store: store, first: i == 0) { pendingLink = $0 }.id(m.id)
                         }
                     }
-                    .padding(.horizontal, Space.s6).padding(.vertical, Space.s4)
-                    .frame(maxWidth: 860, alignment: .leading)
-                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, Space.s7).padding(.top, Space.s2).padding(.bottom, Space.s7)
+                    .frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
                 }
                 .accessibilityIdentifier("reader")
                 .onAppear { if let id = r.messages.last?.id { proxy.scrollTo(id, anchor: .top) } }
@@ -71,12 +82,74 @@ struct ReaderView: View {
     }
 }
 
-struct MessageCard: View {
+/// 32 px tools: Archive, Spam, Delete | Mark unread, Star, Move | spacer | "N of M" with newer and older.
+struct ReaderToolbar: View {
+    var store: MailStore
+    var body: some View {
+        let row = store.rows.first { $0.id == store.reader?.rowId }
+        let isJunk = store.currentFolder?.role == .junk
+        HStack(spacing: Space.s1) {
+            tool(.archive, "Archive") { store.perform(.archive, on: row.map { [$0] }) }
+            tool(.junk, isJunk ? "Not spam" : "Report spam") { store.perform(isJunk ? .notJunk : .junk, on: row.map { [$0] }) }
+            tool(.trash, "Delete", danger: true) { store.perform(.trash, on: row.map { [$0] }) }
+            Rectangle().fill(Theme.border).frame(width: 1, height: 20).padding(.horizontal, Space.s2)
+            tool(row?.unread == true ? .openMail : .unread, row?.unread == true ? "Mark as read" : "Mark as unread") { store.perform(.read(row?.unread ?? false), on: row.map { [$0] }) }
+            tool(.star, row?.latest.flagged == true ? "Remove star" : "Star", tint: row?.latest.flagged == true ? Theme.warn : nil) {
+                store.perform(.flag(!(row?.latest.flagged ?? false)), on: row.map { [$0] })
+            }
+            Menu {
+                ForEach(store.folders.filter { $0.path != row?.latest.folder }) { f in Button(f.name) { store.perform(.move(f.path), on: row.map { [$0] }) } }
+            } label: { Icon(.folder, size: 18).foregroundStyle(Theme.text2).frame(width: 32, height: 32) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 32, height: 32).hoverFill().help("Move to folder").accessibilityLabel("Move to folder")
+            Spacer()
+            if let p = store.readerPosition {
+                Text("\(p.index.formatted()) of \(p.count.formatted())").font(Fonts.sans(11)).monospacedDigit().foregroundStyle(Theme.text3)
+                tool(.chevronUp, "Newer conversation", small: true) { store.openNewer() }.disabled(p.index <= 1)
+                tool(.chevronDown, "Older conversation", small: true) { store.openOlder() }.disabled(p.index >= p.count)
+            }
+        }
+        .padding(.horizontal, Space.s4).padding(.vertical, Space.s3)
+        .disabled(store.reader == nil)
+    }
+
+    private func tool(_ icon: Icon.Name, _ label: String, danger: Bool = false, tint: Color? = nil, small: Bool = false, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Icon(icon, size: small ? 14 : 18).foregroundStyle(tint ?? Theme.text2).frame(width: 32, height: 32)
+        }
+        .buttonStyle(.plain).hoverFill(tint: danger ? Theme.dangerSoft : nil).help(label).accessibilityLabel(label)
+    }
+}
+
+/// Sticky footer: 40 px outlined pill buttons Reply, Reply all, Forward.
+struct ReaderFooter: View {
+    var store: MailStore
+    let reader: ReaderState
+    var body: some View {
+        HStack(spacing: Space.s2) {
+            Spacer()
+            pill(.undo, "Reply", .reply)
+            pill(.replyAll, "Reply all", .replyAll)
+            pill(.forward, "Forward", .forward)
+        }
+        .padding(.horizontal, Space.s6).padding(.top, Space.s4).padding(.bottom, Space.s5)
+        .background(Theme.panel)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.borderSoft).frame(height: 1) }
+    }
+    private func pill(_ icon: Icon.Name, _ title: String, _ kind: ComposeSeed.Kind) -> some View {
+        Button {
+            if let m = reader.messages.last { ComposeLauncher.shared.open(kind: kind, store: store, message: m) }
+        } label: { HStack(spacing: Space.s2) { Icon(icon, size: 16); Text(title) } }
+            .buttonStyle(OutlinePillStyle()).disabled(reader.messages.isEmpty).accessibilityIdentifier("footer-\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+    }
+}
+
+/// One message of the thread, flat on the page ground: hairline above, 40 px avatar, body indented 52.
+struct MessageRow: View {
     let message: ThreadMessage
     let reader: ReaderState
     var app: AppModel
     var store: MailStore
-    let isLast: Bool
+    let first: Bool
     var onLink: (URL) -> Void
     @State private var bodyHeight: CGFloat = 40
 
@@ -87,16 +160,17 @@ struct MessageCard: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if expanded {
-                Divider().overlay(Theme.border)
                 VStack(alignment: .leading, spacing: Space.s3) {
                     if let w = message.authWarning { AuthBanner(warning: w) }
                     bodyView
                     if !message.attachments.isEmpty { AttachmentStrip(message: message, store: store) }
-                }.padding(Space.s4)
+                }
+                .padding(.leading, Space.s13).padding(.top, Space.s2).padding(.bottom, Space.s2)
             }
         }
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+        .padding(.top, expanded ? Space.s5 : 0)
+        .overlay(alignment: .top) { if !first || expanded { Rectangle().fill(Theme.borderSoft).frame(height: 1) } }
+        .padding(.top, expanded && !first ? Space.s4 : 0)
         .accessibilityIdentifier("message-\(message.uid)")
     }
 
@@ -105,36 +179,25 @@ struct MessageCard: View {
         let name = message.fromName.isEmpty ? message.fromAddr : message.fromName
         let picture = AvatarDecision.picture(entry: store.avatars.entry(address), message: message.authState, outgoing: outgoing)
         return Button { store.toggleExpanded(message.id) } label: {
-            HStack(alignment: expanded ? .top : .center, spacing: Space.s3) {
-                AvatarView(name: name, address: address, picture: picture, size: expanded ? Metrics.avatarReader : Metrics.avatarCompact)
+            HStack(alignment: .top, spacing: Space.s3) {
+                AvatarView(name: name, address: address, picture: picture, size: expanded ? Metrics.avatarReader : 32)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: Space.s2) {
-                        Text(name).taifa(message.seen ? .bodyStrong : .bodyStrong).foregroundStyle(Theme.text).lineLimit(1)
-                        if expanded { Text(message.fromAddr).font(.taifaMono(11)).foregroundStyle(Theme.text3).lineLimit(1).textSelection(.enabled) }
+                        Text(name).font(Fonts.sans(13, .semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                        if expanded { Text(message.fromAddr).font(Fonts.mono(11)).foregroundStyle(Theme.text3).lineLimit(1).textSelection(.enabled) }
                         Spacer()
-                        if message.hasAttachments { Icon(.attachment, size: 14).foregroundStyle(Theme.text3) }
-                        Text(message.sentAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "").taifa(.meta).foregroundStyle(Theme.text3)
+                        if message.hasAttachments { Icon(.attachment, size: 13).foregroundStyle(Theme.text3) }
+                        Text(message.sentAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "").font(Fonts.sans(11)).foregroundStyle(Theme.text3)
                     }
-                    if expanded {
-                        Text("to \(recipientsLine)").taifa(.meta).foregroundStyle(Theme.text3).lineLimit(2)
-                    } else {
-                        Text(message.snippet).taifa(.meta).foregroundStyle(Theme.text3).lineLimit(1)
-                    }
+                    if expanded { Text("to \(recipientsLine)").taifa(.meta).foregroundStyle(Theme.text3).lineLimit(2) }
+                    else { Text(message.snippet).taifa(.meta).foregroundStyle(Theme.text2).lineLimit(1) }
                 }
-                if expanded {
-                    HStack(spacing: Space.s1) {
-                        IconButton(icon: .reply, label: "Reply") { ComposeLauncher.shared.open(kind: .reply, store: store, message: message) }
-                        IconButton(icon: .replyAll, label: "Reply All") { ComposeLauncher.shared.open(kind: .replyAll, store: store, message: message) }
-                        IconButton(icon: .forward, label: "Forward") { ComposeLauncher.shared.open(kind: .forward, store: store, message: message) }
-                    }.foregroundStyle(Theme.text2)
-                }
-                Icon(expanded ? .chevronUp : .chevronDown, size: 12).foregroundStyle(Theme.text4)
             }
-            .padding(.horizontal, Space.s4)
-            .frame(minHeight: expanded ? 72 : Metrics.readerHeaderCollapsed)
+            .padding(.vertical, expanded ? 0 : Space.s3)
+            .overlay(alignment: .bottom) { if !expanded { Rectangle().fill(Theme.borderSoft).frame(height: 1) } }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).hoverFill(radius: 0)
         .accessibilityLabel("\(name), \(message.subject)")
     }
 
@@ -170,7 +233,7 @@ struct PlainBody: View {
     var onLink: (URL) -> Void
     var body: some View {
         Text(Self.linked(text))
-            .taifa(.reader).foregroundStyle(Theme.text)
+            .font(Fonts.sans(14)).foregroundStyle(Theme.text)
             .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.openURL, OpenURLAction { onLink($0); return .handled })
             .accessibilityIdentifier("message-body-text")

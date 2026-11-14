@@ -10,8 +10,9 @@ struct SettingsView: View {
             AutoReplyPane(app: app).tabItem { Label("Auto-reply", image: "icon-reply") }
             AccountPane(app: app).tabItem { Label("Account", image: "icon-user") }
         }
-        .frame(width: 520, height: 420)
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 420, idealHeight: 480)
         .preferredColorScheme(app.prefs.theme.colorScheme)
+        .tint(Theme.accentDot)
     }
 }
 

@@ -9,7 +9,7 @@ struct RootView: View {
         Group {
             switch app.phase {
             case .launching:
-                ZStack { Theme.bg.ignoresSafeArea(); ProgressView() }
+                LaunchSkeleton()
             case .signedOut:
                 SignInView(model: app.signIn, app: app, offline: false, banner: app.sessionBanner)
             case .signedIn:
@@ -18,11 +18,30 @@ struct RootView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .preferredColorScheme(app.prefs.theme.colorScheme)
+        .tint(Theme.accentDot)
         .task {
             ComposeLauncher.shared.opener = { openWindow(id: "compose", value: $0) }
             await app.launch()
         }
         .onChange(of: app.session?.address) { _, a in ComposeLauncher.shared.ownAddress = a ?? "" }
+    }
+}
+
+/// Pane skeleton shown while the session is checked at launch.
+struct LaunchSkeleton: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: Space.s3) {
+                HStack(spacing: Space.s2) { BrandLogo(height: 32); Text("Taifa Mail").font(Fonts.sans(16, .semibold)).foregroundStyle(Theme.text) }
+                SkeletonBar(height: 48)
+                ForEach(0..<6, id: \.self) { _ in SkeletonBar(height: 14) }
+                Spacer()
+            }.padding(Space.s4).frame(width: 256).background(Theme.sidebar)
+            VStack(spacing: 0) { ForEach(0..<8, id: \.self) { _ in SkeletonRow(density: .comfortable) }; Spacer() }
+                .frame(width: 392).background(Theme.bg)
+            Theme.bg
+        }
+        .accessibilityIdentifier("launch-skeleton")
     }
 }
 
@@ -36,13 +55,10 @@ struct MainView: View {
         @Bindable var store = store
         NavigationSplitView(columnVisibility: $visibility) {
             SidebarView(app: app, store: store)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 256, max: 300)
         } content: {
             ThreadListView(app: app, store: store)
-                .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 480)
-                .overlay(alignment: .bottom) { NoticeToast(store: store).padding(Space.s3) }
-                .navigationTitle(store.isSearching ? "Search" : (store.currentFolder?.name.capitalized ?? "Inbox"))
-                .navigationSubtitle(subtitle)
+                .navigationSplitViewColumnWidth(min: 320, ideal: 392, max: 520)
         } detail: {
             ReaderView(app: app, store: store)
         }
@@ -58,15 +74,11 @@ struct MainView: View {
             await store.runSearch()
         }
         .toolbar { MailToolbar(store: store) }
+        .overlay(alignment: .bottom) { NoticeToast(store: store).padding(.bottom, Space.s6).padding(.horizontal, Space.s4) }
         .onReceive(NotificationCenter.default.publisher(for: .focusSearch)) { _ in searchPresented = true }
         .accessibilityIdentifier("main-window")
     }
 
-    private var subtitle: String {
-        if store.isSearching { return "\(store.total) results" }
-        let unseen = store.currentFolder?.unseen ?? 0
-        return unseen > 0 ? "\(unseen) unread" : "\(store.total) messages"
-    }
 }
 
 extension Notification.Name { static let focusSearch = Notification.Name("ke.govconnect.TaifaMail.focusSearch") }
@@ -78,40 +90,33 @@ struct MailToolbar: ToolbarContent {
             IconButton(icon: .compose, label: "New Message") { ComposeLauncher.shared.openNew() }
             IconButton(icon: .refresh, label: "Refresh") { Task { await store.refresh() } }
         }
-        ToolbarItemGroup(placement: .primaryAction) {
-            let has = !store.selection.isEmpty
-            let single = store.selection.count == 1 ? store.selectedRows.first : nil
-            IconButton(icon: .archive, label: "Archive") { store.perform(.archive) }.disabled(!has)
-            IconButton(icon: .trash, label: "Delete") { store.perform(.trash) }.disabled(!has)
-            IconButton(icon: .junk, label: "Junk") { store.perform(.junk) }.disabled(!has)
-            Menu {
-                ForEach(store.folders.filter { $0.path != store.selectedFolder }) { f in Button(f.name) { store.perform(.move(f.path)) } }
-            } label: { Icon(.folder, size: 18) }.disabled(!has).help("Move to folder").accessibilityLabel("Move to folder")
-            IconButton(icon: .flag, label: "Flag") { store.perform(.flag(!(single?.latest.flagged ?? false))) }.disabled(!has)
-            IconButton(icon: .unread, label: "Mark Unread") { store.perform(.read(single?.unread ?? false)) }.disabled(!has)
-            IconButton(icon: .reply, label: "Reply") { if let r = single { ComposeLauncher.shared.open(kind: .reply, store: store, row: r) } }.disabled(single == nil)
-            IconButton(icon: .replyAll, label: "Reply All") { if let r = single { ComposeLauncher.shared.open(kind: .replyAll, store: store, row: r) } }.disabled(single == nil)
-            IconButton(icon: .forward, label: "Forward") { if let r = single { ComposeLauncher.shared.open(kind: .forward, store: store, row: r) } }.disabled(single == nil)
-        }
     }
 }
 
+/// ToastPill: radius 8, 1 px border, surface, min height 44, padding 12/20, Undo in accent ink, close button.
 struct NoticeToast: View {
     var store: MailStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        if let n = store.notice {
-            HStack(spacing: Space.s3) {
-                Icon(n.isError ? .danger : .check, size: 16).foregroundStyle(n.isError ? Theme.dangerFg : Theme.accentFg)
-                Text(n.text).taifa(.body).foregroundStyle(Theme.text)
-                if n.canUndo { Button("Undo") { store.performUndo() }.buttonStyle(QuietButtonStyle()).accessibilityIdentifier("toast-undo") }
+        ZStack {
+            if let n = store.notice {
+                HStack(spacing: Space.s3) {
+                    Icon(n.isError ? .danger : .check, size: 16).foregroundStyle(n.isError ? Theme.dangerFg : Theme.accentFg)
+                    Text(n.text).font(Fonts.sans(13, .medium)).foregroundStyle(Theme.text).lineLimit(2)
+                    Spacer(minLength: Space.s2)
+                    if n.canUndo { Button("Undo") { store.performUndo() }.buttonStyle(.plain).font(Fonts.sans(13, .semibold)).foregroundStyle(Theme.accentFg).accessibilityIdentifier("toast-undo") }
+                    Button { store.dismissNotice() } label: { Icon(.close, size: 14).foregroundStyle(Theme.text3) }.buttonStyle(.plain).accessibilityLabel("Dismiss")
+                }
+                .padding(.horizontal, Space.s5).padding(.vertical, Space.s3)
+                .frame(minHeight: 44).frame(maxWidth: 420)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous).strokeBorder(Theme.border))
+                .shadow(color: Theme.shadowOverlay, radius: 20, y: 8)
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("toast")
             }
-            .padding(.horizontal, Space.s4).frame(height: 40)
-            .background(Theme.panel, in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.border2))
-            .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("toast")
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: store.notice)
     }
 }

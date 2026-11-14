@@ -26,6 +26,11 @@ J
 add chevron-down arrow iconsax-arrow-down4
 add chevron-up arrow iconsax-arrow-up3
 add chevron-right arrow iconsax-arrow-right4
+add chevron-left arrow iconsax-arrow-left3
+add star space2new iconsax-star
+add open-mail email iconsax-open-mail
+add link blockchain iconsax-connect-links
+add list health iconsax-list
 add inbox email iconsax-inbox
 add drafts email iconsax-pending-mail
 add sent email iconsax-sent-mails

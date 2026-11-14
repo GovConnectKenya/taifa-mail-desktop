@@ -20,19 +20,14 @@ struct ThreadListView: View {
     var body: some View {
         let density = app.prefs.density
         VStack(spacing: 0) {
+            ListHeader(store: store)
             if store.isOffline { Banner(kind: .warn, icon: .wifi, message: "Offline. Showing the last synced mail.").padding(Space.s2) }
             if store.isSearching && store.searchIncomplete {
                 Banner(kind: .info, icon: .info, message: "Showing the newest matches only.").padding(.horizontal, Space.s2).padding(.top, Space.s2)
             }
-            if store.selection.count > 1 {
-                HStack {
-                    Text("\(store.selection.count) selected").taifa(.bodyStrong).foregroundStyle(Theme.text)
-                    Spacer()
-                }.padding(.horizontal, Space.s4).frame(height: 32).background(Theme.panel2)
-            }
             content(density: density)
         }
-        .background(Theme.panel)
+        .background(Theme.bg)
     }
 
     @ViewBuilder private func content(density: Density) -> some View {
@@ -41,10 +36,17 @@ struct ThreadListView: View {
             VStack(spacing: 0) { ForEach(0..<8, id: \.self) { _ in SkeletonRow(density: density) }; Spacer() }
                 .accessibilityIdentifier("thread-skeleton")
         case .failed(let message) where store.rows.isEmpty:
-            VStack { Banner(kind: .danger, icon: .danger, message: message, actionTitle: "Retry") { Task { await store.refresh() } }.padding(Space.s4); Spacer() }
+            VStack(spacing: Space.s3) {
+                Text("Couldn't load \(store.currentFolder?.name ?? "this folder")").taifa(.subhead).foregroundStyle(Theme.text)
+                Text(message).taifa(.meta).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
+                Button("Try again") { Task { await store.refresh() } }.buttonStyle(OutlinePillStyle())
+            }.padding(Space.s8).frame(maxWidth: .infinity, maxHeight: .infinity)
         case _ where store.rows.isEmpty:
-            EmptyState(icon: store.isSearching ? .search : .inbox, title: store.isSearching ? "No messages match" : "Nothing here",
-                       hint: store.isSearching ? "No messages match your search." : "This folder has no messages.")
+            if store.isSearching {
+                EmptyState(icon: .search, title: "No messages match", hint: "Try a different search.", showLogo: false)
+            } else {
+                EmptyState(icon: .inbox, title: "Nothing here", hint: "No messages match this view.", showLogo: store.currentFolder?.role == .inbox)
+            }
         default:
             ScrollViewReader { proxy in
                 ScrollView {
@@ -52,8 +54,6 @@ struct ThreadListView: View {
                         ForEach(store.rows) { row in
                             ThreadRow(row: row, density: density, selected: store.selection.contains(row.id), focused: focused,
                                       outgoing: store.isOutgoingFolder, store: store)
-                                .frame(height: density.rowHeight)
-                                .padding(.horizontal, Space.s2)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     let f = NSEvent.modifierFlags
@@ -66,40 +66,68 @@ struct ThreadListView: View {
                         }
                         if store.isLoadingMore { ProgressView().controlSize(.small).padding(Space.s4) }
                     }
-                    .padding(.vertical, Space.s1)
                 }
                 .accessibilityIdentifier("thread-list")
                 .focusable()
                 .focused($focused)
                 .focusEffectDisabled()
+                .overlay { Rectangle().strokeBorder(Theme.accentDot, lineWidth: 2).opacity(focused ? 0.7 : 0).allowsHitTesting(false) }
                 .onKeyPress(.downArrow) { store.moveSelection(by: 1, extend: NSEvent.modifierFlags.contains(.shift)); scroll(proxy); return .handled }
                 .onKeyPress(.upArrow) { store.moveSelection(by: -1, extend: NSEvent.modifierFlags.contains(.shift)); scroll(proxy); return .handled }
-                .onKeyPress(.return) { return .handled }
             }
         }
     }
 
-    private func scroll(_ proxy: ScrollViewProxy) {
-        if let id = store.anchorId { proxy.scrollTo(id) }
+    private func scroll(_ proxy: ScrollViewProxy) { if let id = store.anchorId { proxy.scrollTo(id) } }
+}
+
+/// Folder title with total and unread counts, and the bulk bar while several rows are selected.
+struct ListHeader: View {
+    var store: MailStore
+    var body: some View {
+        if store.selection.count > 1 {
+            HStack(spacing: Space.s1) {
+                Text("\(store.selection.count) selected").taifa(.bodyStrong).foregroundStyle(Theme.text)
+                Spacer()
+                IconButton(icon: .archive, label: "Archive selected") { store.perform(.archive) }
+                IconButton(icon: .trash, label: "Delete selected") { store.perform(.trash) }
+                IconButton(icon: .openMail, label: "Mark selected as read") { store.perform(.read(true)) }
+                IconButton(icon: .star, label: "Star selected") { store.perform(.flag(true)) }
+            }
+            .foregroundStyle(Theme.text2)
+            .padding(.horizontal, Space.s5).frame(height: 44)
+            .background(Theme.panel2)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(store.isSearching ? "Search" : (store.currentFolder?.name.capitalized ?? "Inbox")).taifa(.subhead).foregroundStyle(Theme.text)
+                let unseen = store.currentFolder?.unseen ?? 0
+                Text("\(store.total.formatted())" + (unseen > 0 && !store.isSearching ? "  \u{00B7}  \(unseen.formatted()) unread" : ""))
+                    .taifa(.caption).foregroundStyle(Theme.text3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Space.s5).padding(.top, Space.s4).padding(.bottom, Space.s3)
+        }
     }
 }
 
 struct SkeletonRow: View {
     var density: Density
     var body: some View {
-        HStack(spacing: Space.s3) {
+        HStack(alignment: .top, spacing: Space.s3) {
             Circle().fill(Theme.track).frame(width: density.avatar, height: density.avatar)
             VStack(alignment: .leading, spacing: Space.s2) {
                 SkeletonBar(width: 140, height: 10)
                 SkeletonBar(height: 10)
-                if density == .comfortable { SkeletonBar(width: 200, height: 8) }
+                SkeletonBar(width: 200, height: 8)
             }
         }
-        .padding(.horizontal, Space.s4)
-        .frame(height: density.rowHeight)
+        .padding(.horizontal, Space.s5).padding(.vertical, density.verticalPadding)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.borderSoft).frame(height: 1) }
     }
 }
 
+/// One thread row, anatomy from webmail ThreadList.svelte: avatar, then sender and time, then the
+/// subject line (unread dot first, count last), then the preview line (paperclip and star at the end).
 struct ThreadRow: View {
     let row: ConversationSummary
     let density: Density
@@ -115,43 +143,61 @@ struct ThreadRow: View {
         let address = outgoing ? (e.to.first ?? e.fromAddr) : e.fromAddr
         let name = outgoing ? Self.recipientName(e) : (e.fromName.isEmpty ? e.fromAddr : e.fromName)
         let picture = AvatarDecision.picture(entry: store.avatars.entry(address), message: MessageAuthState(e), outgoing: outgoing)
-        HStack(spacing: Space.s3) {
-            Circle().fill(unread ? Theme.accentDot : Color.clear).frame(width: 8, height: 8)
+        HStack(alignment: .top, spacing: Space.s3) {
             AvatarView(name: name, address: address, picture: picture, size: density.avatar)
-            VStack(alignment: .leading, spacing: density == .comfortable ? 2 : 1) {
-                HStack(spacing: Space.s1) {
-                    Text(name).taifa(unread ? .bodyStrong : .body).foregroundStyle(Theme.text).lineLimit(1)
-                    if row.count > 1 { Text("\(row.count)").taifa(.caption).foregroundStyle(Theme.text3) }
+            VStack(alignment: .leading, spacing: Space.s1) {
+                HStack(spacing: Space.s2) {
+                    Text(name).font(Fonts.sans(13, unread ? .bold : .medium)).foregroundStyle(Theme.text).lineLimit(1)
                     Spacer(minLength: Space.s1)
-                    if e.hasAttachments { Icon(.attachment, size: 14).foregroundStyle(Theme.text3) }
-                    if e.flagged { Icon(.flag, size: 14).foregroundStyle(Theme.flag) }
-                    Text(TimeFormat.short(e.sentAt)).taifa(.caption).foregroundStyle(unread ? Theme.accentFg : Theme.text3)
+                    Text(TimeFormat.short(e.sentAt)).font(Fonts.sans(11, unread ? .bold : .regular))
+                        .foregroundStyle(unread ? Theme.accentFg : Theme.text3)
                 }
-                if density == .comfortable {
-                    Text(e.subject.isEmpty ? "(no subject)" : e.subject).taifa(unread ? .bodyStrong : .body).foregroundStyle(Theme.text).lineLimit(1)
-                    Text(e.snippet).taifa(.meta).foregroundStyle(Theme.text3).lineLimit(1)
-                } else {
-                    Text(compactLine(e)).taifa(.meta).foregroundStyle(Theme.text3).lineLimit(1)
+                HStack(spacing: Space.s2) {
+                    if unread { Circle().fill(Theme.accentDot).frame(width: 8, height: 8) }
+                    Text(e.subject.isEmpty ? "(no subject)" : e.subject).font(Fonts.sans(12, unread ? .semibold : .regular))
+                        .foregroundStyle(Theme.text).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if row.count > 1 { Text("\(row.count)").font(Fonts.mono(10)).foregroundStyle(Theme.text3) }
+                }
+                HStack(spacing: Space.s2) {
+                    Text(e.snippet).taifa(.meta).foregroundStyle(Theme.text2).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if e.hasAttachments { Icon(.attachment, size: 13).foregroundStyle(Theme.text3) }
+                    if e.flagged { Icon(.star, size: 12).foregroundStyle(Theme.warn) }
                 }
             }
         }
-        .padding(.horizontal, Space.s2)
+        .padding(.horizontal, Space.s5).padding(.vertical, density.verticalPadding)
         .background(SelectionBackground(selected: selected, focused: focused, hovering: hover))
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.borderSoft).frame(height: 1) }
+        .overlay(alignment: .topTrailing) { if hover { hoverActions.padding(.top, Space.s8).padding(.trailing, Space.s4) } }
         .onHover { hover = $0 }
         .onAppear { store.avatars.request(address) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(name), \(e.subject), \(TimeFormat.short(e.sentAt)), \(unread ? "unread" : "read")\(e.flagged ? ", flagged" : "")\(e.hasAttachments ? ", has attachments" : "")")
+        .accessibilityLabel("\(name), \(e.subject), \(TimeFormat.short(e.sentAt)), \(unread ? "unread" : "read")\(e.flagged ? ", starred" : "")\(e.hasAttachments ? ", has attachments" : "")")
         .accessibilityIdentifier("thread-row-\(e.uid)")
     }
 
-    private func compactLine(_ e: Envelope) -> String {
-        let s = e.subject.isEmpty ? "(no subject)" : e.subject
-        return e.snippet.isEmpty ? s : "\(s)  \(e.snippet)"
+    /// Hover actions of the webmail row: archive, delete, mark read or unread, star.
+    private var hoverActions: some View {
+        HStack(spacing: 0) {
+            rowAction(.archive, "Archive") { store.perform(.archive, on: [row]) }
+            rowAction(.trash, "Delete") { store.perform(.trash, on: [row]) }
+            rowAction(row.unread ? .openMail : .unread, row.unread ? "Mark as read" : "Mark as unread") { store.perform(.read(row.unread), on: [row]) }
+            rowAction(.star, row.latest.flagged ? "Remove star" : "Star") { store.perform(.flag(!row.latest.flagged), on: [row]) }
+        }
+        .padding(2)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous).strokeBorder(Theme.border))
+    }
+
+    private func rowAction(_ icon: Icon.Name, _ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Icon(icon, size: 16).foregroundStyle(Theme.text2).frame(width: 28, height: 28) }
+            .buttonStyle(.plain).hoverFill().help(label).accessibilityLabel(label)
     }
 
     static func recipientName(_ e: Envelope) -> String {
         guard let first = e.to.first else { return "(no recipient)" }
-        // "Name <addr>" or a bare address.
         if let lt = first.firstIndex(of: "<") {
             let n = first[..<lt].trimmingCharacters(in: CharacterSet(charactersIn: " \""))
             if !n.isEmpty { return n }

@@ -9,7 +9,9 @@ enum Space {
     static let s4: CGFloat = 16
     static let s5: CGFloat = 20
     static let s6: CGFloat = 24
+    static let s7: CGFloat = 28
     static let s8: CGFloat = 32
+    static let s13: CGFloat = 52
 }
 
 enum Radius {
@@ -76,6 +78,8 @@ enum Theme {
     static let info = dynamic(light: NSColor(hex: 0x254DA8), dark: NSColor(hex: 0x8FB0F5))              // --color-info
     static let infoSoft = dynamic(light: NSColor(hex: 0xE5ECFB), dark: NSColor(hex: 0x7AA3F3, alpha: 0.14)) // --color-info-soft
     static let flag = warn
+    static let shadowRaised = Color(nsColor: NSColor(hex: 0x142C24, alpha: 0.08))
+    static let shadowOverlay = Color(nsColor: NSColor(hex: 0x142C24, alpha: 0.16))
     static let track = dynamic(light: NSColor(hex: 0xE6ECE8), dark: NSColor(hex: 0x1A1A1A))             // --skeleton-base
 
     /// Deterministic placeholder colours behind the person silhouette (same in light and dark).
@@ -83,30 +87,63 @@ enum Theme {
         .map { Color(nsColor: NSColor(hex: $0)) }
 }
 
+/// Bundled fonts (both OFL, see Resources/Fonts/OFL.txt): Google Sans for the UI, JetBrains Mono for
+/// addresses, counts and ids. Registered at launch; falls back to the system font if registration fails.
+enum Fonts {
+    static func registerBundled() {
+        guard let urls = Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: nil) else { return }
+        CTFontManagerRegisterFontURLs(urls as CFArray, .process, true, nil)
+    }
+
+    static func sans(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        let name: String
+        switch weight {
+        case .semibold, .bold, .heavy, .black: name = "GoogleSans-SemiBold"
+        case .medium: name = "GoogleSans-Medium"
+        default: name = "GoogleSans-Regular"
+        }
+        return .custom(name, size: size)
+    }
+
+    static func mono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        let name: String
+        switch weight {
+        case .semibold, .bold, .heavy, .black: name = "JetBrainsMono-SemiBold"
+        case .medium: name = "JetBrainsMono-Medium"
+        default: name = "JetBrainsMono-Regular"
+        }
+        return .custom(name, size: size)
+    }
+}
+
+/// The type scale of tokens.css (--text-*).
 enum TextStyle {
-    case caption, meta, body, bodyStrong, reader, title, display, hero
+    case caption, meta, body, bodyStrong, bodyLg, reader, subhead, title, display, hero
 
     var font: Font {
         switch self {
-        case .caption: .system(size: 11, weight: .medium)
-        case .meta: .system(size: 12)
-        case .body: .system(size: 13)
-        case .bodyStrong: .system(size: 13, weight: .semibold)
-        case .reader: .system(size: 14)
-        case .title: .system(size: 16, weight: .semibold)
-        case .display: .system(size: 20, weight: .semibold)
-        case .hero: .system(size: 24, weight: .semibold)
+        case .caption: Fonts.sans(11, .medium)
+        case .meta: Fonts.sans(12)
+        case .body: Fonts.sans(13)
+        case .bodyStrong: Fonts.sans(13, .semibold)
+        case .bodyLg, .reader: Fonts.sans(14)
+        case .subhead: Fonts.sans(16, .semibold)
+        case .title: Fonts.sans(20, .semibold)
+        case .display: Fonts.sans(24, .semibold)
+        case .hero: Fonts.sans(28, .semibold)
         }
     }
 }
 
 extension View {
-    func taifa(_ style: TextStyle) -> some View { font(style.font).tracking(-0.1) }
+    func taifa(_ style: TextStyle) -> some View { font(style.font) }
+    /// Headings only: -0.01em tracking, as the webmail does.
+    func taifaHeading(_ style: TextStyle) -> some View { font(style.font).tracking(-0.2) }
 }
 
 extension Font {
-    /// Addresses, ids and key hints.
-    static func taifaMono(_ size: CGFloat = 12) -> Font { .system(size: size, design: .monospaced) }
+    /// Addresses, ids and counts: JetBrains Mono.
+    static func taifaMono(_ size: CGFloat = 12) -> Font { Fonts.mono(size) }
 }
 
 enum ThemePreference: String, CaseIterable, Identifiable {
@@ -120,21 +157,34 @@ enum Density: String, CaseIterable, Identifiable {
     case comfortable, compact
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
-    var rowHeight: CGFloat { self == .comfortable ? Metrics.rowComfortable : Metrics.rowCompact }
-    var avatar: CGFloat { self == .comfortable ? Metrics.avatarList : Metrics.avatarCompact }
+    /// Compact changes only padding and avatar size (webmail `data-mail-density`).
+    var verticalPadding: CGFloat { self == .comfortable ? Space.s3 : Space.s2 }
+    var avatar: CGFloat { self == .comfortable ? 36 : 32 }
 }
 
-/// The selection style: active background plus a very subtle border, never a heavy outline.
+/// Selected thread row: accent at 16 percent over the page ground, no border, square corners
+/// (webmail ThreadList.svelte `.tm-list-rows .tm-row.selected`). Hover is surface2.
 struct SelectionBackground: View {
     var selected: Bool
     var focused: Bool = true
     var hovering: Bool = false
     var body: some View {
-        RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-            .fill(selected ? (focused ? Theme.surfaceSelected : Theme.accentSoft) : (hovering ? Theme.panel2 : Color.clear))
-            .overlay(
-                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    .strokeBorder(Theme.border.opacity(selected ? 0.9 : 0), lineWidth: 1)
-            )
+        Rectangle().fill(selected ? Theme.accentDot.opacity(focused ? 0.16 : 0.12) : (hovering ? Theme.panel2 : Color.clear))
     }
 }
+
+/// Hover, pressed and focus treatment shared by icon buttons and rows.
+struct HoverFill: ViewModifier {
+    var radius: CGFloat = Radius.ctl
+    var tint: Color? = nil
+    @State private var hover = false
+    @FocusState private var focused: Bool
+    func body(content: Content) -> some View {
+        content
+            .background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(hover ? (tint ?? Theme.panel2) : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: radius + 2, style: .continuous).strokeBorder(Theme.accentDot, lineWidth: 2).padding(-2).opacity(focused ? 1 : 0))
+            .focused($focused)
+            .onHover { hover = $0 }
+    }
+}
+extension View { func hoverFill(radius: CGFloat = Radius.ctl, tint: Color? = nil) -> some View { modifier(HoverFill(radius: radius, tint: tint)) } }

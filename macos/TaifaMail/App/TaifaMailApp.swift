@@ -6,6 +6,7 @@ struct TaifaMailApp: App {
     @State private var app: AppModel
 
     init() {
+        Fonts.registerBundled()
         #if DEBUG
         let preview = ProcessInfo.processInfo.arguments.contains("-TaifaPreviewData")
         if preview {
@@ -45,7 +46,7 @@ struct ComposeWindow: View {
 
     var body: some View {
         Group {
-            if let model { ComposeView(model: model, signature: signature).preferredColorScheme(app.prefs.theme.colorScheme) }
+            if let model { ComposeView(model: model, signature: signature).preferredColorScheme(app.prefs.theme.colorScheme).tint(Theme.accentDot) }
             else { ProgressView() }
         }
         .navigationTitle(model?.subject.isEmpty == false ? model!.subject : "New Message")

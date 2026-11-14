@@ -5,12 +5,13 @@ struct SkeletonBar: View {
     var width: CGFloat? = nil
     var height: CGFloat = 10
     @State private var dim = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         RoundedRectangle(cornerRadius: Radius.xs, style: .continuous)
             .fill(Theme.track)
             .frame(width: width, height: height)
             .opacity(dim ? 0.55 : 1)
-            .onAppear { withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { dim = true } }
+            .onAppear { if !reduceMotion { withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { dim = true } } }
     }
 }
 
@@ -42,15 +43,32 @@ struct EmptyState: View {
     var icon: Icon.Name
     var title: String
     var hint: String
+    var showLogo = false
     var body: some View {
         VStack(spacing: Space.s3) {
-            BrandLogo(height: 40).opacity(0.9)
-            Text(title).taifa(.display).foregroundStyle(Theme.text)
+            if showLogo { BrandLogo(height: 40) }
+            else {
+                Circle().fill(Theme.accentSoft).frame(width: 64, height: 64)
+                    .overlay(Icon(icon, size: 28).foregroundStyle(Theme.accentFg))
+            }
+            Text(title).taifa(.subhead).foregroundStyle(Theme.text)
             Text(hint).taifa(.body).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
         }
         .padding(Space.s8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// 40 px outlined pill button (reader footer, "Try again").
+struct OutlinePillStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .taifa(.bodyStrong).foregroundStyle(Theme.text)
+            .padding(.horizontal, Space.s5).frame(height: 40)
+            .background(configuration.isPressed ? Theme.panel3 : Color.clear, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.border2, lineWidth: 1))
+            .hoverFill(radius: 20)
     }
 }
 
@@ -61,7 +79,7 @@ struct PrimaryButtonStyle: ButtonStyle {
             .taifa(.bodyStrong)
             .foregroundStyle(Theme.onAccent)
             .padding(.horizontal, Space.s4)
-            .frame(maxWidth: full ? .infinity : nil, minHeight: 36)
+            .frame(maxWidth: full ? .infinity : nil, minHeight: 40)
             .background(configuration.isPressed ? Theme.accentHover : Theme.accent, in: RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous))
             .opacity(1)
     }
@@ -83,7 +101,7 @@ struct FieldStyle: TextFieldStyle {
             .textFieldStyle(.plain)
             .taifa(.body)
             .padding(.horizontal, Space.s3)
-            .frame(height: Metrics.field)
+            .frame(height: 40)
             .background(Theme.panel2, in: RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous).strokeBorder(Theme.border2, lineWidth: 1))
     }

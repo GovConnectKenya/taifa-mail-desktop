@@ -26,6 +26,7 @@ struct ReaderState: Equatable {
     var expanded: Set<String> = []
     var loadingBodies: Set<String> = []
     var imagesAllowed: Set<String> = []
+    var loadingOlder = false
 }
 
 @MainActor @Observable
@@ -41,6 +42,7 @@ final class MailStore {
     private(set) var folders: [Folder] = []
     var selectedFolder: String = "INBOX"
     private(set) var foldersState: LoadState = .idle
+    private(set) var quota: Quota?
 
     // List
     private(set) var rows: [ConversationSummary] = []
@@ -84,6 +86,7 @@ final class MailStore {
     var inboxUnseen: Int { folders.first(where: { $0.role == .inbox })?.unseen ?? 0 }
     var currentFolder: Folder? { folders.first(where: { $0.path == selectedFolder }) }
     var isOutgoingFolder: Bool { [.sent, .drafts].contains(currentFolder?.role ?? .other) }
+    var composeFolders: [Folder] { folders }
 
     func swapService(_ s: MailService) {
         service = s; avatars.service = s; avatars.reset()
@@ -110,11 +113,11 @@ final class MailStore {
     }
 
     private func sorted(_ f: [Folder]) -> [Folder] {
-        f.enumerated().sorted { a, b in
-            let ra = a.element.role.sortOrder, rb = b.element.role.sortOrder
+        f.sorted { a, b in
+            let ra = a.role.sortOrder, rb = b.role.sortOrder
             if ra != rb { return ra < rb }
-            return a.offset < b.offset
-        }.map(\.element)
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
     }
 
     func loadFolders() async {
@@ -124,6 +127,7 @@ final class MailStore {
             folders = sorted(f); foldersState = .loaded; markOnline()
             await cache.saveFolders(f, mailbox: mailboxId)
             publishBadge()
+            if let q = try? await service.quota() { quota = q }
         } catch { handleListError(error, forFolders: true) }
     }
 
@@ -334,6 +338,37 @@ final class MailStore {
         state.nextBefore = window.nextBefore
         if let latest = sorted.last { state.expanded.insert(latest.id) }
         if state.status == .loading, !sorted.isEmpty { state.status = .loaded }
+    }
+
+    /// "Show earlier messages": the next older window of a long conversation (hasMoreOlder / nextBefore).
+    func loadOlder() async {
+        guard let r = reader, r.hasMoreOlder, !r.loadingOlder else { return }
+        reader?.loadingOlder = true
+        defer { reader?.loadingOlder = false }
+        do {
+            let w = try await service.conversation(uid: r.uid, folder: r.folder, before: r.nextBefore)
+            guard var cur = reader, cur.rowId == r.rowId else { return }
+            let known = Set(cur.messages.map(\.id))
+            let older = w.messages.filter { !known.contains($0.id) }
+            cur.messages = (older + cur.messages).sorted { ($0.sentAt ?? .distantPast) < ($1.sentAt ?? .distantPast) }
+            cur.hasMoreOlder = w.hasMoreOlder; cur.nextBefore = w.nextBefore
+            cur.loadingOlder = false
+            reader = cur
+            for m in older { avatars.request(m.fromAddr) }
+        } catch { post("Could not load earlier messages", isError: true) }
+    }
+
+    /// Position of the open thread in the list, for "N of M".
+    var readerPosition: (index: Int, count: Int)? {
+        guard let r = reader, let i = rows.firstIndex(where: { $0.id == r.rowId }) else { return nil }
+        return (i + 1, total)
+    }
+
+    func openNewer() { step(-1) }
+    func openOlder() { step(1) }
+    private func step(_ d: Int) {
+        guard let r = reader, let i = rows.firstIndex(where: { $0.id == r.rowId }), rows.indices.contains(i + d) else { return }
+        select(rows[i + d].id)
     }
 
     func retryReader() { if let r = reader, let row = rows.first(where: { $0.id == r.rowId }) { open(row) } }

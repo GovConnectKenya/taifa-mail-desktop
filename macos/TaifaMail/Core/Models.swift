@@ -52,17 +52,19 @@ struct SwitchableMailbox: Codable, Equatable, Identifiable, Sendable {
 }
 
 enum FolderRole: String, Sendable {
-    case inbox, drafts, sent, archive, junk, trash, other
+    case inbox, drafts, sent, archive, junk, quarantine, trash, other
 
+    /// Webmail FOLDER_SPECIAL_ORDER: Inbox, Sent, Drafts, Archive, Junk, Quarantine, Trash, then the rest.
     var sortOrder: Int {
         switch self {
         case .inbox: 0
-        case .drafts: 1
-        case .sent: 2
+        case .sent: 1
+        case .drafts: 2
         case .archive: 3
         case .junk: 4
-        case .trash: 5
-        case .other: 6
+        case .quarantine: 5
+        case .trash: 6
+        case .other: 7
         }
     }
 
@@ -72,7 +74,7 @@ enum FolderRole: String, Sendable {
         case .drafts: "drafts"
         case .sent: "sent"
         case .archive: "archive"
-        case .junk: "junk"
+        case .junk, .quarantine: "junk"
         case .trash: "trash"
         case .other: "folder"
         }
@@ -105,6 +107,7 @@ struct Folder: Codable, Equatable, Identifiable, Sendable {
         if ["trash", "deleted", "deleted items", "deleted messages", "bin"].contains(leaf) { return .trash }
         if ["junk", "spam", "junk email", "junk e-mail"].contains(leaf) { return .junk }
         if leaf == "archive" { return .archive }
+        if leaf == "quarantine" { return .quarantine }
         return .other
     }
 }

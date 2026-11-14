@@ -1,14 +1,13 @@
 import SwiftUI
 
 /// Interface icons: the vendored Iconsax rounded/linear set in Assets.xcassets/Icons (see NOTICE).
-/// Chevrons only for directional affordances. The library has no `arrow-left4` in rounded/linear,
-/// so left is the right chevron mirrored.
+/// Chevrons only for directional affordances (left is arrow-left3, the chevron in rounded/linear).
 struct Icon: View {
     enum Name: String {
         case chevronDown = "chevron-down", chevronUp = "chevron-up", chevronRight = "chevron-right", chevronLeft = "chevron-left"
         case inbox, drafts, sent, archive, junk, trash, folder, flag, attachment, reply, replyAll = "reply-all"
         case forward, compose, refresh, search, settings, user, unread, close, check, download, undo, sidebar
-        case warning, info, wifi, send, more, imageOff = "image-off", mail, bell, danger, lock
+        case warning, info, wifi, send, more, imageOff = "image-off", mail, bell, danger, lock, star, openMail = "open-mail", link, list
     }
 
     let name: Name
@@ -17,13 +16,11 @@ struct Icon: View {
     init(_ name: Name, size: CGFloat = 16) { self.name = name; self.size = size }
 
     var body: some View {
-        let isLeft = name == .chevronLeft
-        Image("icon-\(isLeft ? "chevron-right" : name.rawValue)")
+        Image("icon-\(name.rawValue)")
             .renderingMode(.template)
             .resizable()
             .scaledToFit()
             .frame(width: size, height: size)
-            .scaleEffect(x: isLeft ? -1 : 1, y: 1)
             .accessibilityHidden(true)
     }
 }
