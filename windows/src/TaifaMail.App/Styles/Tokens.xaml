@@ -41,6 +41,13 @@
       <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="TmSelectedBrush"/>
       <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
       <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
+      <StaticResource x:Key="AccentButtonBackground" ResourceKey="TmAccentBrush"/>
+      <StaticResource x:Key="AccentButtonBackgroundPointerOver" ResourceKey="TmAccentHoverBrush"/>
+      <StaticResource x:Key="AccentButtonBackgroundPressed" ResourceKey="TmAccentHoverBrush"/>
+      <StaticResource x:Key="AccentButtonForeground" ResourceKey="TmOnAccentBrush"/>
+      <StaticResource x:Key="AccentButtonForegroundPointerOver" ResourceKey="TmOnAccentBrush"/>
+      <StaticResource x:Key="AccentButtonForegroundPressed" ResourceKey="TmOnAccentBrush"/>
+      <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent"/>
       <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
       <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
       <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
@@ -81,6 +88,13 @@
       <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="TmSelectedBrush"/>
       <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="TmPanel2Brush"/>
       <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="TmPanel3Brush"/>
+      <StaticResource x:Key="AccentButtonBackground" ResourceKey="TmAccentBrush"/>
+      <StaticResource x:Key="AccentButtonBackgroundPointerOver" ResourceKey="TmAccentHoverBrush"/>
+      <StaticResource x:Key="AccentButtonBackgroundPressed" ResourceKey="TmAccentHoverBrush"/>
+      <StaticResource x:Key="AccentButtonForeground" ResourceKey="TmOnAccentBrush"/>
+      <StaticResource x:Key="AccentButtonForegroundPointerOver" ResourceKey="TmOnAccentBrush"/>
+      <StaticResource x:Key="AccentButtonForegroundPressed" ResourceKey="TmOnAccentBrush"/>
+      <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent"/>
       <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent"/>
       <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="Transparent"/>
       <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="Transparent"/>
@@ -192,15 +206,6 @@
     <Setter Property="MinHeight" Value="32"/>
     <Setter Property="CornerRadius" Value="8"/>
     <Setter Property="FontFamily" Value="{StaticResource TmFont}"/>
-    <Style.Resources>
-      <SolidColorBrush x:Key="AccentButtonBackground" Color="#00864E"/>
-      <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#007343"/>
-      <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#006238"/>
-      <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFF"/>
-      <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFF"/>
-      <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#FFFFFF"/>
-      <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent"/>
-    </Style.Resources>
   </Style>
   <Style x:Key="TmFieldBox" TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
     <Setter Property="MinHeight" Value="32"/>
