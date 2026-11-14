@@ -1,16 +1,20 @@
 'use strict';
 
-// Taifa Mail desktop: a thin shell around the webmail at mail.govconnect.ke.
+// Taifa Mail desktop.
 //
-// There is no local renderer for the app itself. The webmail talks to its
-// backend over same-origin relative paths with HttpOnly cookies, and derives
-// its WebSocket URL from window.location.host, so a window pointed straight at
-// the real origin inherits working auth, CSRF, passkeys and live mail events
-// for free. Bundling the SvelteKit build locally would mean reworking all four
-// of those in code that the sibling govconnect.ke app also depends on.
+// The UI is the Taifa Mail webmail itself, bundled: renderer/ holds the output
+// of the webmail's desktop build, and src/bundle.js serves it for the webmail
+// origin from inside the app, so the window paints from local files with no
+// network round trip. Only the backend API goes over the network, through
+// Chromium's own stack in this app's session, so cookies, the CSRF
+// double-submit and the mailbox websocket behave exactly as in a browser on
+// https://mail.govconnect.ke. docs/BUNDLED_WEBMAIL.md explains the design.
 //
-// The only local page is src/shell/offline.html, shown when the document
-// itself cannot load.
+// A clone with no renderer/ folder still runs: bundle.js then installs nothing
+// and the window loads the live site, as the thin shell did.
+//
+// The only other local page is src/shell/offline.html, shown when the document
+// itself cannot load (in practice only in that thin-shell fallback).
 
 const path = require('path');
 const {
@@ -20,16 +24,32 @@ const {
   Tray,
   ipcMain,
   nativeImage,
+  nativeTheme,
   powerMonitor,
   screen,
   session,
   shell,
 } = require('electron');
 
-const { APP_URL } = require('./config');
+const LAUNCHED_AT = Date.now();
+
+// A packaged app never exposes the DevTools protocol. With it, any local
+// process could start the app with --remote-debugging-port and read the
+// signed-in session (cookies included) over a socket. The Electron fuses close
+// the Node-level equivalents (--inspect, ELECTRON_RUN_AS_NODE, NODE_OPTIONS);
+// this closes the Chromium one. Development runs keep it.
+if (app.isPackaged) {
+  for (const sw of ['remote-debugging-port', 'remote-debugging-pipe', 'remote-debugging-address']) {
+    app.commandLine.removeSwitch(sw);
+  }
+}
+
+const { APP_ORIGIN, APP_URL, THEME_BG, THEME_COOKIE } = require('./config');
 const { harden, installSessionHandlers } = require('./security');
+const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
+const { mailtoToRoute } = require('./mailto');
 const windowState = require('./window-state');
-const { initUpdater, checkManual, getStatus, quitAndInstallNow } = require('./updater');
+const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
 
 const PARTITION = 'persist:taifamail';
 
@@ -41,6 +61,14 @@ let isQuitting = false;
 // page-title-updated handler). Drives the tray tooltip, the dock badge and the
 // popover's inbox badge. 0 until the webmail puts a count in its title.
 let unreadCount = 0;
+// The resolved webmail theme, 'light' or 'dark'. Drives the window background.
+let currentTheme = 'light';
+// A mailto: that arrived before the window could take it (cold start from a
+// link): opened as soon as the webmail has loaded.
+let pendingRoute = null;
+let appLoaded = false;
+// TAIFA_TIMING=1 prints launch to ready-to-show and to first load.
+const TIMING = process.env.TAIFA_TIMING === '1';
 
 // The tray popover's fixed size. Deliberately compact: it is a menu-bar widget,
 // not a second window.
@@ -62,10 +90,17 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 // Appending rather than replacing keeps the real Chrome UA intact, so backend
-// UA parsing and security logs keep working. This suffix is how the web app can
-// tell it is running inside the shell without us exposing any preload bridge:
-// navigator.userAgent.includes('TaifaMailDesktop').
-app.userAgentFallback = `${app.userAgentFallback} TaifaMailDesktop/${app.getVersion()}`;
+// UA parsing and security logs keep working, and the suffix still tells them
+// the request came from the desktop app.
+//
+// Deliberately NOT the 0.1.x token `TaifaMailDesktop`. The webmail checks for
+// that token (isDesktopShell) and then takes thin-shell code paths written for
+// 0.1.x's Electron 31: it hides the passkey button and the "or" divider, hides
+// the workspace-account link, and changes the notification defaults. This app
+// runs the webmail on its real origin with a current Chromium, so it must get
+// exactly the pages a browser gets. A distinct token keeps the webmail on its
+// browser paths, while installed 0.1.x apps keep theirs.
+app.userAgentFallback = `${app.userAgentFallback} TaifaMailApp/${app.getVersion()}`;
 
 // Required on Windows for notifications to be attributed to the app rather than
 // to electron.exe, and for correct taskbar grouping. Must match build.appId.
@@ -134,8 +169,9 @@ function createWindow() {
     minWidth: 940,
     minHeight: 640,
     show: false,
-    // Brand black, so a cold start does not flash white before the app paints.
-    backgroundColor: '#050100',
+    // The webmail's own page background for the current theme, so the window
+    // and the first paint are the same colour: no flash on a cold start.
+    backgroundColor: THEME_BG[currentTheme],
     icon: process.platform === 'linux' ? brandingPath('icon.png') : undefined,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 22 } : undefined,
@@ -164,7 +200,32 @@ function createWindow() {
   if (bounds.isMaximized) win.maximize();
   windowState.track(win);
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    win.show();
+    if (TIMING) console.log(`[timing] launch to ready-to-show: ${Date.now() - LAUNCHED_AT}ms`);
+    // Everything that is not the window waits until it is on screen.
+    setTimeout(startDeferred, 0);
+  });
+
+  // The macOS title bar is hidden and the traffic lights sit over the
+  // webmail's top bar, so that bar must leave room for them and act as the
+  // window's drag handle. Injected here, as app chrome, rather than written
+  // into the webmail: the browser build never gets it.
+  //
+  // Only while the traffic lights are visible: in full screen macOS hides them
+  // (and a full-screen window cannot be dragged), so the stylesheet is removed
+  // and the top bar sits at the far left exactly as on the web. A zoomed
+  // (maximised) window still shows the traffic lights, so it keeps the inset.
+  if (process.platform === 'darwin') {
+    win.webContents.on('dom-ready', () => {
+      // A repeat dom-ready for the same document just adds an identical sheet.
+      win.webContents.insertCSS(MAC_TITLEBAR_CSS, { cssOrigin: 'user' }).catch(() => {});
+      syncFullScreenFlag();
+    });
+    win.webContents.on('did-finish-load', syncFullScreenFlag);
+    win.on('enter-full-screen', syncFullScreenFlag);
+    win.on('leave-full-screen', syncFullScreenFlag);
+  }
 
   win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     if (!isMainFrame) return;
@@ -182,6 +243,13 @@ function createWindow() {
     if (!showingOffline) {
       retryAttempt = 0;
       clearRetry();
+      if (TIMING && !appLoaded) console.log(`[timing] launch to webmail loaded: ${Date.now() - LAUNCHED_AT}ms`);
+      appLoaded = true;
+      if (pendingRoute) {
+        const route = pendingRoute;
+        pendingRoute = null;
+        openRoute(route);
+      }
     }
   });
 
@@ -192,12 +260,13 @@ function createWindow() {
   // Until the webmail puts a count in the title it simply reads 0, which is
   // correct rather than a guess.
   win.webContents.on('page-title-updated', (_e, title) => {
-    const m = /\((\d+)\)/.exec(title || '');
+    // Only the webmail's own "(n) " prefix counts, not any number in brackets
+    // that happens to be in a subject or folder name ("Projects (2024)").
+    const m = /^\((\d+)\)\s/.exec(title || '');
     const n = m ? Math.min(parseInt(m[1], 10), 9999) : 0;
     if (n === unreadCount) return;
     unreadCount = n;
-    if (process.platform === 'darwin') app.dock.setBadge(n ? String(n) : '');
-    else if (typeof app.setBadgeCount === 'function') app.setBadgeCount(n);
+    setUnreadBadge(n);
     if (tray && !tray.isDestroyed()) tray.setToolTip(unreadTooltip(''));
     pushTrayState();
   });
@@ -367,21 +436,144 @@ function hideTrayPopover() {
   if (trayWin && !trayWin.isDestroyed() && trayWin.isVisible()) trayWin.hide();
 }
 
-// Show the window on the app, optionally navigating it there first. Used by the
-// popover's Open Inbox / New Message / Settings, which each want the window
-// forward and on a specific URL.
-function showAppAt(url) {
-  hideTrayPopover();
+// ---------------------------------------------------------------------------
+// In-app navigation
+//
+// Menu items, the tray popover and mailto: links all open a webmail route.
+// The navigation is done the way a click on a link in the webmail would be, so
+// SvelteKit's own router handles it: no reload, the session and any open
+// composer state stay put. The route is always one of ours (a constant, or a
+// compose route built by mailto.js), passed as JSON, never spliced in as code.
+// ---------------------------------------------------------------------------
+
+const COMPOSE_ROUTE = '/#INBOX?compose=new';
+
+const NAVIGATE_SCRIPT = `(route) => {
+  const a = document.createElement('a');
+  a.href = route;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}`;
+
+function openRoute(route) {
   if (!win || win.isDestroyed()) {
+    pendingRoute = route;
     createWindow();
-  }
-  if (url) {
-    showingOffline = false;
-    win.loadURL(url);
+    return;
   }
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  if (!appLoaded || showingOffline) {
+    pendingRoute = route;
+    return;
+  }
+  win.webContents
+    .executeJavaScript(`(${NAVIGATE_SCRIPT})(${JSON.stringify(route)})`, true)
+    .catch(() => win.loadURL(new URL(route, APP_ORIGIN).toString()));
+}
+
+function openMailto(url) {
+  const route = mailtoToRoute(url);
+  if (route) openRoute(route);
+}
+
+// ---------------------------------------------------------------------------
+// Unread badge
+// ---------------------------------------------------------------------------
+
+// Windows has no numeric taskbar badge, so it gets the platform convention: a
+// small overlay dot on the taskbar button, with the count as its accessible
+// description. Drawn once, in code, so no extra asset ships.
+let overlayDot = null;
+function getOverlayDot() {
+  if (overlayDot) return overlayDot;
+  const size = 16;
+  const px = Buffer.alloc(size * size * 4);
+  const c = (size - 1) / 2;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const d = Math.hypot(x - c, y - c);
+      const alpha = Math.max(0, Math.min(1, size / 2 - d));
+      const i = (y * size + x) * 4;
+      // BGRA. Brand red #860000, the webmail's danger colour.
+      px[i] = 0x00;
+      px[i + 1] = 0x00;
+      px[i + 2] = 0x86;
+      px[i + 3] = Math.round(alpha * 255);
+    }
+  }
+  overlayDot = nativeImage.createFromBitmap(px, { width: size, height: size });
+  return overlayDot;
+}
+
+function setUnreadBadge(n) {
+  if (process.platform === 'darwin') {
+    app.dock.setBadge(n ? String(n) : '');
+  } else if (process.platform === 'win32') {
+    if (win && !win.isDestroyed()) win.setOverlayIcon(n ? getOverlayDot() : null, n ? `${n} unread` : '');
+  } else {
+    app.setBadgeCount(n);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Theme
+//
+// The window background follows the webmail's own theme preference (its
+// taifa-mail-theme cookie, 'light' | 'dark' | 'system'), so the colour behind
+// the first paint, the native frame and the traffic-light area all match the
+// webmail. Read from the cookie jar: nothing is asked of the page.
+// ---------------------------------------------------------------------------
+
+async function readThemePreference(ses) {
+  try {
+    const [c] = await ses.cookies.get({ url: APP_URL, name: THEME_COOKIE });
+    const v = c && decodeURIComponent(c.value);
+    if (v === 'light' || v === 'dark' || v === 'system') return v;
+  } catch (_) {
+    // An unreadable jar just means the default.
+  }
+  return 'light';
+}
+
+function applyTheme(pref) {
+  nativeTheme.themeSource = pref;
+  currentTheme = pref === 'system' ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light') : pref;
+  if (win && !win.isDestroyed()) win.setBackgroundColor(THEME_BG[currentTheme]);
+}
+
+// ---------------------------------------------------------------------------
+// macOS title bar
+// ---------------------------------------------------------------------------
+
+// The signed-in top bar (.tm-shell-topbar, 60px) becomes the drag handle and
+// starts its content after the traffic lights. Its controls stay clickable.
+// Pages without that bar (sign-in, setup) get a slim drag strip along the top
+// edge instead, which takes no clicks away from the page. In full screen the
+// traffic lights are hidden and the window cannot be dragged, so none of this
+// applies and the top bar sits at the far left, as on the web.
+const MAC_TITLEBAR_CSS = `
+html:not([data-taifa-fullscreen]) .tm-shell-topbar { -webkit-app-region: drag; padding-left: 88px !important; }
+.tm-shell-topbar :is(button, a, input, select, textarea, label, [role], [tabindex], [contenteditable]) { -webkit-app-region: no-drag; }
+html:not([data-taifa-fullscreen]):not(:has(.tm-shell-topbar)) body::before {
+  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 28px;
+  -webkit-app-region: drag; z-index: 2147483647; pointer-events: none;
+}
+`;
+
+// Tells the injected stylesheet whether the window is in full screen, through
+// one attribute on <html> that only this app sets. (Removing an injected
+// user-origin sheet is not reliable in Electron 45, so the sheet stays and
+// keys off the attribute instead.)
+function syncFullScreenFlag() {
+  if (!win || win.isDestroyed()) return;
+  const on = win.isFullScreen();
+  win.webContents
+    .executeJavaScript(`document.documentElement.toggleAttribute('data-taifa-fullscreen', ${on})`, true)
+    .catch(() => {});
 }
 
 function createTray() {
@@ -416,11 +608,60 @@ function createAppMenu() {
   // Not optional, and not polish. On macOS, without an app menu carrying the
   // editMenu roles, Cmd+C / Cmd+V / Cmd+A do not work in the composer in a
   // packaged build. People write real email in this thing.
+  const isMac = process.platform === 'darwin';
+  const settingsItem = { label: isMac ? 'Settings...' : 'Settings', accelerator: 'CmdOrCtrl+,', click: () => openRoute('/settings') };
+  const defaultMailItem = {
+    label: 'Make Taifa Mail the Default Email App',
+    click: () => app.setAsDefaultProtocolClient('mailto'),
+  };
   const template = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
-    { role: 'fileMenu' },
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' },
+              { type: 'separator' },
+              settingsItem,
+              defaultMailItem,
+              { label: 'Check for Updates...', click: () => checkManual() },
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New Message', accelerator: 'CmdOrCtrl+N', click: () => openRoute(COMPOSE_ROUTE) },
+        { label: 'Inbox', accelerator: 'CmdOrCtrl+Shift+I', click: () => openRoute('/#INBOX') },
+        { type: 'separator' },
+        ...(isMac ? [] : [settingsItem, defaultMailItem, { type: 'separator' }]),
+        isMac ? { role: 'close' } : { role: 'quit' },
+      ],
+    },
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+        ...(app.isPackaged ? [] : [{ type: 'separator' }, { role: 'toggleDevTools' }]),
+      ],
+    },
     { role: 'windowMenu' },
     {
       role: 'help',
@@ -429,11 +670,50 @@ function createAppMenu() {
           label: 'Taifa Mail Help',
           click: () => shell.openExternal('https://govconnect.ke/docs'),
         },
-        { label: 'Check for Updates...', click: () => checkManual() },
+        ...(isMac ? [] : [{ type: 'separator' }, { label: 'Check for Updates...', click: () => checkManual() }, { role: 'about' }]),
       ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function setAboutPanel() {
+  const info = bundleInfo();
+  app.setAboutPanelOptions({
+    applicationName: 'Taifa Mail',
+    applicationVersion: app.getVersion(),
+    version: info ? `webmail ${info.webmail} (${String(info.commit).slice(0, 9)})` : 'live webmail',
+    iconPath: brandingPath('icon.png'),
+  });
+}
+
+// The backend said the bundled webmail is older than it supports
+// (X-Taifa-Min-Desktop-Bundle, see bundle.js). For the rest of this launch the
+// app goes back to being the thin shell: the interception is dropped and the
+// window reloads the live site, which always matches the backend. Meanwhile
+// the updater fetches the app build that carries a new enough bundle and
+// offers the restart.
+let fellBack = false;
+function fallBackToLiveSite() {
+  if (fellBack) return;
+  fellBack = true;
+  console.warn('[shell] bundled webmail is older than the backend requires: using the live site');
+  uninstallBundle(session.fromPartition(PARTITION));
+  if (win && !win.isDestroyed()) {
+    const current = win.webContents.getURL();
+    win.loadURL(current && current.startsWith(APP_ORIGIN) ? current : APP_URL);
+  }
+  checkNow();
+}
+
+// Tray, popover and updater are not needed to paint the window, so they start
+// only once it is on screen.
+let deferredStarted = false;
+function startDeferred() {
+  if (deferredStarted) return;
+  deferredStarted = true;
+  createTray();
+  initUpdater({ onState: updateStatusLabel });
 }
 
 // ---------------------------------------------------------------------------
@@ -444,18 +724,62 @@ function createAppMenu() {
 // so the navigation lock applies by construction rather than per window.
 app.on('web-contents-created', (_e, wc) => harden(wc));
 
-app.on('second-instance', () => showWindow());
+// A second launch carries its arguments here, including a mailto: link on
+// Windows and Linux (macOS delivers those through open-url instead).
+app.on('second-instance', (_e, argv) => {
+  const link = argv.find((a) => /^mailto:/i.test(a));
+  if (link) openMailto(link);
+  else showWindow();
+});
 
-app.whenReady().then(() => {
+// macOS: links arrive through open-url, which can fire before ready on a cold
+// start, so it is registered at the top level and parks the route until the
+// webmail has loaded.
+app.on('open-url', (e, url) => {
+  if (!/^mailto:/i.test(url)) return;
+  e.preventDefault();
+  if (app.isReady()) openMailto(url);
+  else pendingRoute = mailtoToRoute(url);
+});
+
+{
+  const link = process.argv.find((a) => /^mailto:/i.test(a));
+  if (link) pendingRoute = mailtoToRoute(link);
+}
+
+app.whenReady().then(async () => {
   const ses = session.fromPartition(PARTITION);
   installSessionHandlers(ses);
+  const bundled = installBundle(ses, { onTooOld: fallBackToLiveSite });
+  if (!bundled) console.warn('[shell] no bundled webmail in renderer/: loading the live site');
+
+  // 0.1.x registered the web build's service worker in this partition, and it
+  // answers "/" from its own cached copy of the OLD shell before any request
+  // reaches the bundle. The bundle never serves /sw.js, so that worker could
+  // never update itself away. Clear workers and Cache Storage for the webmail
+  // origin on every launch; cookies, localStorage and IndexedDB are untouched,
+  // so the session and preferences stay.
+  try {
+    await ses.clearStorageData({ origin: APP_ORIGIN, storages: ['serviceworkers', 'cachestorage'] });
+  } catch (e) {
+    console.warn('[shell] could not clear the old service worker:', e && e.message);
+  }
   ses.setSpellCheckerLanguages(['en-GB', 'en-US']);
 
+  applyTheme(await readThemePreference(ses));
   createAppMenu();
   createWindow();
-  createTray();
+  setAboutPanel();
+  if (!app.isPackaged && process.platform === 'darwin') app.dock.setIcon(brandingPath('icon.png'));
 
-  initUpdater({ onState: updateStatusLabel });
+  // Follow the webmail's theme toggle and, for 'system', the OS.
+  ses.cookies.on('changed', (_e, cookie, _cause, removed) => {
+    if (cookie.name !== THEME_COOKIE) return;
+    readThemePreference(ses).then(applyTheme);
+  });
+  nativeTheme.on('updated', () => {
+    if (nativeTheme.themeSource === 'system') applyTheme('system');
+  });
 
   // A laptop waking from sleep has a dead socket and, often, no network yet.
   // If we are sitting on the offline page, try again immediately rather than
@@ -474,11 +798,19 @@ app.whenReady().then(() => {
   });
 
   // Tray popover actions. Each is a fixed channel from our own file:// popover;
-  // main owns the URLs and decides the action. APP_URL already ends in '/', so
-  // append bare query/path segments.
-  ipcMain.on('tray:open-inbox', () => showAppAt(APP_URL));
-  ipcMain.on('tray:new-message', () => showAppAt(`${APP_URL}?compose=1`));
-  ipcMain.on('tray:open-settings', () => showAppAt(`${APP_URL}settings`));
+  // main owns the routes and decides the action.
+  ipcMain.on('tray:open-inbox', () => {
+    hideTrayPopover();
+    openRoute('/#INBOX');
+  });
+  ipcMain.on('tray:new-message', () => {
+    hideTrayPopover();
+    openRoute(COMPOSE_ROUTE);
+  });
+  ipcMain.on('tray:open-settings', () => {
+    hideTrayPopover();
+    openRoute('/settings');
+  });
   ipcMain.on('tray:check-updates', () => checkManual());
   ipcMain.on('tray:restart-update', () => quitAndInstallNow());
   ipcMain.on('tray:quit', () => {

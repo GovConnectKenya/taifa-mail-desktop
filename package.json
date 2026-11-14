@@ -1,8 +1,8 @@
 {
   "name": "taifa-mail-desktop",
   "productName": "Taifa Mail",
-  "version": "0.1.2",
-  "description": "Taifa Mail desktop: a thin Electron shell around the Taifa Mail webmail at mail.govconnect.ke.",
+  "version": "0.2.0",
+  "description": "Taifa Mail desktop: the Taifa Mail webmail, bundled into a native app for macOS, Windows and Linux.",
   "main": "src/main.js",
   "author": "RCFI",
   "homepage": "https://mail.govconnect.ke",
@@ -12,27 +12,39 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "dist": "electron-builder --publish never",
-    "pack": "electron-builder --dir",
+    "stage": "node scripts/stage-webmail.mjs",
+    "dist": "node scripts/stage-webmail.mjs && electron-builder --publish never && node scripts/set-min-macos.mjs",
+    "pack": "node scripts/stage-webmail.mjs && electron-builder --dir",
     "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.3"
   },
   "devDependencies": {
-    "electron": "^31.0.0",
+    "@electron/fuses": "^2.1.3",
+    "electron": "^45.2.0",
     "electron-builder": "^24.13.3"
   },
   "build": {
     "appId": "ke.govconnect.taifamail",
     "productName": "Taifa Mail",
     "artifactName": "TaifaMail-${version}-${arch}.${ext}",
+    "afterPack": "scripts/after-pack.js",
     "directories": {
       "output": "release"
     },
     "files": [
       "src/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "renderer/**/*"
+    ],
+    "protocols": [
+      {
+        "name": "Email",
+        "schemes": [
+          "mailto"
+        ]
+      }
     ],
     "publish": [
       {

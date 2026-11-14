@@ -1,0 +1,128 @@
+name: Bundled webmail build
+
+# Branch check for the bundled-webmail app (docs/BUNDLED_WEBMAIL.md): builds the
+# webmail desktop bundle from the private taifa-mail repo, stages it into
+# renderer/ and packages the app on macOS and Windows runners. Never a release:
+# nothing is signed, notarized, tagged or published. The installers are kept as
+# workflow artifacts for inspection only.
+
+on:
+  push:
+    branches: [feat/bundled-webmail]
+  workflow_dispatch:
+    inputs:
+      webmail_ref:
+        description: taifa-mail commit or branch to bundle instead of the WEBMAIL_REF pin (leave empty for the pin)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bundled-webmail-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+  # Unsigned on purpose: no certificate is looked up even if one were present.
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+jobs:
+  build:
+    name: Package ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: '--mac --arm64 -c.mac.notarize=false'
+            files: |
+              release/*.dmg
+              release/*.zip
+              release/latest-mac.yml
+          - os: windows-latest
+            args: '--win'
+            files: |
+              release/*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The UI is built from GovConnectKenya/taifa-mail, which is private. The
+      # job stops here, with this message, rather than packaging an app without
+      # its UI. See RELEASING.md, One-time setup.
+      - name: Require the taifa-mail read token
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.TAIFA_MAIL_READ_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error title=TAIFA_MAIL_READ_TOKEN missing::Add a read-only token for GovConnectKenya/taifa-mail as the TAIFA_MAIL_READ_TOKEN secret (see RELEASING.md). The app's UI is built from that private repo."
+            exit 1
+          fi
+
+      # The pinned commit (WEBMAIL_REF), unless a dispatch names another one;
+      # stage-webmail.mjs then allows the unpinned bundle and says so.
+      - name: Choose the webmail commit
+        id: pin
+        shell: bash
+        env:
+          OVERRIDE: ${{ inputs.webmail_ref }}
+        run: |
+          if [ -n "$OVERRIDE" ]; then
+            echo "ref=$OVERRIDE" >> "$GITHUB_OUTPUT"
+            echo "TAIFA_ALLOW_UNPINNED=1" >> "$GITHUB_ENV"
+          else
+            echo "ref=$(tr -d '[:space:]' < WEBMAIL_REF)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the webmail (taifa-mail)
+        uses: actions/checkout@v4
+        with:
+          repository: GovConnectKenya/taifa-mail
+          ref: ${{ steps.pin.outputs.ref }}
+          token: ${{ secrets.TAIFA_MAIL_READ_TOKEN }}
+          path: taifa-mail
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      - name: Build the webmail desktop bundle into renderer/
+        run: node scripts/stage-webmail.mjs --build
+        env:
+          TAIFA_MAIL_DIR: taifa-mail
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Package (unsigned, not published)
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - name: Mark the macOS feed with its minimum system version
+        if: matrix.os == 'macos-latest'
+        run: node scripts/set-min-macos.mjs
+
+      - name: Upload the unsigned installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: taifa-mail-${{ runner.os }}-unsigned
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 14

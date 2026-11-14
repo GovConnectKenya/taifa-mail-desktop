@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.2.0",
+    "date": "2026-11-14",
+    "tag": "",
+    "major": true,
+    "summary": "Taifa Mail now runs from inside the app: it opens instantly, looks exactly like webmail, and keeps you signed in. This release is for macOS 13 or later on Intel and Apple silicon Macs, and for Windows on x64 and arm64. There is no Linux build of 0.2.0: Linux installs stay on 0.1.2 and will not update.",
+    "added": [
+      "The webmail now ships inside the app, so the window opens straight to your mail without waiting for the page to download.",
+      "Open email links (mailto:) in Taifa Mail, with the recipient and subject filled in. Use the app menu to make Taifa Mail your default email app.",
+      "New Message (Cmd or Ctrl+N), Inbox (Cmd or Ctrl+Shift+I) and Settings (Cmd or Ctrl+,) in the menus.",
+      "An unread marker on the Windows taskbar button.",
+      "A Windows installer for arm64 PCs (TaifaMail-Setup-0.2.0-arm64.exe). It is a separate download; x64 installs update automatically."
+    ],
+    "improved": [
+      "The window matches your light or dark theme from the first frame, with no white flash.",
+      "On macOS the window controls sit neatly in the top bar, and you can drag the window by it.",
+      "Fonts are part of the app, so text looks right even on a slow connection.",
+      "Taifa Mail now needs macOS 13 (Ventura) or later. Macs on older versions of macOS stay on 0.1.2 and are not offered this update.",
+      "In full screen the top bar starts at the left edge, as in the browser; with the window controls showing it keeps room for them."
+    ],
+    "fixed": [
+      "New mail notifications could stay switched off because the app reported notification permission as denied."
+    ]
+  },
+  {
     "version": "0.1.2",
     "date": "2026-07-18",
     "tag": "",

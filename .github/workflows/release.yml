@@ -21,7 +21,7 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: write
+  contents: read
 
 # Point both caches inside the workspace so one `path:` list works on all three
 # runners, with no per-OS branching between ~/.cache and %LOCALAPPDATA%.
@@ -30,8 +30,69 @@ env:
   ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
 
 jobs:
+  # The app's UI is the webmail, built from the PRIVATE taifa-mail repo at the
+  # exact commit pinned in WEBMAIL_REF (docs/BUNDLED_WEBMAIL.md). It is built
+  # once, in a job that can only read, and handed to the packaging legs as an
+  # artifact: the token for the private repo never reaches a job that can
+  # write to Releases.
+  webmail:
+    name: Build the webmail bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # A release must never ship without its UI, so a missing token stops the
+      # run here, loudly.
+      - name: Require the taifa-mail read token
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.TAIFA_MAIL_READ_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error title=TAIFA_MAIL_READ_TOKEN missing::Add a read-only token for GovConnectKenya/taifa-mail as the TAIFA_MAIL_READ_TOKEN secret (see RELEASING.md). The app's UI is built from that private repo."
+            exit 1
+          fi
+
+      - name: Read the pinned webmail commit
+        id: pin
+        shell: bash
+        run: echo "sha=$(tr -d '[:space:]' < WEBMAIL_REF)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the webmail (taifa-mail at WEBMAIL_REF)
+        uses: actions/checkout@v4
+        with:
+          repository: GovConnectKenya/taifa-mail
+          ref: ${{ steps.pin.outputs.sha }}
+          token: ${{ secrets.TAIFA_MAIL_READ_TOKEN }}
+          path: taifa-mail
+          persist-credentials: false
+
+      # Node 22: the webmail's Vite 8 needs 20.19 or later.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build the webmail desktop bundle into renderer/
+        run: node scripts/stage-webmail.mjs --build
+        env:
+          TAIFA_MAIL_DIR: taifa-mail
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: renderer
+          path: renderer/
+          if-no-files-found: error
+          retention-days: 3
+
   build:
     name: Build ${{ matrix.os }}
+    needs: webmail
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -45,10 +106,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: renderer
+          path: renderer
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # Cache the downloaded Electron binaries and electron-builder's tooling.
@@ -82,6 +150,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Electron 45 needs macOS 13; tell 0.1.x updaters on older Macs not to
+      # take this update (scripts/set-min-macos.mjs).
+      - name: Mark the macOS feed with its minimum system version
+        if: matrix.os == 'macos-latest'
+        run: node scripts/set-min-macos.mjs
 
       - name: Build and package (Windows / Linux)
         if: matrix.os != 'macos-latest'
