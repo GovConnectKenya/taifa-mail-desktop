@@ -1,7 +1,7 @@
 {
   "name": "taifa-mail-desktop",
   "productName": "Taifa Mail",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Taifa Mail desktop: the Taifa Mail webmail, bundled into a native app for macOS, Windows and Linux.",
   "main": "src/main.js",
   "author": "RCFI",
