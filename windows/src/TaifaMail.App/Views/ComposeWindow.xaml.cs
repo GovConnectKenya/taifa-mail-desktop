@@ -128,7 +128,7 @@ public sealed partial class ComposeWindow : Window
     }
 
     /// <summary>Walks the document by character format runs and paragraphs into plain model records.</summary>
-    private static IReadOnlyList<ComposeParagraph> Extract(ITextDocument doc)
+    private static IReadOnlyList<ComposeParagraph> Extract(RichEditTextDocument doc)
     {
         doc.GetText(TextGetOptions.None, out var all);
         var paragraphs = new List<ComposeParagraph>();
