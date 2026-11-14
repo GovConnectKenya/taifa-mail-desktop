@@ -31,6 +31,7 @@
 // logs method, path, status and timing only, for diagnosing the app.
 
 const fs = require('fs');
+const { net } = require('electron');
 const path = require('path');
 const { APP_ORIGIN, isBackendPath } = require('./config');
 
@@ -143,24 +144,162 @@ function notFound() {
   return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain' } });
 }
 
-async function passThrough(ses, req) {
+// Request headers the network stack owns or this module sets itself. Cookie in
+// particular: the session's jar attaches the right cookies for the target, so
+// a Cookie header from the renderer would only duplicate or contradict them.
+const SKIP_REQUEST_HEADERS = new Set([
+  'host', 'connection', 'content-length', 'cookie', 'origin', 'referer',
+  'transfer-encoding', 'keep-alive', 'upgrade', 'expect', 'te', 'trailer',
+  'proxy-connection', 'proxy-authorization',
+]);
+// Set-Cookie is applied to the jar by the network stack as the response
+// arrives; handing it to the renderer as well would apply it twice.
+const SKIP_RESPONSE_HEADERS = new Set(['set-cookie', 'set-cookie2']);
+const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
+
+// Called once with the response headers of a backend request; see installBundle.
+let onBackendHeaders = null;
+
+// Forwards one request to the real network, through this session's network
+// stack, and answers in the shape the renderer would have seen from the network
+// itself. net.request rather than ses.fetch for one reason: redirects. ses.fetch
+// follows them inside the main process, so the renderer (and with it
+// will-redirect and the navigation lock) would never see a redirect, and a
+// redirect to another site would come back as that site's content under the
+// webmail's origin. Here every 3xx goes back to the renderer as a 3xx, and
+// Chromium follows it as it would for any page.
+function passThrough(ses, req) {
   const started = NET_LOG ? Date.now() : 0;
-  // bypassCustomProtocolHandlers sends it to the real network instead of back
-  // into this handler. Chromium's network stack attaches and stores this
-  // partition's cookies, keeps connections alive and streams the body.
-  const res = await ses.fetch(req, { bypassCustomProtocolHandlers: true });
-  if (NET_LOG) {
-    const u = new URL(req.url);
-    console.log(`[net] ${req.method} ${u.host}${u.pathname} -> ${res.status} ${Date.now() - started}ms`);
-  }
-  return res;
+  const url = new URL(req.url);
+  return new Promise((resolve, reject) => {
+    // The page's own credentials and cache modes cannot be honoured: the
+    // Request a protocol handler receives always reports credentials
+    // 'same-origin', cache 'default' and mode 'cors', whatever the page asked
+    // for (measured on Electron 45). So, as the earlier ses.fetch path did,
+    // every request goes with the session's cookies: each host only ever gets
+    // its own cookies, under the jar's normal SameSite rules.
+    const options = {
+      method: req.method,
+      url: req.url,
+      session: ses,
+      // useSessionCookies rather than credentials: 'include'. Both send the
+      // jar's cookies; only this one also stores a Set-Cookie that arrives on
+      // a redirect (measured).
+      useSessionCookies: true,
+      redirect: 'manual',
+      // Into the real network, not back into this handler.
+      bypassCustomProtocolHandlers: true,
+    };
+    const origin = req.headers.get('origin');
+    if (origin) options.origin = origin;
+
+    let rq;
+    try {
+      rq = net.request(options);
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    for (const [name, value] of req.headers) {
+      if (SKIP_REQUEST_HEADERS.has(name.toLowerCase())) continue;
+      try {
+        rq.setHeader(name, value);
+      } catch (_) {
+        // A header the network stack refuses to take from us is one it sets.
+      }
+    }
+
+    rq.on('redirect', (status, _method, location, headers) => {
+      // Cookies on the redirect itself are already in the jar.
+      rq.abort();
+      const out = new Headers();
+      for (const [name, values] of Object.entries(headers || {})) {
+        if (SKIP_RESPONSE_HEADERS.has(name.toLowerCase())) continue;
+        for (const v of [].concat(values)) out.append(name, v);
+      }
+      out.set('location', location);
+      if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> ${status} redirect ${Date.now() - started}ms`);
+      resolve(new Response(null, { status, headers: out }));
+    });
+
+    rq.on('response', (res) => {
+      const out = new Headers();
+      for (const [name, values] of Object.entries(res.headers)) {
+        if (SKIP_RESPONSE_HEADERS.has(name.toLowerCase())) continue;
+        for (const v of [].concat(values)) out.append(name, v);
+      }
+      if (onBackendHeaders && url.origin === APP_ORIGIN) onBackendHeaders(url.pathname, out);
+      if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> ${res.statusCode} ${Date.now() - started}ms`);
+      if (NULL_BODY_STATUS.has(res.statusCode) || req.method === 'HEAD') {
+        res.resume();
+        resolve(new Response(null, { status: res.statusCode, statusText: res.statusMessage, headers: out }));
+        return;
+      }
+      // Stream the body through with backpressure: large downloads are never
+      // held in memory.
+      const body = new ReadableStream({
+        start(controller) {
+          res.on('data', (chunk) => {
+            controller.enqueue(new Uint8Array(chunk));
+            if (controller.desiredSize <= 0) res.pause();
+          });
+          res.on('end', () => controller.close());
+          res.on('error', (e) => controller.error(e));
+          res.on('aborted', () => controller.error(new Error('aborted')));
+        },
+        pull() {
+          res.resume();
+        },
+        cancel() {
+          rq.abort();
+        },
+      }, { highWaterMark: 4 });
+      resolve(new Response(body, { status: res.statusCode, statusText: res.statusMessage, headers: out }));
+    });
+
+    rq.on('error', (e) => {
+      if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> error ${e.message}`);
+      reject(e);
+    });
+
+    // The request body, if any, is sent whole with its exact Content-Length.
+    // Streaming it chunked would save memory on large attachments, but object
+    // stores reject a chunked PUT to a presigned URL, so length wins.
+    (async () => {
+      if (req.body && req.method !== 'GET' && req.method !== 'HEAD') {
+        for await (const chunk of req.body) rq.write(Buffer.from(chunk));
+      }
+      rq.end();
+    })().catch((e) => {
+      rq.abort();
+      reject(e);
+    });
+  });
 }
 
 // Installs the handler on the app's session. Returns false (and installs
 // nothing) when no bundle is packaged, so a plain `npm start` in a fresh clone
 // still runs, as the thin shell it used to be, against the live site.
-function installBundle(ses) {
+// opts.onTooOld: called (once) when the backend reports that this bundled
+// webmail is older than it supports. The backend says so with the response
+// header X-Taifa-Min-Desktop-Bundle on /health or /v1 responses: the ISO 8601
+// commit date of the oldest webmail build it accepts. Not sent by the backend
+// yet (docs/BUNDLED_WEBMAIL.md, follow-ups); this side is ready for it.
+function installBundle(ses, opts = {}) {
   if (!hasBundle()) return false;
+
+  const info = bundleInfo();
+  const bundleDate = info && Date.parse(info.commitDate);
+  let tooOldReported = false;
+  onBackendHeaders = (pathname, headers) => {
+    if (tooOldReported || typeof opts.onTooOld !== 'function') return;
+    if (pathname !== '/health' && !pathname.startsWith('/v1/')) return;
+    const min = Date.parse(headers.get('x-taifa-min-desktop-bundle') || '');
+    if (!Number.isFinite(min) || !Number.isFinite(bundleDate) || bundleDate >= min) return;
+    tooOldReported = true;
+    // Not from inside the request: let this response finish first.
+    setImmediate(opts.onTooOld);
+  };
 
   if (NET_LOG) {
     // Websockets bypass the handler entirely; log their handshake outcome so a
@@ -198,4 +337,15 @@ function installBundle(ses) {
   return true;
 }
 
-module.exports = { installBundle, hasBundle, bundleInfo, RENDERER_DIR };
+// Removes the handler (the backend-skew fallback): every request then goes to
+// the network, the window loads the live site.
+function uninstallBundle(ses) {
+  onBackendHeaders = null;
+  try {
+    ses.protocol.unhandle('https');
+  } catch (_) {
+    // Not installed: nothing to undo.
+  }
+}
+
+module.exports = { installBundle, uninstallBundle, hasBundle, bundleInfo, RENDERER_DIR };
