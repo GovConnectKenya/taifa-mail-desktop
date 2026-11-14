@@ -127,6 +127,7 @@ enum Endpoints {
     static func stageAttachments(_ mb: String, uid: Int, folder: String) -> APIRequest {
         APIRequest(method: "POST", path: box(mb) + "/messages/\(uid)/stage-attachments", query: q([("folder", folder)]))
     }
+    static func file(_ id: String) -> APIRequest { APIRequest(path: "/v1/files/\(id)") }
     static func completeUpload(_ id: String) -> APIRequest { APIRequest(method: "POST", path: "/v1/files/\(id)/complete") }
     static func contacts(query text: String) -> APIRequest {
         APIRequest(path: "/v1/mailbox/contacts/", query: q([("q", text), ("limit", "8")]))

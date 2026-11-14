@@ -137,7 +137,8 @@ struct ReaderFooter: View {
     }
     private func pill(_ icon: Icon.Name, _ title: String, _ kind: ComposeSeed.Kind) -> some View {
         Button {
-            if let m = reader.messages.last { ComposeLauncher.shared.open(kind: kind, store: store, message: m) }
+            let target = kind == .forward ? reader.messages.last : ComposeLauncher.replyTarget(reader.messages, ownAddress: ComposeLauncher.shared.ownAddress)
+            if let m = target { ComposeLauncher.shared.open(kind: kind, store: store, message: m) }
         } label: { HStack(spacing: Space.s2) { Icon(icon, size: 16); Text(title) } }
             .buttonStyle(OutlinePillStyle()).disabled(reader.messages.isEmpty).accessibilityIdentifier("footer-\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
     }

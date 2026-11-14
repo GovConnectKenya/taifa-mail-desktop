@@ -40,6 +40,12 @@ final class ComposeLauncher {
         opener?(Self.seed(kind: kind, message: m, ownAddress: ownAddress, outgoing: store.isOutgoingFolder))
     }
 
+    /// The message a reply answers: the latest one not from you, else the latest.
+    static func replyTarget(_ messages: [ThreadMessage], ownAddress: String) -> ThreadMessage? {
+        let own = ownAddress.lowercased()
+        return messages.last(where: { $0.fromAddr.lowercased() != own }) ?? messages.last
+    }
+
     static func seed(kind: ComposeSeed.Kind, message m: ThreadMessage, ownAddress: String, outgoing: Bool = false) -> ComposeSeed {
         var s = ComposeSeed(kind: kind)
         let own = ownAddress.lowercased()
@@ -47,18 +53,20 @@ final class ComposeLauncher {
             if let lt = a.firstIndex(of: "<"), let gt = a.firstIndex(of: ">"), lt < gt { return String(a[a.index(after: lt)..<gt]) }
             return a.trimmingCharacters(in: .whitespaces)
         }
-        let sender = m.replyTo.isEmpty ? m.fromAddr : bare(m.replyTo)
+        // Replying to your own message goes to its recipients; otherwise Reply-To, else the sender (webmail and
+        // the Windows ComposeSeeds agree). Reply all never ends with an empty To.
+        let fromMe = !own.isEmpty && m.fromAddr.lowercased() == own
+        var sender: [String] = fromMe && !m.to.isEmpty ? m.to.map(bare) : [m.replyTo.isEmpty ? m.fromAddr : bare(m.replyTo)]
         switch kind {
-        case .new: break
+        case .new, .forward: break
         case .reply:
-            s.to = outgoing ? m.to.map(bare) : [sender]
+            s.to = dedupe(sender)
         case .replyAll:
-            var to = outgoing ? m.to.map(bare) : [sender]
-            var cc = (outgoing ? m.cc : m.to + m.cc).map(bare)
-            to = dedupe(to.filter { $0.lowercased() != own })
-            cc = dedupe(cc.filter { $0.lowercased() != own && !to.map { $0.lowercased() }.contains($0.lowercased()) })
-            s.to = to; s.cc = cc
-        case .forward: break
+            var seen = Set(sender.map { $0.lowercased() }); seen.insert(own)
+            var cc: [String] = []
+            for a in (m.to + m.cc).map(bare) where !a.isEmpty && seen.insert(a.lowercased()).inserted { cc.append(a) }
+            if sender.allSatisfy({ $0.lowercased() == own }) && !m.fromAddr.isEmpty { sender = [m.fromAddr] }
+            s.to = dedupe(sender); s.cc = cc
         }
         let prefix = kind == .forward ? "Fwd: " : "Re: "
         let subject = m.subject
@@ -88,7 +96,7 @@ final class ComposeLauncher {
 }
 
 struct ComposeAttachment: Identifiable, Equatable {
-    enum State: Equatable { case uploading, ready, failed(String) }
+    enum State: Equatable { case uploading, scanning, ready, failed(String) }
     let id = UUID()
     var name: String
     var size: Int
@@ -129,6 +137,10 @@ final class ComposeModel {
     var saveState = ""
     var notice: String?
     var suggestions: [String] = []
+    var pendingTo = ""
+    var pendingCc = ""
+    var pendingBcc = ""
+    var attachmentError: String?
     let seed: ComposeSeed
     let from: String
     @ObservationIgnored var attributed = NSAttributedString()
@@ -145,21 +157,45 @@ final class ComposeModel {
         to = seed.to; cc = seed.cc; subject = seed.subject; showCc = !seed.cc.isEmpty
     }
 
-    var hasUploading: Bool { attachments.contains { $0.state == .uploading } }
+    /// Uploading or still being virus scanned: the server refuses to send these (422 file_not_ready).
+    var hasUploading: Bool { attachments.contains { $0.state == .uploading || $0.state == .scanning } }
+    var hasFailedAttachment: Bool { attachments.contains { if case .failed = $0.state { return true }; return false } }
+    /// Recipients including a token still being typed (committed on Send and on blur).
+    var allTo: [String] { to + Address.parse(pendingTo) }
+    var allCc: [String] { cc + Address.parse(pendingCc) }
+    var allBcc: [String] { bcc + Address.parse(pendingBcc) }
+
     var canSend: Bool {
-        !to.isEmpty && to.allSatisfy(Address.isValid) && cc.allSatisfy(Address.isValid) && bcc.allSatisfy(Address.isValid)
-            && !hasUploading && status != .sending
+        !allTo.isEmpty && allTo.allSatisfy(Address.isValid) && allCc.allSatisfy(Address.isValid) && allBcc.allSatisfy(Address.isValid)
+            && !hasUploading && !hasFailedAttachment && status != .sending && !closed
+    }
+
+    func commitPending() {
+        for a in Address.parse(pendingTo) where !to.contains(a) { to.append(a) }
+        for a in Address.parse(pendingCc) where !cc.contains(a) { cc.append(a) }
+        for a in Address.parse(pendingBcc) where !bcc.contains(a) { bcc.append(a) }
+        pendingTo = ""; pendingCc = ""; pendingBcc = ""
     }
 
     /// Initial body: a blank line, the quote, then the signature.
-    func prepare(signature: String?) async {
+    func prepare(signature: String?, signatureHTML: String? = nil) async {
         var text = "\n"
         if !seed.quote.isEmpty { text += "\n" + seed.quote + "\n" }
         if let signature, !signature.isEmpty { text += "\n-- \n" + signature }
-        attributed = NSAttributedString(string: text, attributes: [.font: ComposeFont.body])
+        let base = NSMutableAttributedString(string: text, attributes: [.font: ComposeFont.body])
+        if (signature ?? "").isEmpty, let html = signatureHTML, !html.isEmpty,
+           let data = html.data(using: .utf8),
+           let sig = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue], documentAttributes: nil) {
+            base.append(NSAttributedString(string: "\n-- \n", attributes: [.font: ComposeFont.body]))
+            base.append(sig)
+        }
+        attributed = base
         if let uid = seed.stageUid, let folder = seed.stageFolder, seed.kind == .forward {
-            if let staged = try? await service.stageAttachments(uid: uid, folder: folder) {
+            do {
+                let staged = try await service.stageAttachments(uid: uid, folder: folder)
                 for f in staged { attachments.append(ComposeAttachment(name: f.filename, size: f.size, state: .ready, fileId: f.fileId)) }
+            } catch {
+                attachmentError = "The original attachments could not be added. Attach them again before sending. " + ((error as? LocalizedError)?.errorDescription ?? "")
             }
         }
     }
@@ -178,11 +214,30 @@ final class ComposeModel {
                     let data = try await Task.detached { try Data(contentsOf: url) }.value
                     let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
                     let stored = try await service.upload(filename: url.lastPathComponent, mime: mime, data: data)
-                    update(id) { $0.fileId = stored.id; $0.state = .ready }
+                    update(id) { $0.fileId = stored.id; $0.state = stored.isReady ? .ready : .scanning }
+                    if !stored.isReady { await awaitScan(attachment: id, fileId: stored.id, name: url.lastPathComponent) }
                 } catch { update(id) { $0.state = .failed((error as? LocalizedError)?.errorDescription ?? "Upload failed") } }
             }
         }
         scheduleAutosave()
+    }
+
+    /// Polls GET /v1/files/{id} until the virus scan finishes (the backend refuses unscanned files at send).
+    func awaitScan(attachment id: UUID, fileId: String, name: String, interval: TimeInterval = 1.5, maxWait: TimeInterval = 180) async {
+        let deadline = Date().addingTimeInterval(maxWait)
+        while Date() < deadline, !closed {
+            if let f = try? await service.fileStatus(fileId) {
+                if f.isRejected {
+                    attachments.removeAll { $0.id == id }
+                    attachmentError = "\"\(name)\" was rejected by the virus scan and was removed."
+                    return
+                }
+                if f.isReady { update(id) { $0.state = .ready }; scheduleAutosave(); return }
+            }
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            if !attachments.contains(where: { $0.id == id }) { return }
+        }
+        update(id) { $0.state = .failed("Scan did not finish") }
     }
 
     private func update(_ id: UUID, _ f: (inout ComposeAttachment) -> Void) {
@@ -202,19 +257,21 @@ final class ComposeModel {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled, let found = try? await service.contacts(matching: q) else { return }
             var merged = suggestions
-            for c in found { if let e = c.email, !merged.contains(e) { merged.append(e) } }
+            for c in found { for e in c.addresses where !merged.contains(e) { merged.append(e) } }
             suggestions = Array(merged.prefix(8))
         }
     }
 
     // MARK: Payload
 
+    var readyFileIds: [String] { attachments.filter { $0.state == .ready }.compactMap(\.fileId) }
+
     func payload() -> Endpoints.SendPayload {
         let html = Self.html(from: attributed)
         return Endpoints.SendPayload(
-            to: to, cc: cc.isEmpty ? nil : cc, bcc: bcc, subject: subject, text: attributed.string, html: html,
+            to: allTo, cc: allCc.isEmpty ? nil : allCc, bcc: allBcc, subject: subject, text: attributed.string, html: html,
             inReplyTo: seed.inReplyTo, references: seed.references, replyUid: seed.replyUid, replyFolder: seed.replyFolder,
-            fileIds: attachments.compactMap(\.fileId).isEmpty ? nil : attachments.compactMap(\.fileId))
+            fileIds: readyFileIds.isEmpty ? nil : readyFileIds)
     }
 
     static func html(from s: NSAttributedString) -> String {
@@ -229,7 +286,13 @@ final class ComposeModel {
 
     // MARK: Draft and send
 
+    /// Draft saves run one at a time through a single chain; send and discard wait for it, then trash the
+    /// final server draft. Once the window is closed (sent or discarded) no save starts.
+    @ObservationIgnored private var draftChain: Task<Void, Never>?
+    private(set) var closed = false
+
     func scheduleAutosave() {
+        guard !closed else { return }
         autosave?.cancel()
         autosave = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -238,40 +301,72 @@ final class ComposeModel {
         }
     }
 
-    /// Discard never saves a draft, and deletes the one already on the server (webmail discardCompose).
-    func discard() async {
-        discarded = true
+    func saveDraft() async {
+        guard !closed else { return }
+        // The server refuses drafts that reference files still being scanned: wait for them.
+        if hasUploading { scheduleAutosave(); return }
+        guard !to.isEmpty || !subject.isEmpty || !attributed.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let previous = draftChain
+        let task = Task { [self] in
+            await previous?.value
+            guard !closed else { return }
+            saveState = "Saving"
+            var p = payload()
+            p.replaceUid = draftUid
+            p.opId = "d" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            do {
+                let r = try await service.saveDraft(p)
+                draftUid = r.uid; draftFolder = r.folder; saveState = "Saved"
+                if closed, let uid = r.uid { _ = try? await service.batch(action: .trash, uids: [uid], folder: r.folder) }
+            } catch { saveState = "Not saved" }
+        }
+        draftChain = task
+        await task.value
+    }
+
+    /// Stops autosave and waits for any save in flight, so the final uid is known.
+    private func settleDrafts() async {
+        closed = true
         autosave?.cancel()
+        await draftChain?.value
+    }
+
+    private func trashDraft() async {
         if let uid = draftUid { _ = try? await service.batch(action: .trash, uids: [uid], folder: draftFolder); draftUid = nil }
     }
 
-    func saveDraft() async {
-        guard !discarded else { return }
-        guard status == .editing || { if case .failed = status { return true }; return false }() else { return }
-        guard !to.isEmpty || !subject.isEmpty || !attributed.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        saveState = "Saving"
-        var p = payload()
-        p.replaceUid = draftUid
-        p.opId = "d" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        do { let r = try await service.saveDraft(p); draftUid = r.uid; draftFolder = r.folder; saveState = "Saved" }
-        catch { saveState = "Not saved" }
+    /// Discard never saves a draft, and deletes the one already on the server (webmail discardCompose).
+    func discard() async {
+        discarded = true
+        await settleDrafts()
+        await trashDraft()
     }
 
     func send() async -> Bool {
+        guard status != .sending else { return false }
+        commitPending()
         guard canSend else { return false }
-        autosave?.cancel()
         status = .sending; notice = nil
+        autosave?.cancel()
+        await draftChain?.value               // no draft save is racing the send
         do {
             let r = try await service.send(payload())
             if !(r.suppressed.isEmpty && r.refused.isEmpty) {
                 notice = "Not delivered to: " + (r.suppressed + r.refused).joined(separator: ", ")
             }
             status = .sent
-            if let uid = draftUid { _ = try? await service.batch(action: .trash, uids: [uid], folder: draftFolder) }
+            await settleDrafts()
+            await trashDraft()
             return true
         } catch {
-            status = .failed((error as? LocalizedError)?.errorDescription ?? "Could not send.")
-            if case let .http(_, _, m) = (error as? APIError) ?? .cancelled, !m.isEmpty { status = .failed(m) }
+            if case .transport = (error as? APIError) ?? .cancelled {
+                // The request may have reached the server: never auto-retry, tell the user to check Sent.
+                status = .failed("Could not confirm that the message was sent. Check your Sent folder before sending it again.")
+            } else if case let .http(_, _, m) = (error as? APIError) ?? .cancelled, !m.isEmpty {
+                status = .failed(m)
+            } else {
+                status = .failed((error as? LocalizedError)?.errorDescription ?? "Could not send.")
+            }
             return false
         }
     }

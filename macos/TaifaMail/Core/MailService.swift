@@ -22,6 +22,7 @@ protocol MailService: Sendable {
     func upload(filename: String, mime: String, data: Data) async throws -> StoredFile
     func contacts(matching: String) async throws -> [Contact]
     func stageAttachments(uid: Int, folder: String) async throws -> [StagedAttachment]
+    func fileStatus(_ id: String) async throws -> StoredFile
     func signature() async throws -> MailBlock?
     func saveSignature(html: String, text: String, existing: MailBlock?) async throws
     func autoResponder() async throws -> AutoResponder
@@ -83,11 +84,13 @@ struct LiveMailService: MailService {
         return r.files
     }
 
+    func fileStatus(_ id: String) async throws -> StoredFile {
+        let e: FileEnvelope = try await api.send(Endpoints.file(id))
+        return e.file
+    }
+
     func contacts(matching text: String) async throws -> [Contact] {
-        let data = try await api.rawData(Endpoints.contacts(query: text)).0
-        let dec = Coding.decoder()
-        if let list = try? dec.decode([Contact].self, from: data) { return list }
-        return (try? dec.decode(ContactList.self, from: data))?.items ?? []
+        try await api.send(Endpoints.contacts(query: text))
     }
 
     func signature() async throws -> MailBlock? {

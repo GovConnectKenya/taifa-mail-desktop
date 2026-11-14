@@ -121,10 +121,11 @@ struct RichTextEditor: NSViewRepresentable {
 struct TokenField: View {
     let label: String
     @Binding var tokens: [String]
+    @Binding var input: String
     var suggestions: [String]
     var onInput: (String) -> Void
     var onCommit: () -> Void
-    @State private var input = ""
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: Space.s2) {
@@ -141,6 +142,8 @@ struct TokenField: View {
                 }
                 TextField("", text: $input)
                     .textFieldStyle(.plain).taifa(.body).frame(minWidth: 140, minHeight: Metrics.chip)
+                    .focused($fieldFocused)
+                    .onChange(of: fieldFocused) { _, f in if !f && !input.isEmpty { commit() } }   // commit on blur
                     .accessibilityLabel(label)
                     .accessibilityIdentifier("compose-\(label.lowercased())")
                     .onChange(of: input) { _, v in
@@ -177,6 +180,7 @@ struct TokenField: View {
 struct ComposeView: View {
     @Bindable var model: ComposeModel
     var signature: String?
+    var signatureHTML: String?
     @Environment(\.dismiss) private var dismiss
     @State private var controller = RichTextController()
     @State private var ready = false
@@ -195,9 +199,9 @@ struct ComposeView: View {
                 row { HStack(spacing: Space.s2) { Text("From").taifa(.meta).foregroundStyle(Theme.text3).frame(width: 40, alignment: .trailing)
                     Text(model.from).font(.taifaMono(12)).foregroundStyle(Theme.text2); Spacer() } }
                 Divider().overlay(Theme.border)
-                TokenField(label: "To", tokens: $model.to, suggestions: model.suggestions, onInput: model.suggest) { model.scheduleAutosave() }
-                if model.showCc { Divider().overlay(Theme.border); TokenField(label: "Cc", tokens: $model.cc, suggestions: model.suggestions, onInput: model.suggest) { model.scheduleAutosave() } }
-                if model.showBcc { Divider().overlay(Theme.border); TokenField(label: "Bcc", tokens: $model.bcc, suggestions: model.suggestions, onInput: model.suggest) { model.scheduleAutosave() } }
+                TokenField(label: "To", tokens: $model.to, input: $model.pendingTo, suggestions: model.suggestions, onInput: model.suggest) { model.scheduleAutosave() }
+                if model.showCc { Divider().overlay(Theme.border); TokenField(label: "Cc", tokens: $model.cc, input: $model.pendingCc, suggestions: model.suggestions, onInput: model.suggest) { model.scheduleAutosave() } }
+                if model.showBcc { Divider().overlay(Theme.border); TokenField(label: "Bcc", tokens: $model.bcc, input: $model.pendingBcc, suggestions: model.suggestions, onInput: model.suggest) { model.scheduleAutosave() } }
                 Divider().overlay(Theme.border)
                 row {
                     HStack(spacing: Space.s2) {
@@ -221,6 +225,7 @@ struct ComposeView: View {
             if !model.attachments.isEmpty { attachmentStrip }
             if case let .failed(m) = model.status { Banner(kind: .danger, icon: .danger, message: m).padding(Space.s3) }
             if let n = model.notice { Banner(kind: .warn, icon: .warning, message: n).padding(Space.s3) }
+            if let e = model.attachmentError { Banner(kind: .danger, icon: .danger, message: e, actionTitle: "Dismiss") { model.attachmentError = nil }.padding(Space.s3) }
             footer
         }
         .background(Theme.panel)
@@ -229,8 +234,8 @@ struct ComposeView: View {
             for p in providers { _ = p.loadObject(ofClass: URL.self) { url, _ in if let url { Task { @MainActor in model.addFiles([url]) } } } }
             return true
         }
-        .task { await model.prepare(signature: signature); ready = true }
-        .onDisappear { if model.status != .sent && !model.discarded { Task { await model.saveDraft() } } }
+        .task { await model.prepare(signature: signature, signatureHTML: signatureHTML); ready = true }
+        .onDisappear { if model.status != .sent && !model.closed { Task { await model.saveDraft() } } }
         .frame(minWidth: 520, minHeight: 440)
     }
 
@@ -259,6 +264,7 @@ struct ComposeView: View {
                     Text(a.name).taifa(.meta).lineLimit(1)
                     switch a.state {
                     case .uploading: ProgressView().controlSize(.mini)
+                    case .scanning: HStack(spacing: Space.s1) { ProgressView().controlSize(.mini); Text("Scanning").taifa(.caption).foregroundStyle(Theme.text3) }
                     case .ready: Text(ByteCountFormatter.string(fromByteCount: Int64(a.size), countStyle: .file)).taifa(.caption).foregroundStyle(Theme.text3)
                     case .failed(let m): Text(m).taifa(.caption).foregroundStyle(Theme.dangerFg)
                     }

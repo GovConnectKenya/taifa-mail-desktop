@@ -65,30 +65,44 @@ final class RealtimeClient: @unchecked Sendable {
 
     private func loop() async {
         var attempt = 0
+        var authRetries = 0
         while !Task.isCancelled {
             let socket = api.webSocket(path: "/ws/mailbox")
             task = socket
             socket.resume()
-            let closeCode = await run(socket) { attempt = 0 }
+            let closeCode = await run(socket) { attempt = 0; authRetries = 0 }
             onConnection?(false)
             if Task.isCancelled { return }
-            if closeCode == 4001 {
-                // Session problem: try a refresh through the API client; stop if it is over.
-                if await onAuthFailure?() != true { return }
+            let handshake = (socket.response as? HTTPURLResponse)?.statusCode ?? 0
+            if closeCode == 4001 || handshake == 401 || handshake == 403 {
+                // Session problem: refresh once and reconnect promptly, but never spin.
+                if authRetries < 2, await onAuthFailure?() == true { authRetries += 1; continue }
+                if authRetries < 2 { return }
+                authRetries = 0
             }
             try? await Task.sleep(nanoseconds: UInt64(Self.backoff(attempt: attempt) * 1_000_000_000))
             attempt += 1
         }
     }
 
-    /// Returns the close code (0 when unknown).
+    /// The `type` of a websocket frame, read from JSON (never by substring).
+    static func frameType(_ text: String) -> String? {
+        guard let d = text.data(using: .utf8), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+        return o["type"] as? String
+    }
+
+    /// Returns the close code (0 when unknown). A ping goes out every 30 s; no pong within 10 s closes the socket.
     private func run(_ socket: URLSessionWebSocketTask, onOpen: @escaping () -> Void) async -> Int {
-        let pinger = Task { [weak self] in
+        let pong = SendableBox(false)
+        let pinger = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                try? await Task.sleep(nanoseconds: Self.pingInterval)
                 if Task.isCancelled { return }
+                pong.value = false
                 try? await socket.send(.string("ping"))
-                _ = self
+                try? await Task.sleep(nanoseconds: Self.pongTimeout)
+                if Task.isCancelled { return }
+                if !pong.value { socket.cancel(with: .goingAway, reason: nil); return }
             }
         }
         defer { pinger.cancel(); socket.cancel(with: .goingAway, reason: nil) }
@@ -96,16 +110,23 @@ final class RealtimeClient: @unchecked Sendable {
             do {
                 let msg = try await socket.receive()
                 guard case let .string(text) = msg else { continue }
-                if text.contains("\"connected\"") { onConnection?(true); onOpen(); onEvent?(.reconcile); continue }
-                if text.contains("\"pong\"") { continue }
-                let event = RealtimeEvent.parse(text, activeMailbox: mailboxId())
-                if event != .ignored { onEvent?(event) }
+                switch Self.frameType(text) {
+                case "connected": onConnection?(true); onOpen(); onEvent?(.reconcile)
+                case "pong": pong.value = true
+                case nil: continue
+                default:
+                    let event = RealtimeEvent.parse(text, activeMailbox: mailboxId())
+                    if event != .ignored { onEvent?(event) }
+                }
             } catch {
                 return Int(socket.closeCode.rawValue)
             }
         }
         return 0
     }
+
+    static var pingInterval: UInt64 = 30_000_000_000
+    static var pongTimeout: UInt64 = 10_000_000_000
 }
 
 /// Network reachability (a hint; real failures still set the offline flag).

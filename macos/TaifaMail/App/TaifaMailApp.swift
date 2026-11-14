@@ -43,16 +43,19 @@ struct ComposeWindow: View {
     let seed: ComposeSeed
     @State private var model: ComposeModel?
     @State private var signature: String?
+    @State private var signatureHTML: String?
 
     var body: some View {
         Group {
-            if let model { ComposeView(model: model, signature: signature).preferredColorScheme(app.prefs.theme.colorScheme).tint(Theme.accentDot) }
+            if let model { ComposeView(model: model, signature: signature, signatureHTML: signatureHTML).preferredColorScheme(app.prefs.theme.colorScheme).tint(Theme.accentDot) }
             else { ProgressView() }
         }
         .navigationTitle(model?.subject.isEmpty == false ? model!.subject : "New Message")
         .task {
             guard model == nil, let store = app.store else { return }
-            signature = (try? await store.service.signature())?.text
+            let block = try? await store.service.signature()
+            signatureHTML = block?.html
+            signature = block.flatMap { ($0.text ?? "").isEmpty ? nil : $0.text }
             model = ComposeModel(seed: seed, service: store.service, from: app.session?.address ?? "",
                                  recents: store.rows.prefix(80).map(\.latest.fromAddr))
         }

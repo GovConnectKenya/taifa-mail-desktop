@@ -447,6 +447,14 @@ struct StoredFile: Codable, Equatable, Sendable {
     var mime: String?
     var sizeBytes: Int?
     var status: String?
+    var scanVerdict: String?
+
+    /// Terminal bad outcomes of the virus scan.
+    var isRejected: Bool {
+        let st = (status ?? "").lowercased(), v = (scanVerdict ?? "").lowercased()
+        return ["infected", "quarantined", "rejected", "failed", "blocked", "error"].contains(st) || v.contains("infected") || v.contains("malware")
+    }
+    var isReady: Bool { (status ?? "").lowercased() == "ready" }
 }
 
 struct UploadTicket: Codable, Sendable {
@@ -457,7 +465,7 @@ struct UploadTicket: Codable, Sendable {
 
 struct FileEnvelope: Codable, Sendable { var file: StoredFile }
 
-struct MailBlock: Codable, Equatable, Identifiable, Sendable {
+struct MailBlock: Decodable, Equatable, Identifiable, Sendable {
     var id: String
     var blockType: String
     var name: String
@@ -465,9 +473,36 @@ struct MailBlock: Codable, Equatable, Identifiable, Sendable {
     var text: String?
     var isDefault: Bool
     var scope: String?
+    /// True when the web builder stored a structured config: such a block must not be overwritten with plain text.
+    var hasConfig = false
+
+    init(id: String, blockType: String, name: String, html: String, text: String?, isDefault: Bool, scope: String?, hasConfig: Bool = false) {
+        self.id = id; self.blockType = blockType; self.name = name; self.html = html; self.text = text
+        self.isDefault = isDefault; self.scope = scope; self.hasConfig = hasConfig
+    }
+
+    private enum Keys: String, CodingKey { case id, blockType, name, html, text, isDefault, scope, config }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = try c.decode(String.self, forKey: .id)
+        blockType = try c.decodeIfPresent(String.self, forKey: .blockType) ?? "signature"
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        html = try c.decodeIfPresent(String.self, forKey: .html) ?? ""
+        text = try c.decodeIfPresent(String.self, forKey: .text)
+        isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        scope = try c.decodeIfPresent(String.self, forKey: .scope)
+        hasConfig = c.contains(.config) ? !(try c.decodeNil(forKey: .config)) : false
+    }
+
+    /// Plain text of the block: the text field, else the HTML with tags removed.
+    var plainText: String {
+        if let t = text, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return t }
+        return html.replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+    }
 }
 
-struct MailBlocks: Codable, Equatable, Sendable {
+struct MailBlocks: Decodable, Equatable, Sendable {
     var signatures: [MailBlock]
     var headers: [MailBlock]?
     var footers: [MailBlock]?
@@ -497,14 +532,22 @@ struct MailboxSettings: Codable, Equatable, Sendable {
     var trustedImageSenders: [String]?
 }
 
+struct ContactEmail: Codable, Equatable, Sendable {
+    var type: String?
+    var value: String
+    var primary: Bool?
+}
+
+/// One address book contact (GET /v1/mailbox/contacts/ answers a bare array of these; emails are objects).
 struct Contact: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var displayName: String?
-    var email: String?
-}
+    var emails: [ContactEmail]?
 
-struct ContactList: Codable, Sendable {
-    var items: [Contact]?
+    /// Primary address first.
+    var addresses: [String] {
+        (emails ?? []).sorted { ($0.primary ?? false) && !($1.primary ?? false) }.map(\.value).filter { !$0.isEmpty }
+    }
 }
 
 /// A message envelope is enough to render a row; the reader loads the rest.
