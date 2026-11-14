@@ -200,10 +200,20 @@ function createWindow() {
   // webmail's top bar, so that bar must leave room for them and act as the
   // window's drag handle. Injected here, as app chrome, rather than written
   // into the webmail: the browser build never gets it.
+  //
+  // Only while the traffic lights are visible: in full screen macOS hides them
+  // (and a full-screen window cannot be dragged), so the stylesheet is removed
+  // and the top bar sits at the far left exactly as on the web. A zoomed
+  // (maximised) window still shows the traffic lights, so it keeps the inset.
   if (process.platform === 'darwin') {
     win.webContents.on('dom-ready', () => {
+      // A repeat dom-ready for the same document just adds an identical sheet.
       win.webContents.insertCSS(MAC_TITLEBAR_CSS, { cssOrigin: 'user' }).catch(() => {});
+      syncFullScreenFlag();
     });
+    win.webContents.on('did-finish-load', syncFullScreenFlag);
+    win.on('enter-full-screen', syncFullScreenFlag);
+    win.on('leave-full-screen', syncFullScreenFlag);
   }
 
   win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
@@ -529,16 +539,29 @@ function applyTheme(pref) {
 // The signed-in top bar (.tm-shell-topbar, 60px) becomes the drag handle and
 // starts its content after the traffic lights. Its controls stay clickable.
 // Pages without that bar (sign-in, setup) get a slim drag strip along the top
-// edge instead, which takes no clicks away from the page.
+// edge instead, which takes no clicks away from the page. In full screen the
+// traffic lights are hidden and the window cannot be dragged, so none of this
+// applies and the top bar sits at the far left, as on the web.
 const MAC_TITLEBAR_CSS = `
-.tm-shell-topbar { -webkit-app-region: drag; padding-left: 88px !important; }
+html:not([data-taifa-fullscreen]) .tm-shell-topbar { -webkit-app-region: drag; padding-left: 88px !important; }
 .tm-shell-topbar :is(button, a, input, select, textarea, label, [role], [tabindex], [contenteditable]) { -webkit-app-region: no-drag; }
-html:not(:has(.tm-shell-topbar)) body::before {
+html:not([data-taifa-fullscreen]):not(:has(.tm-shell-topbar)) body::before {
   content: ''; position: fixed; top: 0; left: 0; right: 0; height: 28px;
   -webkit-app-region: drag; z-index: 2147483647; pointer-events: none;
 }
-:fullscreen .tm-shell-topbar, html:has(:fullscreen) .tm-shell-topbar { padding-left: revert !important; }
 `;
+
+// Tells the injected stylesheet whether the window is in full screen, through
+// one attribute on <html> that only this app sets. (Removing an injected
+// user-origin sheet is not reliable in Electron 45, so the sheet stays and
+// keys off the attribute instead.)
+function syncFullScreenFlag() {
+  if (!win || win.isDestroyed()) return;
+  const on = win.isFullScreen();
+  win.webContents
+    .executeJavaScript(`document.documentElement.toggleAttribute('data-taifa-fullscreen', ${on})`, true)
+    .catch(() => {});
+}
 
 function createTray() {
   // On macOS the menu bar recolours a template image for light and dark, so it
