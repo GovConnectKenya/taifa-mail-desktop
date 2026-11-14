@@ -64,15 +64,21 @@ jobs:
             $json = Get-Content $in.FullName -Raw | ConvertFrom-Json
             "== input.json properties"
             $json.PSObject.Properties | ForEach-Object { $v = $_.Value; $t = if ($v -is [array]) { "array[$($v.Count)]" } else { "$v" }; "{0} = {1}" -f $_.Name, ($t.Substring(0, [Math]::Min(160, $t.Length))) }
-            "== bisect: one page at a time"
-            $pages = @($json.XamlPages)
-            "pages: $($pages.Count)"
-            foreach ($pg in $pages) {
-              $json.XamlPages = @($pg)
-              $json | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $in.DirectoryName 'bisect-input.json')
-              & $xc.FullName (Join-Path $in.DirectoryName 'bisect-input.json') (Join-Path $in.DirectoryName 'bisect-output.json') 2>&1 | Out-Null
-              "{0} -> exit {1}" -f ($pg | ConvertTo-Json -Compress -Depth 3), $LASTEXITCODE
+            function Try-Run($label, $obj) {
+              $obj | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $in.DirectoryName 'bisect-input.json')
+              Remove-Item (Join-Path $in.DirectoryName 'bisect-output.json') -ErrorAction SilentlyContinue
+              $out = & $xc.FullName (Join-Path $in.DirectoryName 'bisect-input.json') (Join-Path $in.DirectoryName 'bisect-output.json') 2>&1 | Out-String
+              "{0} -> exit {1}; stdout: [{2}]; output.json exists: {3}" -f $label, $LASTEXITCODE, $out.Trim(), (Test-Path (Join-Path $in.DirectoryName 'bisect-output.json'))
             }
+            $all = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $e = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $e.XamlPages = @(); $e.XamlApplications = @(); Try-Run 'nothing' $e
+            $e = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $e.XamlPages = @(); Try-Run 'application only' $e
+            $e = $json | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $e.XamlApplications = @(); $e.XamlPages = @($json.XamlPages | Where-Object { $_.ItemSpec -like '*SignInPage*' }); Try-Run 'SignInPage without application' $e
+            "== references sample"
+            $json.ReferenceAssemblies | Select-Object -First 3 | ForEach-Object { $_.ItemSpec }
+            "== dotnet and msbuild"
+            dotnet --version
+            Get-ChildItem 'C:\Program Files\Microsoft Visual Studio' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
           } else { "no input.json found" }
       - name: Prove preview data is not in Release
         run: |
