@@ -33,12 +33,23 @@ const {
 
 const LAUNCHED_AT = Date.now();
 
+// A packaged app never exposes the DevTools protocol. With it, any local
+// process could start the app with --remote-debugging-port and read the
+// signed-in session (cookies included) over a socket. The Electron fuses close
+// the Node-level equivalents (--inspect, ELECTRON_RUN_AS_NODE, NODE_OPTIONS);
+// this closes the Chromium one. Development runs keep it.
+if (app.isPackaged) {
+  for (const sw of ['remote-debugging-port', 'remote-debugging-pipe', 'remote-debugging-address']) {
+    app.commandLine.removeSwitch(sw);
+  }
+}
+
 const { APP_ORIGIN, APP_URL, THEME_BG, THEME_COOKIE } = require('./config');
 const { harden, installSessionHandlers } = require('./security');
-const { installBundle, bundleInfo } = require('./bundle');
+const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
 const windowState = require('./window-state');
-const { initUpdater, checkManual, getStatus, quitAndInstallNow } = require('./updater');
+const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
 
 const PARTITION = 'persist:taifamail';
 
@@ -249,7 +260,9 @@ function createWindow() {
   // Until the webmail puts a count in the title it simply reads 0, which is
   // correct rather than a guess.
   win.webContents.on('page-title-updated', (_e, title) => {
-    const m = /\((\d+)\)/.exec(title || '');
+    // Only the webmail's own "(n) " prefix counts, not any number in brackets
+    // that happens to be in a subject or folder name ("Projects (2024)").
+    const m = /^\((\d+)\)\s/.exec(title || '');
     const n = m ? Math.min(parseInt(m[1], 10), 9999) : 0;
     if (n === unreadCount) return;
     unreadCount = n;
@@ -674,6 +687,25 @@ function setAboutPanel() {
   });
 }
 
+// The backend said the bundled webmail is older than it supports
+// (X-Taifa-Min-Desktop-Bundle, see bundle.js). For the rest of this launch the
+// app goes back to being the thin shell: the interception is dropped and the
+// window reloads the live site, which always matches the backend. Meanwhile
+// the updater fetches the app build that carries a new enough bundle and
+// offers the restart.
+let fellBack = false;
+function fallBackToLiveSite() {
+  if (fellBack) return;
+  fellBack = true;
+  console.warn('[shell] bundled webmail is older than the backend requires: using the live site');
+  uninstallBundle(session.fromPartition(PARTITION));
+  if (win && !win.isDestroyed()) {
+    const current = win.webContents.getURL();
+    win.loadURL(current && current.startsWith(APP_ORIGIN) ? current : APP_URL);
+  }
+  checkNow();
+}
+
 // Tray, popover and updater are not needed to paint the window, so they start
 // only once it is on screen.
 let deferredStarted = false;
@@ -718,8 +750,20 @@ app.on('open-url', (e, url) => {
 app.whenReady().then(async () => {
   const ses = session.fromPartition(PARTITION);
   installSessionHandlers(ses);
-  const bundled = installBundle(ses);
+  const bundled = installBundle(ses, { onTooOld: fallBackToLiveSite });
   if (!bundled) console.warn('[shell] no bundled webmail in renderer/: loading the live site');
+
+  // 0.1.x registered the web build's service worker in this partition, and it
+  // answers "/" from its own cached copy of the OLD shell before any request
+  // reaches the bundle. The bundle never serves /sw.js, so that worker could
+  // never update itself away. Clear workers and Cache Storage for the webmail
+  // origin on every launch; cookies, localStorage and IndexedDB are untouched,
+  // so the session and preferences stay.
+  try {
+    await ses.clearStorageData({ origin: APP_ORIGIN, storages: ['serviceworkers', 'cachestorage'] });
+  } catch (e) {
+    console.warn('[shell] could not clear the old service worker:', e && e.message);
+  }
   ses.setSpellCheckerLanguages(['en-GB', 'en-US']);
 
   applyTheme(await readThemePreference(ses));

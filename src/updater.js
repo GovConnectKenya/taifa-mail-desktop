@@ -202,4 +202,13 @@ function quitAndInstallNow() {
   setImmediate(() => autoUpdater.quitAndInstall(false, true));
 }
 
-module.exports = { initUpdater, checkManual, getStatus, quitAndInstallNow };
+// A quiet check, used when the bundled webmail is older than the backend
+// requires (main.js): the normal events then download the update and offer the
+// restart, with no "you are up to date" dialog.
+function checkNow() {
+  if (!app.isPackaged) return;
+  wireEvents();
+  check();
+}
+
+module.exports = { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow };
