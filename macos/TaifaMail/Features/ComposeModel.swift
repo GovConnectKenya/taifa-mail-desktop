@@ -96,6 +96,10 @@ struct ComposeAttachment: Identifiable, Equatable {
     var fileId: String?
 }
 
+enum ComposeFont {
+    static var body: NSFont { NSFont(name: "GoogleSans-Regular", size: 14) ?? .systemFont(ofSize: 14) }
+}
+
 enum Address {
     static func isValid(_ s: String) -> Bool {
         s.range(of: #"^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$"#, options: .regularExpression) != nil
@@ -129,6 +133,7 @@ final class ComposeModel {
     let from: String
     @ObservationIgnored var attributed = NSAttributedString()
     @ObservationIgnored private let service: MailService
+    @ObservationIgnored private(set) var discarded = false
     @ObservationIgnored private var draftUid: Int?
     @ObservationIgnored private var draftFolder = "Drafts"
     @ObservationIgnored private var autosave: Task<Void, Never>?
@@ -151,7 +156,7 @@ final class ComposeModel {
         var text = "\n"
         if !seed.quote.isEmpty { text += "\n" + seed.quote + "\n" }
         if let signature, !signature.isEmpty { text += "\n-- \n" + signature }
-        attributed = NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 14)])
+        attributed = NSAttributedString(string: text, attributes: [.font: ComposeFont.body])
         if let uid = seed.stageUid, let folder = seed.stageFolder, seed.kind == .forward {
             if let staged = try? await service.stageAttachments(uid: uid, folder: folder) {
                 for f in staged { attachments.append(ComposeAttachment(name: f.filename, size: f.size, state: .ready, fileId: f.fileId)) }
@@ -233,7 +238,15 @@ final class ComposeModel {
         }
     }
 
+    /// Discard never saves a draft, and deletes the one already on the server (webmail discardCompose).
+    func discard() async {
+        discarded = true
+        autosave?.cancel()
+        if let uid = draftUid { _ = try? await service.batch(action: .trash, uids: [uid], folder: draftFolder); draftUid = nil }
+    }
+
     func saveDraft() async {
+        guard !discarded else { return }
         guard status == .editing || { if case .failed = status { return true }; return false }() else { return }
         guard !to.isEmpty || !subject.isEmpty || !attributed.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         saveState = "Saving"

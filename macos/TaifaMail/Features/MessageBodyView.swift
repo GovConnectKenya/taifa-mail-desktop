@@ -22,6 +22,8 @@ struct MessageBodyView: NSViewRepresentable {
         web.uiDelegate = context.coordinator
         web.setValue(false, forKey: "drawsBackground")
         web.allowsMagnification = false
+        web.postsFrameChangedNotifications = true
+        context.coordinator.observe(web)
         context.coordinator.loaded = (html, allowRemoteImages)
         web.loadHTMLString(BodyLockdown.document(html: html, allowRemoteImages: allowRemoteImages), baseURL: URL(string: "about:blank"))
         return web
@@ -59,6 +61,16 @@ struct MessageBodyView: NSViewRepresentable {
             if let url = navigationAction.request.url, ["http", "https", "mailto"].contains(url.scheme ?? "") { parent.onLink(url) }
             return nil
         }
+
+        private var token: NSObjectProtocol?
+        /// Remeasure when the width changes (window resize): reflowed text changes the content height.
+        func observe(_ web: WKWebView) {
+            token = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: web, queue: .main) { [weak self, weak web] _ in
+                guard let self, let web else { return }
+                MainActor.assumeIsolated { self.measure(web) }
+            }
+        }
+        deinit { if let t = token { NotificationCenter.default.removeObserver(t) } }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { measure(webView) }
 

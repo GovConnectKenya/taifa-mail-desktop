@@ -61,6 +61,9 @@ struct ComposeWindow: View {
 
 struct MailCommands: Commands {
     var app: AppModel
+    @Environment(\.openWindow) private var openWindow
+    private var hasSelection: Bool { !(store?.selection.isEmpty ?? true) }
+    private var hasSingle: Bool { store?.selection.count == 1 }
     private var store: MailStore? { app.store }
 
     var body: some Commands {
@@ -74,22 +77,34 @@ struct MailCommands: Commands {
                 NotificationCenter.default.post(name: .focusSearch, object: nil)
             }.keyboardShortcut("f", modifiers: [.command, .option])
         }
-        CommandMenu("Message") {
-            Button("Reply") { withSingle { ComposeLauncher.shared.open(kind: .reply, store: $0, row: $1) } }.keyboardShortcut("r")
-            Button("Reply All") { withSingle { ComposeLauncher.shared.open(kind: .replyAll, store: $0, row: $1) } }.keyboardShortcut("r", modifiers: [.command, .shift])
-            Button("Forward") { withSingle { ComposeLauncher.shared.open(kind: .forward, store: $0, row: $1) } }.keyboardShortcut("f", modifiers: [.command, .shift])
+        CommandGroup(before: .sidebar) {
+            Menu("Density") {
+                ForEach(Density.allCases) { d in Toggle(d.title, isOn: Binding(get: { app.prefs.density == d }, set: { _ in app.prefs.density = d })) }
+            }
+            Menu("Theme") {
+                ForEach(ThemePreference.allCases) { t in Toggle(t.title, isOn: Binding(get: { app.prefs.theme == t }, set: { _ in app.prefs.theme = t })) }
+            }
             Divider()
-            Button("Archive") { store?.perform(.archive) }.keyboardShortcut("a", modifiers: [.command, .control])
-            Button("Move to Trash") { store?.perform(.trash) }.keyboardShortcut(.delete, modifiers: .command)
-            Button("Move to Junk") { store?.perform(.junk) }.keyboardShortcut("j", modifiers: [.command, .shift])
+        }
+        CommandGroup(after: .windowList) {
+            Button("Taifa Mail") { openWindow(id: "main") }.keyboardShortcut("0")
+        }
+        CommandMenu("Message") {
+            Button("Reply") { withSingle { ComposeLauncher.shared.open(kind: .reply, store: $0, row: $1) } }.keyboardShortcut("r").disabled(!hasSingle)
+            Button("Reply All") { withSingle { ComposeLauncher.shared.open(kind: .replyAll, store: $0, row: $1) } }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(!hasSingle)
+            Button("Forward") { withSingle { ComposeLauncher.shared.open(kind: .forward, store: $0, row: $1) } }.keyboardShortcut("f", modifiers: [.command, .shift]).disabled(!hasSingle)
+            Divider()
+            Button("Archive") { store?.perform(.archive) }.keyboardShortcut("a", modifiers: [.command, .control]).disabled(!hasSelection)
+            Button("Move to Trash") { store?.perform(.trash) }.keyboardShortcut(.delete, modifiers: .command).disabled(!hasSelection)
+            Button("Move to Junk") { store?.perform(.junk) }.keyboardShortcut("j", modifiers: [.command, .shift]).disabled(!hasSelection)
             Menu("Move to") {
                 ForEach(store?.folders ?? []) { f in Button(f.name) { store?.perform(.move(f.path)) } }
             }
             Divider()
-            Button("Flag") { if let s = store { s.perform(.flag(!(s.selectedRows.first?.latest.flagged ?? false))) } }.keyboardShortcut("l", modifiers: [.command, .shift])
-            Button("Mark as Unread") { if let s = store { s.perform(.read(s.selectedRows.first?.unread ?? false)) } }.keyboardShortcut("u", modifiers: [.command, .shift])
+            Button("Flag") { if let s = store { s.perform(.flag(!(s.selectedRows.first?.latest.flagged ?? false))) } }.keyboardShortcut("l", modifiers: [.command, .shift]).disabled(!hasSelection)
+            Button("Mark as Unread") { if let s = store { s.perform(.read(s.selectedRows.first?.unread ?? false)) } }.keyboardShortcut("u", modifiers: [.command, .shift]).disabled(!hasSelection)
             Divider()
-            Button("Undo Last Action") { store?.performUndo() }.keyboardShortcut("z", modifiers: [.command, .option])
+            Button("Undo Last Action") { store?.performUndo() }.keyboardShortcut("z", modifiers: [.command, .option]).disabled(!(store?.canUndo ?? false))
         }
         CommandMenu("Mailbox") {
             Button("Refresh") { Task { await store?.refresh() } }.keyboardShortcut("k", modifiers: [.command, .shift])

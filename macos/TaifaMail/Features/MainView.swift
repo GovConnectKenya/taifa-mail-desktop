@@ -21,6 +21,7 @@ struct RootView: View {
         .tint(Theme.accentDot)
         .task {
             ComposeLauncher.shared.opener = { openWindow(id: "compose", value: $0) }
+            app.openMainWindow = { openWindow(id: "main") }
             await app.launch()
         }
         .onChange(of: app.session?.address) { _, a in ComposeLauncher.shared.ownAddress = a ?? "" }

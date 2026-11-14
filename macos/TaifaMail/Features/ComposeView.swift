@@ -31,20 +31,34 @@ final class RichTextController {
         tv.didChangeText()
     }
 
+    /// Real lists: NSTextList paragraph styles, which export to <ul>/<ol> in HTML.
     func bullets(numbered: Bool) {
-        guard let tv = textView else { return }
-        let ns = tv.string as NSString
-        let lineRange = ns.lineRange(for: tv.selectedRange())
-        let lines = ns.substring(with: lineRange).components(separatedBy: "\n")
-        var n = 0
-        let out = lines.enumerated().map { i, l -> String in
-            if l.isEmpty && i == lines.count - 1 { return l }
-            n += 1
-            return (numbered ? "\(n). " : "\u{2022} ") + l
-        }.joined(separator: "\n")
-        if tv.shouldChangeText(in: lineRange, replacementString: out) {
-            tv.replaceCharacters(in: lineRange, with: out); tv.didChangeText()
+        guard let tv = textView, let storage = tv.textStorage else { return }
+        let list = NSTextList(markerFormat: numbered ? .decimal : .disc, options: 0)
+        let ns = storage.string as NSString
+        let range = ns.lineRange(for: tv.selectedRange())
+        var paragraphs: [NSRange] = []
+        ns.enumerateSubstrings(in: range, options: .byParagraphs) { _, r, _, _ in paragraphs.append(r) }
+        if paragraphs.isEmpty { paragraphs = [range] }
+        storage.beginEditing()
+        var item = 0
+        for r in paragraphs.reversed() {
+            let current = (storage.attribute(.paragraphStyle, at: min(r.location, max(0, storage.length - 1)), effectiveRange: nil) as? NSParagraphStyle) ?? .default
+            let ps = current.mutableCopy() as! NSMutableParagraphStyle
+            if ps.textLists.isEmpty {
+                ps.textLists = [list]; ps.headIndent = 36; ps.firstLineHeadIndent = 18
+                ps.tabStops = [NSTextTab(textAlignment: .left, location: 18), NSTextTab(textAlignment: .left, location: 36)]
+                item += 1
+                let marker = "\t" + list.marker(forItemNumber: paragraphs.count - paragraphs.firstIndex(of: r)!) + "\t"
+                storage.replaceCharacters(in: NSRange(location: r.location, length: 0), with: marker)
+                storage.addAttribute(.paragraphStyle, value: ps, range: NSRange(location: r.location, length: r.length + marker.count))
+            } else {
+                ps.textLists = []; ps.headIndent = 0; ps.firstLineHeadIndent = 0
+                storage.addAttribute(.paragraphStyle, value: ps, range: r)
+            }
         }
+        storage.endEditing()
+        tv.didChangeText()
     }
 
     func link() {
@@ -79,7 +93,9 @@ struct RichTextEditor: NSViewRepresentable {
         tv.importsGraphics = false
         tv.isAutomaticLinkDetectionEnabled = true
         tv.isAutomaticSpellingCorrectionEnabled = true
-        tv.font = .systemFont(ofSize: 14)
+        tv.font = ComposeFont.body
+        tv.typingAttributes[.font] = ComposeFont.body
+        tv.textColor = NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(hex: 0xECECEC) : .black }
         tv.textContainerInset = NSSize(width: 12, height: 12)
         tv.drawsBackground = false
         tv.delegate = context.coordinator
@@ -168,6 +184,13 @@ struct ComposeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Text("New message").font(Fonts.sans(16, .semibold)).tracking(-0.2).foregroundStyle(Theme.text)
+                Spacer()
+                if !model.saveState.isEmpty { Text(model.saveState).taifa(.meta).foregroundStyle(Theme.text3) }
+            }
+            .padding(.horizontal, Space.s4).frame(height: 48).background(Theme.panel2)
+            Divider().overlay(Theme.border)
             VStack(spacing: 0) {
                 row { HStack(spacing: Space.s2) { Text("From").taifa(.meta).foregroundStyle(Theme.text3).frame(width: 40, alignment: .trailing)
                     Text(model.from).font(.taifaMono(12)).foregroundStyle(Theme.text2); Spacer() } }
@@ -192,7 +215,9 @@ struct ComposeView: View {
             toolbar
             if ready {
                 RichTextEditor(controller: controller, initial: model.attributed) { model.attributed = $0; model.scheduleAutosave() }
-            } else { Spacer() }
+            } else {
+                VStack(alignment: .leading, spacing: Space.s2) { ForEach(0..<5, id: \.self) { _ in SkeletonBar(height: 10) } }.padding(Space.s4); Spacer()
+            }
             if !model.attachments.isEmpty { attachmentStrip }
             if case let .failed(m) = model.status { Banner(kind: .danger, icon: .danger, message: m).padding(Space.s3) }
             if let n = model.notice { Banner(kind: .warn, icon: .warning, message: n).padding(Space.s3) }
@@ -205,24 +230,24 @@ struct ComposeView: View {
             return true
         }
         .task { await model.prepare(signature: signature); ready = true }
-        .onDisappear { if model.status != .sent { Task { await model.saveDraft() } } }
+        .onDisappear { if model.status != .sent && !model.discarded { Task { await model.saveDraft() } } }
         .frame(minWidth: 520, minHeight: 440)
     }
 
-    private func row<C: View>(@ViewBuilder _ c: () -> C) -> some View { c().frame(minHeight: 32) }
+    private func row<C: View>(@ViewBuilder _ c: () -> C) -> some View { c().frame(minHeight: 40) }
 
     private var toolbar: some View {
         HStack(spacing: Space.s1) {
-            Button { controller.toggle(.boldFontMask) } label: { Text("B").font(.system(size: 13, weight: .bold)).frame(width: 28, height: 24) }.help("Bold").accessibilityLabel("Bold")
-            Button { controller.toggle(.italicFontMask) } label: { Text("I").font(.system(size: 13).italic()).frame(width: 28, height: 24) }.help("Italic").accessibilityLabel("Italic")
-            Button { controller.bullets(numbered: false) } label: { Text("\u{2022} List").taifa(.meta).frame(height: 24) }.help("Bulleted list").accessibilityLabel("Bulleted list")
-            Button { controller.bullets(numbered: true) } label: { Text("1. List").taifa(.meta).frame(height: 24) }.help("Numbered list").accessibilityLabel("Numbered list")
-            Button { controller.link() } label: { Text("Link").taifa(.meta).frame(height: 24) }.help("Add link").accessibilityLabel("Add link")
+            Button { controller.toggle(.boldFontMask) } label: { Text("B").font(Fonts.sans(13, .semibold)).frame(width: 28, height: 24) }.help("Bold").accessibilityLabel("Bold")
+            Button { controller.toggle(.italicFontMask) } label: { Text("I").font(Fonts.sans(13).italic()).frame(width: 28, height: 24) }.help("Italic").accessibilityLabel("Italic")
+            Button { controller.bullets(numbered: false) } label: { Icon(.list, size: 16).frame(width: 28, height: 24) }.help("Bulleted list").accessibilityLabel("Bulleted list")
+            Button { controller.bullets(numbered: true) } label: { Text("1.").font(Fonts.mono(12, .semibold)).frame(width: 28, height: 24) }.help("Numbered list").accessibilityLabel("Numbered list")
+            Button { controller.link() } label: { Icon(.link, size: 16).frame(width: 28, height: 24) }.help("Add link").accessibilityLabel("Add link")
             Spacer()
             IconButton(icon: .attachment, label: "Attach files") { pick() }
         }
         .buttonStyle(.plain).foregroundStyle(Theme.text2)
-        .padding(.horizontal, Space.s4).frame(height: 36)
+        .padding(.horizontal, Space.s4).frame(height: 40)
         .background(Theme.panel2)
     }
 
@@ -249,9 +274,9 @@ struct ComposeView: View {
 
     private var footer: some View {
         HStack {
-            Text(model.saveState).taifa(.meta).foregroundStyle(Theme.text3)
+            Button { Task { await model.discard(); dismiss() } } label: { HStack(spacing: Space.s2) { Icon(.trash, size: 16); Text("Discard") } }
+                .buttonStyle(QuietButtonStyle()).accessibilityIdentifier("compose-discard")
             Spacer()
-            Button("Discard") { dismiss() }.buttonStyle(QuietButtonStyle())
             Button {
                 Task { if await model.send() { dismiss() } }
             } label: {

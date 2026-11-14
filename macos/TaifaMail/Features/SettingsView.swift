@@ -60,10 +60,10 @@ struct SignaturePane: View {
     var body: some View {
         PaneForm(title: "Signature") {
             switch state {
-            case .loading, .idle: ProgressView()
+            case .loading, .idle: VStack(alignment: .leading, spacing: Space.s2) { ForEach(0..<4, id: \.self) { _ in SkeletonBar(height: 10) } }
             case .failed(let m): Banner(kind: .danger, icon: .danger, message: m, actionTitle: "Retry") { Task { await load() } }
             case .loaded:
-                TextEditor(text: $text).font(.system(size: 13)).frame(height: 160).scrollContentBackground(.hidden)
+                TextEditor(text: $text).font(Fonts.sans(13)).onChange(of: text) { _, _ in saved = false }.frame(height: 160).scrollContentBackground(.hidden)
                     .padding(Space.s2).background(Theme.panel2, in: RoundedRectangle(cornerRadius: Radius.ctl))
                 HStack {
                     Button("Save") { Task { await save() } }.buttonStyle(PrimaryButtonStyle())
@@ -87,7 +87,11 @@ struct SignaturePane: View {
     private func save() async {
         guard let s = app.store?.service else { return }
         let html = text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\n", with: "<br>")
-        do { try await s.saveSignature(html: html, text: text, existing: existing); saved = true; await load() }
+        do {
+            try await s.saveSignature(html: html, text: text, existing: existing)
+            existing = try await s.signature()   // refresh the block id without flipping to the loading state
+            saved = true
+        }
         catch { state = .failed((error as? LocalizedError)?.errorDescription ?? "Could not save the signature.") }
     }
 }
@@ -101,12 +105,12 @@ struct AutoReplyPane: View {
     var body: some View {
         PaneForm(title: "Auto-reply") {
             switch state {
-            case .loading, .idle: ProgressView()
+            case .loading, .idle: VStack(alignment: .leading, spacing: Space.s2) { ForEach(0..<4, id: \.self) { _ in SkeletonBar(height: 10) } }
             case .failed(let m): Banner(kind: .danger, icon: .danger, message: m, actionTitle: "Retry") { Task { await load() } }
             case .loaded:
                 Toggle("Send automatic replies", isOn: $value.enabled)
                 TextField("Subject", text: $value.subject).textFieldStyle(FieldStyle()).disabled(!value.enabled)
-                TextEditor(text: $value.text).font(.system(size: 13)).frame(height: 110).scrollContentBackground(.hidden)
+                TextEditor(text: $value.text).font(Fonts.sans(13)).onChange(of: value) { _, _ in saved = false }.frame(height: 110).scrollContentBackground(.hidden)
                     .padding(Space.s2).background(Theme.panel2, in: RoundedRectangle(cornerRadius: Radius.ctl)).disabled(!value.enabled)
                 Picker("When", selection: $value.mode) {
                     Text("Always").tag("always"); Text("Outside hours").tag("outside_hours"); Text("Date range").tag("date_range")
@@ -152,9 +156,11 @@ struct AccountPane: View {
                         .taifa(.meta).foregroundStyle(Theme.text3)
                 }
             }
-            Button("Sign out") { Task { await app.signOut() } }.buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("settings-signout")
+            Button("Sign out") { Task { await app.signOut() } }.buttonStyle(DangerQuietButtonStyle()).accessibilityIdentifier("settings-signout")
             Text("Signing out removes this mailbox's cached mail from this Mac.").taifa(.meta).foregroundStyle(Theme.text3)
         }
-        .task { quota = try? await app.store?.service.quota() }
+        .task {
+            if let q = app.store?.quota { quota = q } else { quota = try? await app.store?.service.quota() }
+        }
     }
 }

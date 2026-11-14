@@ -42,6 +42,7 @@ final class AppModel {
     @ObservationIgnored private let connectivity = ConnectivityMonitor()
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     let isPreview: Bool
+    @ObservationIgnored var openMainWindow: (() -> Void)?
 
     init(secrets: SecretStore = KeychainSecretStore(), cacheDirectory: URL = OfflineCache.defaultDirectory(),
          baseURL: URL = APIClient.productionBase, defaults: UserDefaults = .standard, preview: Bool = false) {
@@ -68,6 +69,10 @@ final class AppModel {
         cookies.restore()
         connectivity.start()
         notifications.onOpen = { [weak self] folder, uid in self?.openFromNotification(folder: folder, uid: uid) }
+        notifications.inboxOnScreen = { [weak self] in
+            guard let st = self?.store else { return false }
+            return st.currentFolder?.role == .inbox && !st.isSearching
+        }
         guard cookies.hasSession else { phase = .signedOut; return }
         do {
             let me = try await auth.me()
@@ -242,17 +247,19 @@ final class AppModel {
         }
     }
 
+    /// Opens the thread of a clicked notification: recreate the main window if it was closed, load the
+    /// folder, then select the message (no fixed sleeps).
     private func openFromNotification(folder: String, uid: Int) {
         guard let st = store else { return }
         NSApp.activate(ignoringOtherApps: true)
-        if st.selectedFolder != folder { st.selectFolder(folder) }
+        if !NSApp.windows.contains(where: { $0.canBecomeMain && $0.isVisible }) { openMainWindow?() }
         Task {
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            if let row = st.rows.first(where: { $0.latest.uid == uid }) { st.select(row.id) }
+            if st.selectedFolder != folder || st.isSearching { await st.endSearch(); st.selectFolder(folder) }
+            await st.loadFirstPage(useCache: false, keepRows: true)
+            if let row = st.rows.first(where: { $0.latest.uid == uid && $0.latest.folder == folder }) { st.select(row.id) }
         }
     }
 }
-
 
 final class SendableBox<T>: @unchecked Sendable {
     var value: T

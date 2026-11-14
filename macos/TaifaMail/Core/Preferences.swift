@@ -27,6 +27,7 @@ final class AppPreferences {
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     private let prefs: AppPreferences
     var onOpen: ((String, Int) -> Void)?   // folder, uid
+    var inboxOnScreen: (() -> Bool)?
     private var authorized = false
 
     init(prefs: AppPreferences) {
@@ -70,7 +71,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
+        // No banner while the app is frontmost with the Inbox on screen: the list already shows the message.
+        await MainActor.run { NSApp.isActive && self.inboxOnScreen?() == true ? [] : [.banner, .sound] }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

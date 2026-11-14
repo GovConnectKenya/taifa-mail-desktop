@@ -117,3 +117,16 @@ struct BrandLogo: View {
             .accessibilityIdentifier("brand-logo")
     }
 }
+
+
+/// Sign out and other destructive but reversible actions: quiet, danger ink.
+struct DangerQuietButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .taifa(.bodyStrong).foregroundStyle(Theme.dangerFg)
+            .padding(.horizontal, Space.s4).frame(height: 40)
+            .background(configuration.isPressed ? Theme.dangerSoft : Color.clear, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.danger.opacity(0.4), lineWidth: 1))
+            .hoverFill(radius: 20, tint: Theme.dangerSoft)
+    }
+}

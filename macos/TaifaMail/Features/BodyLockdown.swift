@@ -80,8 +80,9 @@ enum BodyLockdown {
         <style>
         :root { color-scheme: light dark; }
         html, body { margin: 0; padding: 0; background: transparent; }
-        body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: #050100; overflow-wrap: anywhere; word-break: normal; }
-        @media (prefers-color-scheme: dark) { body { color: #F8F3F0; } a { color: #1EA94E; } }
+        body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: #000000; overflow-wrap: anywhere; word-break: normal; }
+        a { color: #00643A; }
+        @media (prefers-color-scheme: dark) { body { color: #ECECEC; } a { color: #8ADBAA; } }
         img { max-width: 100%; height: auto; }
         table { max-width: 100%; }
         pre { white-space: pre-wrap; }

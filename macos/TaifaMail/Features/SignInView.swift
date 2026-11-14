@@ -14,7 +14,7 @@ struct SignInView: View {
             VStack(spacing: Space.s6) {
                 VStack(spacing: Space.s2) {
                     BrandLogo(height: 56)
-                    Text("Taifa Mail").taifa(.hero).foregroundStyle(Theme.text)
+                    Text(title).taifaHeading(.display).foregroundStyle(Theme.text).multilineTextAlignment(.center)
                     Text(subtitle).taifa(.body).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
                 }
                 VStack(alignment: .leading, spacing: Space.s3) {
@@ -25,7 +25,6 @@ struct SignInView: View {
                     content
                 }
                 .frame(width: 352)
-                Text("Passkey sign-in is not available in this version.").taifa(.meta).foregroundStyle(Theme.text3)
             }
             .padding(Space.s6)
             .frame(width: 400)
@@ -35,9 +34,11 @@ struct SignInView: View {
         .onAppear { focus = model.address.isEmpty ? .address : .password }
     }
 
+    private var title: String { model.step == .password ? "Sign in to Taifa Mail" : "Taifa Mail" }
+
     private var subtitle: String {
         switch model.step {
-        case .password: "Sign in to your government mailbox"
+        case .password: "Sign in with your mailbox address and password to read and send mail."
         case .codeAddress: "Get a one time sign-in code"
         case .codeEntry: "Enter the code we emailed you"
         case .secondFactor: "Verify it is you"
@@ -49,12 +50,12 @@ struct SignInView: View {
         case .password:
             fieldLabel("Mailbox address")
             TextField("name@example.go.ke", text: $model.address)
-                .textFieldStyle(FieldStyle()).font(.taifaMono(13)).focused($focus, equals: .address)
+                .textFieldStyle(FieldStyle()).font(Fonts.mono(13)).focused($focus, equals: .address).disabled(model.busy)
                 .textContentType(.username).autocorrectionDisabled()
                 .accessibilityIdentifier("signin-address")
             fieldLabel("Password")
             SecureField("Password", text: $model.password)
-                .textFieldStyle(FieldStyle()).focused($focus, equals: .password)
+                .textFieldStyle(FieldStyle()).focused($focus, equals: .password).disabled(model.busy)
                 .accessibilityIdentifier("signin-password")
                 .onSubmit { Task { await app.signInWithPassword() } }
             Button { Task { await app.signInWithPassword() } } label: { buttonLabel("Sign in") }

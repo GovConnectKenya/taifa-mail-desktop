@@ -30,7 +30,7 @@ Rhythm (from spaci and the Taifa web tokens): 4 to 8 inside a group, 12 to 16 be
 
 ## 2. Type
 
-Font: Google Sans for UI where bundled, otherwise the system font (SF Pro on macOS, Segoe UI Variable on Windows). JetBrains Mono for addresses, message ids and keyboard hints. Spaci tightens tracking by -0.1; do the same at 13 and above.
+Fonts: Google Sans (Regular, Medium, SemiBold; 700 maps to SemiBold) for the UI and JetBrains Mono (Regular, Medium, SemiBold) for addresses, counts and ids. Both are SIL OFL 1.1 and ship in the webmail repo (`backend/app/templates/generated_documents/assets/fonts/*.ttf`; copyright 2025 The Google Sans Project Authors, 2020 The JetBrains Mono Project Authors); bundle the TTFs with the OFL text. No global tracking; headings only use -0.01em.
 
 | Token | Size / line | Weight | Use |
 |---|---|---|---|
@@ -90,13 +90,14 @@ The page canvas is a faint tint; content surfaces are white and flat, separated 
 
 ## 5. Selection and focus
 
-Follows `webmail/src/mail/ThreadList.svelte`:
+Follows `webmail/src/mail/ThreadList.svelte` (flat ruled list, lines ~1515-1558):
 
-- Selected row: `accentSoft` fill (`surfaceSelected` while the list has focus) plus a hairline `border1`, `radius.card`. Never a heavy outline, never an inverted solid fill.
-- Rows are separated by `borderSoft` hairlines in the flat list, `space.3` padding all round (`space.2` top and bottom in compact density).
-- Unread: a small accent dot at the leading edge, sender in bold (700), subject semibold (600), time bold in `accentInk`. Read rows use regular weight and `muted` for the time.
-- Hover: `surface2`. Pressed: `border1`.
-- Keyboard focus ring: `ring` (4 px halo of the accent) plus a 2 px `accent` outline offset 2, as `tokens.css` base rules.
+- The thread list is a flat ruled list on the page ground (`bg`), shared with the reader. Rows have radius 0, padding-inline 20, padding-block 12 (8 in compact), a 1 px `borderSoft` bottom hairline, and content height (no fixed row height).
+- Selected row: `accent` at 16 percent over `bg`, no border. Hover: `surface2`.
+- Unread: an 8 px accent dot at the start of the subject line (no leading column), sender weight 700 (500 read), subject 600 (400 read), time bold in `accentInk`.
+- Sidebar rows (36 px, radius 8): active is `accentSoft` fill with `accentInk` text 600, no border.
+- Hover `surface2`, pressed `border1`, keyboard focus a 2 px accent ring with a 2 px gap (the list shows it around the whole list).
+- Accent everywhere is Taifa green: the app's AccentColor is `#008C51` light and `#1EA94E` dark, so system controls (toggles, pickers, links, spinners) are never blue.
 
 ## 6. Sizes
 
@@ -155,6 +156,8 @@ Every data screen has these states: loading (skeleton), loaded, empty, error, of
 - Shown when sign-in or code verify answers `requires_2fa`. One field "Verification code", "Verify", secondary "Email me a code" (calls the challenge endpoint; confirmation "A code was sent to your account email."). Accepts authenticator codes, emailed codes and recovery codes. Errors as 8.2.
 
 ### 8.4 Main window (three columns)
+- Sidebar is the webmail rail: brand row (32 px logo, "Taifa Mail" 16/600), a 48 px green Compose button (`accentFill`, white 13/600, raised shadow), folders (rows 36 px, gap 12, padding 12, radius 8; counts in JetBrains Mono 11, unread bold in `accentInk`, Drafts shows the total), folder order Inbox, Sent, Drafts, Archive, Junk, Quarantine, Trash then the rest alphabetically under a "Folders" label, a storage meter from GET /quota, and the account menu at the bottom. Scheduled, Snoozed and Labels are not in v1.
+- Widths: sidebar 256 ideal, list 392 ideal, reader fills.
 - Sidebar, thread list, reader. The sidebar is the webmail `sidebar` surface (flat, hairline separated) with the logo and wordmark at the top, as in the webmail; window chrome (traffic lights, toolbar, menu bar) stays native. On Windows the same with Mica behind the title bar and the sidebar as a NavigationView pane.
 - Sidebar top: mailbox switcher (avatar 28, display name, address in `type.meta`, chevron down) when `GET /auth/mailbox/switchable` returns siblings, otherwise a static identity block. Then folders in fixed order Inbox, Drafts, Sent, Archive, Junk, Trash, then other folders under a "Folders" header. Counts: unseen only, `type.caption`, hidden at 0, `99+` cap. Drafts shows total instead of unseen.
 - Special use icons: Inbox, Drafts, Sent, Archive, Junk, Trash from the Iconsax mail set; other folders get the folder icon.
@@ -165,21 +168,20 @@ Every data screen has these states: loading (skeleton), loaded, empty, error, of
 - Signed out (session expired and refresh failed): the whole window swaps to 8.1 with a banner "Your session ended. Sign in again."
 
 ### 8.5 Thread list
-- Row content: avatar, sender (or recipient in Sent and Drafts), time right aligned, subject, snippet, attachment icon (paperclip glyph from the library) and flag at the trailing edge, unread dot at the leading edge, thread count badge when more than one message.
+- Header: folder name (16/600) with "total \u00b7 N unread" (11). While several rows are selected the header becomes a bulk bar (count, Archive, Delete, Mark read, Star).
+- Row anatomy (webmail): avatar 36 (compact 32) at the top left; line 1 sender (13) and time (11, right); line 2 unread dot, subject (12), thread count (JetBrains Mono 10, end of line); line 3 preview (12, `muted`) with paperclip (13) and star (12, `warn`) at the end. Hover shows a pill of row actions (archive, delete, mark read or unread, star) at the top right.
+- Compact density changes only padding and avatar size.
 - Time format: today `HH:mm`, yesterday "Yesterday", this week the weekday, this year `d MMM`, older `d MMM yyyy`.
-- Multi select: shift and command click; toolbar swaps to batch actions; header shows "N selected".
-- Infinite scroll: next page requested when the 10th row from the end appears; footer spinner while loading; footer "No more messages" is not shown.
-- Pull to refresh equivalent: Cmd+R, the toolbar refresh button, and on Windows F5 plus pull gesture on touch.
-- Rows are lazy, fixed height, so scrolling thousands of rows stays cheap.
+- Multi select: shift and command click. Infinite scroll with a footer spinner. Refresh: toolbar button and Shift+Cmd+K.
+- Error (no cached rows): centred "Couldn't load {folder}", the message and a "Try again" outlined pill. Empty folder: "Nothing here" with "No messages match this view." (logo only on the truly empty Inbox). Loading: 8 skeleton rows.
 
 ### 8.6 Reader
-- Header block per message: avatar, sender name and address (monospace), "to" line collapsing to "to me, +2", date, attachment and flag state.
-- Conversation: earlier messages collapsed to their 56 high header and first line of snippet, latest expanded. Click a collapsed header to expand. "Show earlier messages" when the window has more.
-- Opening a thread marks it read immediately and optimistically. If the request fails the unread state is restored and a quiet banner "Could not mark as read" appears.
-- Auth banner: `info` (neutral), `warning` (amber), `danger` (red) per `auth_warning.level`, with title and message; at `links_disabled` links are inert.
-- Remote images: a banner "Remote images are blocked. Show images" for this message only (never persisted across messages unless the sender is trusted in settings).
-- Attachments: chips below the body (icon, name, size). Click or Space previews (Quick Look on macOS, preview pane on Windows), a download button saves to a chosen location.
-- Loading: skeleton header and 5 body bars. Empty (no selection): large mail icon and "Select a message". Error: card with "Could not load this message" and Retry. Offline: opened messages come from cache; uncached ones show "This message is not available offline."
+- Flat thread on the page ground, no bordered cards. Toolbar of 32 px tools: Archive, Spam, Delete | Mark unread, Star, Move | spacer | "N of M" with Newer and Older chevrons.
+- Subject 20/600, tracking -0.01em, padding 28. Each message separated by a `borderSoft` hairline; header with a 40 px avatar, name (13/600) and address (mono 11), date; body indented 52 under the sender. Collapsed messages are single rows (avatar 32, name, snippet, time) that expand on click. Long conversations show a dashed "Show earlier messages" pill (uses `has_more_older` and `next_before`).
+- Sticky footer: 40 px outlined pill buttons Reply, Reply all, Forward (glyphs undo-arrow, reply-mail, forward).
+- Opening a thread marks it read immediately and optimistically (rolls back on failure).
+- Auth banner, remote image banner and attachment chips as before. Empty reader: a 64 px `accentSoft` circle with the mail glyph, "Select a conversation", "Choose a message from the list to read it here."
+- Loading: skeleton header and body. Error: "Couldn't load this message" with "Try again". Offline uncached: "Not available offline".
 
 ### 8.7 Compose
 - Separate window (macOS) or dialog window (Windows), 640 x 560 default.
@@ -270,3 +272,7 @@ Every control has a label; list rows read "sender, subject, time, unread or read
 ## 15. Notifications and badge
 
 macOS `UserNotifications`, Windows toast. Permission is requested once the user is inside their mailbox, not at launch. A notification shows sender (title), subject, and a snippet, and activating it opens that thread. Decision rule (`NotificationPolicy`, unit tested): notify only for Inbox messages that are unread, were not sent by the owner, and were not already known to the app in this session; the first load of a session only records what exists. Settings has a toggle for notifications and one for the Dock (taskbar) badge, which shows the Inbox unread count. Notifications only arrive while the app runs (websocket plus 60 s REST reconcile).
+
+## 16. Toasts
+
+ToastPill: radius 8, 1 px `border1`, `surface`, min height 44, padding 12 by 20, weight 500, Undo in `accentInk` 600, a close button, `shadowOverlay`, bottom centre of the window 24 up, width min(420, available). Animated in and out (fade and rise), plain fade under Reduce Motion. The sign-in card follows `webmail/src/routes/login`: title "Sign in to Taifa Mail", subtitle "Sign in with your mailbox address and password to read and send mail.", 40 px controls.
