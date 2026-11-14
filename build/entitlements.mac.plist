@@ -3,14 +3,15 @@
 <plist version="1.0">
 <dict>
   <!-- Entitlements required to run Electron under the macOS hardened runtime,
-       which is mandatory for notarization (and therefore for auto-update). -->
+       which is mandatory for notarization (and therefore for auto-update).
+       Only V8's needs: JIT and unsigned executable memory. Not
+       allow-dyld-environment-variables (it would let DYLD_INSERT_LIBRARIES load
+       foreign code into the signed app) and not disable-library-validation
+       (every framework in the bundle is signed with the app's own identity;
+       there are no third-party native modules). See RELEASING.md. -->
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-  <true/>
-  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-  <true/>
-  <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>
 </plist>
