@@ -62,6 +62,15 @@ public sealed partial class SettingsWindow : Window
         if (tag == "Account" && !_loadedAccount) { _loadedAccount = true; _ = LoadAccountAsync(); }
     }
 
+    private async Task ShowErrorAsync(Exception ex)
+    {
+        try
+        {
+            await new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Settings", Content = ex is ApiRequestError or ApiTransportError ? ex.Message : "Something went wrong. Try again.", CloseButtonText = "Close", RequestedTheme = Root.ActualTheme }.ShowAsync();
+        }
+        catch (Exception) { }
+    }
+
     // ---- general and notifications (local) ----
 
     private void OnThemeChanged(object sender, SelectionChangedEventArgs e)
@@ -114,6 +123,12 @@ public sealed partial class SettingsWindow : Window
 
     private async void OnSaveSignature(object sender, RoutedEventArgs e)
     {
+        try { await OnSaveSignatureCore(sender, e); }
+        catch (Exception ex) { _ = ShowErrorAsync(ex); }
+    }
+
+    private async Task OnSaveSignatureCore(object sender, RoutedEventArgs e)
+    {
         if (_api is null || _signature?.IsStructured == true) return;
         SignatureSaved.Text = "";
         var text = SignatureBox.Text.Replace("\r\n", "\n").Replace('\r', '\n');
@@ -161,6 +176,12 @@ public sealed partial class SettingsWindow : Window
 
     private async void OnSaveAuto(object sender, RoutedEventArgs e)
     {
+        try { await OnSaveAutoCore(sender, e); }
+        catch (Exception ex) { _ = ShowErrorAsync(ex); }
+    }
+
+    private async Task OnSaveAutoCore(object sender, RoutedEventArgs e)
+    {
         if (_api is null || _auto is null) return;
         AutoSaved.Text = "";
         var mode = (AutoMode.SelectedItem as ComboBoxItem)?.Tag as string ?? "always";
@@ -187,6 +208,12 @@ public sealed partial class SettingsWindow : Window
     }
 
     private async void OnSignOut(object sender, RoutedEventArgs e)
+    {
+        try { await OnSignOutCore(sender, e); }
+        catch (Exception ex) { _ = ShowErrorAsync(ex); }
+    }
+
+    private async Task OnSignOutCore(object sender, RoutedEventArgs e)
     {
         Close();
         await _ctx.SignOut();

@@ -37,8 +37,6 @@ jobs:
   build:
     name: Build Release ${{ matrix.platform }}
     runs-on: windows-latest
-    env:
-      SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
     strategy:
       fail-fast: false
       matrix:
@@ -104,8 +102,14 @@ jobs:
           $missing = $need | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
           if ($missing) { Write-Error "Missing from the output: $($missing -join ', ')"; exit 1 }
           Write-Host "All $($need.Count) asset files are in $dir."
+      - name: Detect signing secrets
+        id: signing
+        env:
+          HAS_PFX: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+        run: |
+          "signed=$(if ($env:HAS_PFX) { 'true' } else { 'false' })" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Sign (skipped unless signing secrets exist)
-        if: ${{ env.SIGN_PFX_BASE64 != '' }}
+        if: steps.signing.outputs.signed == 'true'
         env:
           SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
           SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
@@ -118,11 +122,15 @@ jobs:
           }
           Remove-Item $pfx -Force
       - name: Zip
-        run: Compress-Archive -Path artifacts/publish-${{ matrix.rid }}/* -DestinationPath artifacts/TaifaMail-windows-${{ matrix.rid }}-unsigned.zip
+        run: |
+          $kind = if ('${{ steps.signing.outputs.signed }}' -eq 'true') { 'signed' } else { 'unsigned' }
+          Compress-Archive -Path artifacts/publish-${{ matrix.rid }}/* -DestinationPath "artifacts/TaifaMail-windows-${{ matrix.rid }}-$kind.zip"
+          "zip=TaifaMail-windows-${{ matrix.rid }}-$kind.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: zip
       - uses: actions/upload-artifact@v4
         with:
-          name: TaifaMail-windows-${{ matrix.rid }}-unsigned
-          path: windows/artifacts/TaifaMail-windows-${{ matrix.rid }}-unsigned.zip
+          name: TaifaMail-windows-${{ matrix.rid }}-${{ steps.signing.outputs.signed == 'true' && 'signed' || 'unsigned' }}
+          path: windows/artifacts/${{ steps.zip.outputs.zip }}
           retention-days: 14
 
   debug-build:

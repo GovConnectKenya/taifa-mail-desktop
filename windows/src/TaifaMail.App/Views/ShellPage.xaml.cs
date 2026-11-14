@@ -20,6 +20,7 @@ using TaifaMail.Core.Security;
 using TaifaMail.Core.ViewModels;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.Foundation;
 using Windows.System;
 
 namespace TaifaMail.App.Views;
@@ -517,8 +518,9 @@ public sealed partial class ShellPage : Page, IChromePage
 
     // ---- toast ----
 
-    private void ShowToast(string message, Func<Task>? undo)
+    private void ShowToast(string message, Func<Task>? undo, string actionLabel = "Undo")
     {
+        ToastUndo.Content = actionLabel;
         _toastUndo = undo;
         _lastUndo = undo;
         ToastText.Text = message;
@@ -638,14 +640,24 @@ public sealed partial class ShellPage : Page, IChromePage
             web.LinkRequested += (uri, text) => { if (!card.LinksDisabled) _ = PromptAndOpenAsync(uri, text); };
             web.WheelForwarded += dy => ReaderScroll.ChangeView(null, ReaderScroll.VerticalOffset + dy, null, true);
             web.FailedToStart += () => DispatcherQueue.TryEnqueue(() => host.Content = BuildPlainText(card));
-            card.PropertyChanged += (_, args) =>
+            var notified = false;
+            web.ImagesBlocked += n => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (notified) return;
+                notified = true;
+                ShowToast($"{n} image{(n == 1 ? "" : "s")} stay blocked: the image service is busy.", () => { notified = false; Render(); return Task.CompletedTask; }, "Retry");
+            });
+            System.ComponentModel.PropertyChangedEventHandler onCard = (_, args) =>
             {
                 if (args.PropertyName == nameof(MessageCardVm.AllowImages)) { Render(); if (card.AllowImages) web.RemeasureSoon(); }
             };
-            ActualThemeChanged += (_, _) => Render();
+            TypedEventHandler<FrameworkElement, object> onTheme = (_, _) => Render();
+            card.PropertyChanged += onCard;
+            ActualThemeChanged += onTheme;
             host.Content = web;
             Render();
-            host.Unloaded += (_, _) => web.Close();
+            // subscribed once per host and released with it, so a long session does not accumulate handlers or dead WebViews
+            host.Unloaded += (_, _) => { card.PropertyChanged -= onCard; ActualThemeChanged -= onTheme; web.Close(); };
         }
         else
         {
@@ -867,7 +879,7 @@ public sealed partial class ShellPage : Page, IChromePage
     {
         BodyWebView.ApiBase = _ctx.ApiBase;
         BodyWebView.MailboxId = _ctx.Mail.MailboxId;
-        BodyWebView.ProxyFetcher = _ctx.Api is { } api ? url => api.TryGetBytesAsync(url) : null;
+        BodyWebView.ProxyFetcher = _ctx.Api is { } api ? url => api.FetchImageAsync(url) : null;
         BodyWebView.CapabilityProvider = _ctx.RealMail is { } mail ? async () =>
         {
             try

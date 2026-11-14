@@ -54,6 +54,13 @@ public static class HtmlBody
         return found;
     }
 
+    /// <summary>The form WebView2 reports for a navigation: lowercase host, an explicit "/" path. Used as the key of the link text map.</summary>
+    public static string NormalizeUrl(string url)
+    {
+        try { return Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.AbsoluteUri : url; }
+        catch (Exception) { return url; }
+    }
+
     /// <summary>
     /// Map from each anchor's href to the text a reader sees for it, so the link prompt can flag a visible host
     /// that differs from the real one. The viewer runs no script, so the page itself cannot report this.
@@ -65,7 +72,7 @@ public static class HtmlBody
             "<a\\s[^>]*?href\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')[^>]*>(.*?)</a>",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline))
         {
-            var href = WebUtility.HtmlDecode(m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value).Trim();
+            var href = NormalizeUrl(WebUtility.HtmlDecode(m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value).Trim());
             var text = WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Replace(m.Groups[3].Value, "<[^>]+>", "")).Trim();
             if (href.Length > 0 && text.Length > 0) map.TryAdd(href, text);
         }

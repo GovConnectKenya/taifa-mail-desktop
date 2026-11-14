@@ -25,7 +25,7 @@ public sealed class AppServices
         Api = new TaifaApiClient(TaifaApiClient.ProductionBase, new DpapiSessionStore(Path.Combine(DataDir, "session.bin")));
         Auth = new AuthApi(Api);
         PurgeAttachments();
-        Cache = new OfflineCache(Path.Combine(DataDir, "cache.db"), new DpapiCacheProtector());
+        Cache = OfflineCache.OpenOrRecreate(Path.Combine(DataDir, "cache.db"), new DpapiCacheProtector());
         Images = new ImageCache(Api, Path.Combine(DataDir, "img"), ui);
         ImageCache.Instance = Images;
         Settings = LocalSettings.Load(SettingsPath);
@@ -54,8 +54,7 @@ public sealed class AppServices
         Cache.Wipe();
         Images.Clear();
         PurgeAttachments();
-        Settings.LastMailboxId = null;
-        Settings.LastAddress = null;
+        Settings.ClearSession();
         SaveSettings();
     }
 }

@@ -51,9 +51,7 @@ public sealed class AppController
         var vm = new SignInViewModel(_svc.Auth);
         vm.SignedIn += async session =>
         {
-            _svc.Settings.LastMailboxId = session.MailboxId;
-            _svc.Settings.LastAddress = session.Address;
-            _svc.Settings.RememberedAddress = vm.Remember ? session.Address : null;
+            _svc.Settings.ApplySignIn(session.MailboxId, session.Address, vm.Remember);
             _svc.SaveSettings();
             MailboxMe me;
             try { me = await _svc.Auth.MeAsync(); }

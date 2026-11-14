@@ -21,7 +21,7 @@ public sealed class BodyWebView : UserControl
     private const string FontHost = "taifa-fonts.local";
 
     /// <summary>Set by the shell: the API origin, the mailbox, and a way to fetch a proxied image with the session cookies.</summary>
-    public static Func<string, Task<byte[]?>>? ProxyFetcher { get; set; }
+    public static Func<string, Task<TaifaMail.Core.Net.TaifaApiClient.ImageFetch>>? ProxyFetcher { get; set; }
     public static string ApiBase { get; set; } = "";
     public static string MailboxId { get; set; } = "";
     public static Func<Task<string?>>? CapabilityProvider { get; set; }
@@ -39,6 +39,9 @@ public sealed class BodyWebView : UserControl
     public event Action<double>? WheelForwarded;
     public event Action<string, string?>? LinkRequested;
     public event Action? FailedToStart;
+    /// <summary>Raised with the number of images that stayed blocked because the image proxy refused them.</summary>
+    public event Action<int>? ImagesBlocked;
+    private int _blockedImages;
     public bool Failed { get; private set; }
 
     public BodyWebView()
@@ -123,15 +126,26 @@ public sealed class BodyWebView : UserControl
                 var deferral = e.GetDeferral();
                 try
                 {
-                    var bytes = await fetch(e.Request.Uri);
-                    if (bytes is { Length: > 0 })
+                    var result = await fetch(e.Request.Uri);
+                    if (result.Status == 429)
+                    {
+                        // rate limited: honour Retry-After once, briefly; after that the image stays blocked and the user is told
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(result.RetryAfterSeconds ?? 1, 1, 5)));
+                        result = await fetch(e.Request.Uri);
+                    }
+                    if (result.Bytes is { Length: > 0 } bytes)
                     {
                         var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
                         await stream.WriteAsync(System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.AsBuffer(bytes));
                         stream.Seek(0);
-                        e.Response = env.CreateWebResourceResponse(stream, 200, "OK", "Content-Type: image/*\nCache-Control: no-store");
+                        // the server marks proxied images private and immutable for a day: let WebView2 cache them instead of refetching
+                        e.Response = env.CreateWebResourceResponse(stream, 200, "OK", "Content-Type: image/*\nCache-Control: private, max-age=86400, immutable");
                     }
-                    else e.Response = env.CreateWebResourceResponse(null, 404, "Not found", "");
+                    else
+                    {
+                        e.Response = env.CreateWebResourceResponse(null, result.Status == 429 ? 429 : 404, "Not available", "");
+                        if (result.Status == 429) ImagesBlocked?.Invoke(Interlocked.Increment(ref _blockedImages));
+                    }
                 }
                 finally { deferral.Complete(); }
                 return;
@@ -159,7 +173,8 @@ public sealed class BodyWebView : UserControl
 
     private void Raise(string uri)
     {
-        _linkTexts.TryGetValue(uri, out var text);
+        // the map is keyed by the normalised URL (lowercase host, explicit path), as WebView2 reports navigations
+        _linkTexts.TryGetValue(HtmlBody.NormalizeUrl(uri), out var text);
         LinkRequested?.Invoke(uri, text);
     }
 
@@ -175,6 +190,7 @@ public sealed class BodyWebView : UserControl
         try
         {
             _allowImages = allowImages;
+            _blockedImages = 0;
             if (allowImages && CapabilityProvider is { } cap && await cap() is { Length: > 0 } token)
                 html = ImageProxy.Rewrite(html, ApiBase, MailboxId, token);
             _linkTexts = HtmlBody.LinkTexts(html);

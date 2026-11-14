@@ -184,6 +184,12 @@ public sealed partial class ComposeWindow : Window
 
     private async void OnLink(object sender, RoutedEventArgs e)
     {
+        try { await OnLinkCore(sender, e); }
+        catch (Exception ex) { ErrorBar.Message = "Something went wrong. " + ex.Message; ErrorBar.IsOpen = true; }
+    }
+
+    private async Task OnLinkCore(object sender, RoutedEventArgs e)
+    {
         var box = new TextBox { PlaceholderText = "https://", MinWidth = 320 };
         var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Insert link", Content = box, PrimaryButtonText = "Insert", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, RequestedTheme = Root.ActualTheme };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
@@ -204,6 +210,12 @@ public sealed partial class ComposeWindow : Window
 
     private async void OnAttach(object sender, RoutedEventArgs e)
     {
+        try { await OnAttachCore(sender, e); }
+        catch (Exception ex) { ErrorBar.Message = "Something went wrong. " + ex.Message; ErrorBar.IsOpen = true; }
+    }
+
+    private async Task OnAttachCore(object sender, RoutedEventArgs e)
+    {
         var picker = new FileOpenPicker();
         picker.FileTypeFilter.Add("*");
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
@@ -219,8 +231,19 @@ public sealed partial class ComposeWindow : Window
 
     private async void OnDrop(object sender, DragEventArgs e)
     {
+        try { await OnDropCore(sender, e); }
+        catch (Exception ex) { ErrorBar.Message = "Something went wrong. " + ex.Message; ErrorBar.IsOpen = true; }
+    }
+
+    private async Task OnDropCore(object sender, DragEventArgs e)
+    {
         if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        foreach (var item in await e.DataView.GetStorageItemsAsync())
+        // the deferral keeps the drag data alive only while the items are read; uploads continue after it is released
+        var deferral = e.GetDeferral();
+        IReadOnlyList<IStorageItem> items;
+        try { items = await e.DataView.GetStorageItemsAsync(); }
+        finally { deferral.Complete(); }
+        foreach (var item in items)
             if (item is StorageFile f) await AddFileAsync(f);
     }
 
@@ -233,12 +256,24 @@ public sealed partial class ComposeWindow : Window
 
     private async void OnRemoveAttachment(object sender, RoutedEventArgs e)
     {
+        try { await OnRemoveAttachmentCore(sender, e); }
+        catch (Exception ex) { ErrorBar.Message = "Something went wrong. " + ex.Message; ErrorBar.IsOpen = true; }
+    }
+
+    private async Task OnRemoveAttachmentCore(object sender, RoutedEventArgs e)
+    {
         if (((FrameworkElement)sender).Tag is AttachmentVm a) await _vm.RemoveAttachmentAsync(a);
     }
 
     // ---- send and discard ----
 
     private async void OnSend(object sender, RoutedEventArgs e)
+    {
+        try { await OnSendCore(sender, e); }
+        catch (Exception ex) { ErrorBar.Message = "Something went wrong. " + ex.Message; ErrorBar.IsOpen = true; }
+    }
+
+    private async Task OnSendCore(object sender, RoutedEventArgs e)
     {
         Capture();
         if (await _vm.SendAsync())
@@ -250,6 +285,12 @@ public sealed partial class ComposeWindow : Window
     }
 
     private async void OnDiscard(object sender, RoutedEventArgs e)
+    {
+        try { await OnDiscardCore(sender, e); }
+        catch (Exception ex) { ErrorBar.Message = "Something went wrong. " + ex.Message; ErrorBar.IsOpen = true; }
+    }
+
+    private async Task OnDiscardCore(object sender, RoutedEventArgs e)
     {
         _done = true;
         await _vm.DiscardAsync();

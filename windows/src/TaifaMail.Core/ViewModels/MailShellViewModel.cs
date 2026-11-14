@@ -96,9 +96,10 @@ public sealed partial class MailShellViewModel : ObservableObject
     {
         try
         {
+            var gen = _cache?.Generation;
             var folders = await _api.FoldersAsync(ct);
             Offline = false;
-            if (_cache is not null) _ = Task.Run(() => _cache.SaveFolders(_api.MailboxId, folders));
+            if (_cache is not null) _ = Task.Run(() => _cache.SaveFolders(_api.MailboxId, folders, gen));
             ReplaceFolders(folders);
         }
         catch (ApiTransportError) { Offline = true; }
@@ -156,10 +157,11 @@ public sealed partial class MailShellViewModel : ObservableObject
         Error = null;
         try
         {
+            var gen = _cache?.Generation;
             var (items, total) = await FetchPageAsync(folder.Path, 0, cts.Token);
             if (cts.IsCancellationRequested) return;
             Offline = false;
-            if (_cache is not null) _ = Task.Run(() => _cache.SaveThreads(_api.MailboxId, folder.Path, items, total));
+            if (_cache is not null) _ = Task.Run(() => _cache.SaveThreads(_api.MailboxId, folder.Path, items, total, generation: gen));
             ShowThreads(items, total, folder.Path);
             await ResolveAvatarsAsync(Threads, cts.Token);
         }
@@ -223,6 +225,7 @@ public sealed partial class MailShellViewModel : ObservableObject
         if (SelectedFolder is not { } folder || Searching) return;
         try
         {
+            var gen = _cache?.Generation;
             var (fresh, total) = await FetchPageAsync(folder.Path, 0, ct);
             if (SelectedFolder?.Path != folder.Path || Searching) return;
             Offline = false;
@@ -240,12 +243,24 @@ public sealed partial class MailShellViewModel : ObservableObject
                     Threads.Insert(Math.Min(i, Threads.Count), r);
                     added.Add(r);
                 }
-                else if (existing.Uid != it.Latest.Uid && !ReferenceEquals(existing, SelectedThread))
+                else if (existing.Uid != it.Latest.Uid)
                 {
+                    // a thread with a new message moves to its new position
                     var idx = Threads.IndexOf(existing);
-                    var r = Row(it, outgoing, folder.Path);
-                    Threads[idx] = r;
-                    added.Add(r);
+                    var target = Math.Min(i, Threads.Count - 1);
+                    if (ReferenceEquals(existing, SelectedThread))
+                    {
+                        // the open row keeps its identity (selection, reader): move it, refresh its state
+                        if (idx != target) Threads.Move(idx, target);
+                        existing.Apply(it);
+                    }
+                    else
+                    {
+                        Threads.RemoveAt(idx);
+                        var r = Row(it, outgoing, folder.Path);
+                        Threads.Insert(Math.Min(i, Threads.Count), r);
+                        added.Add(r);
+                    }
                 }
                 else existing.Apply(it);
             }
@@ -254,7 +269,7 @@ public sealed partial class MailShellViewModel : ObservableObject
                 Threads.Remove(gone);
             IsEmpty = Threads.Count == 0;
             OnPropertyChanged(nameof(HasMore));
-            if (_cache is not null) { var snapshot = Threads.Take(100).Select(t => t.Model).ToList(); _ = Task.Run(() => _cache.SaveThreads(_api.MailboxId, folder.Path, snapshot, total)); }
+            if (_cache is not null) { var snapshot = Threads.Take(100).Select(t => t.Model).ToList(); _ = Task.Run(() => _cache.SaveThreads(_api.MailboxId, folder.Path, snapshot, total, generation: gen)); }
             await ResolveAvatarsAsync(added, ct);
         }
         catch (OperationCanceledException) { }
@@ -364,6 +379,7 @@ public sealed partial class MailShellViewModel : ObservableObject
         OpenMessages.Clear();
         OpenError = null;
         OpenLoading = true;
+        var cacheGen = _cache?.Generation;
         Task? mark = null;
         if (row.Unread)
         {
@@ -375,7 +391,7 @@ public sealed partial class MailShellViewModel : ObservableObject
         {
             var window = await _api.ConversationAsync(row.Uid, row.Folder, 20, null, cts.Token);
             if (cts.IsCancellationRequested) return;
-            if (_cache is not null) _ = Task.Run(() => _cache.SaveConversation(_api.MailboxId, row.Folder, row.Uid, window));
+            if (_cache is not null) _ = Task.Run(() => _cache.SaveConversation(_api.MailboxId, row.Folder, row.Uid, window, generation: cacheGen));
             ShowWindow(window);
             await ResolveCardAvatarsAsync(OpenMessages.ToList(), cts.Token);
         }

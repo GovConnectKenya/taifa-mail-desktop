@@ -15,6 +15,9 @@ public sealed class OfflineCache : IDisposable
     private SqliteConnection _db = null!;
     private readonly object _gate = new();
     private readonly string _path;
+    private long _generation;
+    /// <summary>Bumped by <see cref="Wipe"/>. A save that began before a wipe passes the old value and is dropped.</summary>
+    public long Generation => Interlocked.Read(ref _generation);
     private readonly ICacheProtector? _protector;
 
     public OfflineCache(string path, ICacheProtector? protector = null)
@@ -33,6 +36,18 @@ public sealed class OfflineCache : IDisposable
         if (_protector is null) return null;
         try { return System.Text.Encoding.UTF8.GetString(_protector.Unprotect(Convert.FromBase64String(stored[4..]))); }
         catch (Exception) { return null; }
+    }
+
+    /// <summary>Opens the cache; a corrupt or foreign file is deleted and recreated instead of crashing the app.</summary>
+    public static OfflineCache OpenOrRecreate(string path, ICacheProtector? protector = null)
+    {
+        try { return new OfflineCache(path, protector); }
+        catch (Exception)
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach (var f in new[] { path, path + "-wal", path + "-shm" }) { try { if (File.Exists(f)) File.Delete(f); } catch (IOException) { } }
+            return new OfflineCache(path, protector);
+        }
     }
 
     private void Open()
@@ -54,10 +69,11 @@ public sealed class OfflineCache : IDisposable
         c.ExecuteNonQuery();
     }
 
-    public void SaveFolders(string mailbox, IReadOnlyList<ApiFolder> folders)
+    public void SaveFolders(string mailbox, IReadOnlyList<ApiFolder> folders, long? generation = null)
     {
         lock (_gate)
         {
+            if (generation is { } g0 && g0 != Generation) return;
             using var c = _db.CreateCommand();
             c.CommandText = "INSERT OR REPLACE INTO folders(mailbox,json,saved_at) VALUES($m,$j,$t)";
             c.Parameters.AddWithValue("$m", mailbox);
@@ -79,10 +95,11 @@ public sealed class OfflineCache : IDisposable
     }
 
     /// <summary>Replaces the cached first page of a folder (kept small: only what the next cold start paints).</summary>
-    public void SaveThreads(string mailbox, string folder, IReadOnlyList<ApiConversationSummary> items, int total, int keep = 100)
+    public void SaveThreads(string mailbox, string folder, IReadOnlyList<ApiConversationSummary> items, int total, int keep = 100, long? generation = null)
     {
         lock (_gate)
         {
+            if (generation is { } g1 && g1 != Generation) return;
             using var tx = _db.BeginTransaction();
             using (var del = _db.CreateCommand())
             {
@@ -142,10 +159,11 @@ public sealed class OfflineCache : IDisposable
     }
 
     /// <summary>Stores an opened conversation so it can be read offline. Keeps the newest few hundred.</summary>
-    public void SaveConversation(string mailbox, string folder, long uid, ApiConversationWindow window, int keep = 300)
+    public void SaveConversation(string mailbox, string folder, long uid, ApiConversationWindow window, int keep = 300, long? generation = null)
     {
         lock (_gate)
         {
+            if (generation is { } g2 && g2 != Generation) return;
             using (var c = _db.CreateCommand())
             {
                 c.CommandText = "INSERT OR REPLACE INTO bodies(mailbox,folder,uid,json,saved_at) VALUES($m,$f,$u,$j,$t)";
@@ -188,6 +206,7 @@ public sealed class OfflineCache : IDisposable
     {
         lock (_gate)
         {
+            Interlocked.Increment(ref _generation);
             if (_path == ":memory:") { Exec("DELETE FROM folders; DELETE FROM threads; DELETE FROM meta; DELETE FROM bodies;"); return; }
             _db.Dispose();
             SqliteConnection.ClearAllPools();

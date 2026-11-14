@@ -15,6 +15,21 @@ public sealed class LocalSettings
     public string? RememberedAddress { get; set; }
     public bool ShowNotificationPreview { get; set; } = true;
 
+    /// <summary>Records a successful sign in. The address is remembered for the next sign in only when the user asked for it.</summary>
+    public void ApplySignIn(string mailboxId, string address, bool remember)
+    {
+        LastMailboxId = mailboxId;
+        LastAddress = address;
+        RememberedAddress = remember ? address : null;
+    }
+
+    /// <summary>Sign out: the session data goes; only an explicitly remembered address stays.</summary>
+    public void ClearSession()
+    {
+        LastMailboxId = null;
+        LastAddress = null;
+    }
+
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
     public static LocalSettings Load(string path)

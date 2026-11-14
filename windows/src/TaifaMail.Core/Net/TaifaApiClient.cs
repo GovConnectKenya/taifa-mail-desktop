@@ -167,6 +167,17 @@ public sealed class TaifaApiClient : IDisposable
             req.Headers.TryAddWithoutValidation("X-CSRF-Token", await EnsureCsrfAsync(ct).ConfigureAwait(false));
             using var res = await SendRawAsync(req, ct).ConfigureAwait(false);
             TrackCsrf();
+            if (res.StatusCode == HttpStatusCode.Forbidden && ErrorCode(await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false)) == "csrf_invalid")
+            {
+                // a stale CSRF token is not a dead session: fetch a fresh one and retry the refresh once
+                _csrf = "";
+                using var retry = new HttpRequestMessage(HttpMethod.Post, new Uri(BaseUri, "auth/mailbox/refresh"));
+                retry.Headers.Accept.ParseAdd("application/json");
+                retry.Headers.TryAddWithoutValidation("X-CSRF-Token", await EnsureCsrfAsync(ct, fresh: true).ConfigureAwait(false));
+                using var second = await SendRawAsync(retry, ct).ConfigureAwait(false);
+                TrackCsrf();
+                return Classify(second.StatusCode);
+            }
             return Classify(res.StatusCode);
         }
         catch (ApiTransportError) { return RefreshOutcome.Transient; }
@@ -231,6 +242,22 @@ public sealed class TaifaApiClient : IDisposable
             return res.IsSuccessStatusCode ? await res.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false) : null;
         }
         catch (ApiTransportError) { return null; }
+    }
+
+    public sealed record ImageFetch(byte[]? Bytes, int Status, int? RetryAfterSeconds);
+
+    /// <summary>Fetches a proxied image with the session cookies and reports the status and any Retry-After.</summary>
+    public async Task<ImageFetch> FetchImageAsync(string pathOrUrl, CancellationToken ct = default)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, AbsoluteUrl(pathOrUrl));
+            using var res = await SendRawAsync(req, ct).ConfigureAwait(false);
+            int? retry = res.Headers.RetryAfter?.Delta is { } d ? (int)Math.Ceiling(d.TotalSeconds) : null;
+            var bytes = res.IsSuccessStatusCode ? await res.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false) : null;
+            return new ImageFetch(bytes, (int)res.StatusCode, retry);
+        }
+        catch (ApiTransportError) { return new ImageFetch(null, 0, null); }
     }
 
     private static T Decode<T>(string text)

@@ -182,10 +182,11 @@ public sealed partial class ComposeViewModel : ObservableObject
             }
             if (vm.State == AttachmentState.Scanning) { vm.State = AttachmentState.Failed; vm.Error = "The virus scan did not finish. Remove the file and try again."; }
         }
-        catch (Exception e) when (e is ApiRequestError or ApiTransportError)
+        catch (Exception e)
         {
+            // unreadable or cloud-only files (OneDrive placeholders), cancelled uploads and API errors all end as a failed chip
             vm.State = AttachmentState.Failed;
-            vm.Error = e.Message;
+            vm.Error = e is ApiRequestError or ApiTransportError ? e.Message : "This file could not be read or uploaded.";
         }
         OnPropertyChanged(nameof(CanSend));
         Touch();
@@ -331,6 +332,8 @@ public sealed partial class ComposeViewModel : ObservableObject
             await _draftGate.WaitAsync(ct).ConfigureAwait(false);
             _draftGate.Release();
             var result = await _api.SendAsync(Payload(draft: false), ct);
+            // an empty reply to a request that was sent is as uncertain as a timeout
+            if (result is null) throw new ApiRequestError("empty reply", 502, "bad_reply");
             var skipped = (result.Suppressed ?? new()).Concat(result.Refused ?? new()).ToList();
             _closed = true;
             await DeleteStoredDraftAsync();
@@ -340,6 +343,13 @@ public sealed partial class ComposeViewModel : ObservableObject
         catch (ApiTransportError)
         {
             // a timeout may have happened after the server accepted the message: never retry on its own
+            SendUnconfirmed = true;
+            Error = UnconfirmedSend;
+            return false;
+        }
+        catch (ApiRequestError e) when (e.Status >= 500 || e.Code == "bad_reply")
+        {
+            // the server may have accepted the message before it failed: treat it exactly like a timeout
             SendUnconfirmed = true;
             Error = UnconfirmedSend;
             return false;

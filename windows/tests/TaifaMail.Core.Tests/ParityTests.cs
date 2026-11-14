@@ -282,7 +282,7 @@ public class ClientRobustnessTests
         using var api = Client(h);
         var mail = new MailApi(api, "m");
         await Task.WhenAll(mail.FoldersAsync(), mail.FoldersAsync(), mail.FoldersAsync());
-        Assert.True(refreshes <= 2);
+        Assert.Equal(1, refreshes);
     }
 
     [Fact] public async Task Csrf_retry_fetches_a_fresh_token_from_the_server_even_with_a_cookie()
@@ -529,10 +529,18 @@ public class SecurityTests
         finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); foreach (var f in new[] { path, path + "-wal", path + "-shm" }) try { File.Delete(f); } catch (IOException) { } }
     }
 
-    [Fact] public void Remembered_address_and_notification_preview_are_local_settings()
+    [Fact] public void Remembered_address_survives_sign_out_only_when_ticked()
     {
         var s = new LocalSettings();
+        s.ApplySignIn("m", "a@x.test", remember: false);
         Assert.Null(s.RememberedAddress);
+        s.ClearSession();
+        Assert.Null(s.LastAddress);
+        Assert.Null(s.LastMailboxId);
+        s.ApplySignIn("m", "a@x.test", remember: true);
+        s.ClearSession();
+        Assert.Equal("a@x.test", s.RememberedAddress);
+        Assert.Null(s.LastAddress);
         Assert.True(s.ShowNotificationPreview);
     }
 }

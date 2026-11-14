@@ -8,8 +8,10 @@ public static class AttachmentSafety
 {
     private static readonly HashSet<string> RiskyExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".exe", ".msi", ".msp", ".bat", ".cmd", ".com", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".scr", ".lnk", ".url", ".pif",
-        ".iso", ".img", ".vhd", ".vhdx", ".one", ".docm", ".xlsm", ".pptm", ".dotm", ".xlam", ".jar", ".reg", ".cpl", ".dll", ".sys", ".msc", ".gadget", ".appx", ".msix", ".appinstaller",
+        ".exe", ".msi", ".msp", ".mst", ".bat", ".cmd", ".com", ".ps1", ".psm1", ".ps1xml", ".psc1", ".vbs", ".vbe", ".vb", ".js", ".jse", ".wsf", ".wsh", ".ws", ".wsc", ".sct", ".hta", ".scr", ".lnk", ".url", ".website", ".pif",
+        ".iso", ".img", ".vhd", ".vhdx", ".one", ".docm", ".xlsm", ".pptm", ".dotm", ".xlam", ".xll", ".jar", ".reg", ".cpl", ".dll", ".sys", ".msc", ".gadget", ".inf", ".scf", ".cab", ".diagcab", ".chm",
+        ".html", ".htm", ".xhtml", ".svg", ".mht", ".mhtml", ".application", ".settingcontent-ms", ".library-ms", ".search-ms",
+        ".appx", ".appxbundle", ".msix", ".msixbundle", ".appinstaller",
     };
 
     private static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
@@ -39,7 +41,24 @@ public static class AttachmentSafety
         if (s.Length == 0) return "attachment";
         var stem = Path.GetFileNameWithoutExtension(s);
         if (ReservedNames.Contains(stem.TrimEnd('.', ' '))) s = "_" + s;
-        return s.Length > 120 ? s[..120] : s;
+        return Truncate(s, 120);
+    }
+
+    /// <summary>Shortens the stem, never the extension, and never splits a surrogate pair.</summary>
+    public static string Truncate(string s, int max)
+    {
+        if (s.Length <= max) return s;
+        var ext = Path.GetExtension(s);
+        if (ext.Length > 16) ext = ext[..16];
+        var keep = Math.Max(1, max - ext.Length);
+        var stem = Path.GetFileNameWithoutExtension(s);
+        if (keep < stem.Length)
+        {
+            var cut = keep;
+            if (char.IsHighSurrogate(stem[cut - 1])) cut--;
+            stem = stem[..Math.Max(1, cut)];
+        }
+        return stem + ext;
     }
 
     /// <summary>Contents of the Zone.Identifier stream: ZoneId 3 (Internet) with the origin as host and referrer.</summary>

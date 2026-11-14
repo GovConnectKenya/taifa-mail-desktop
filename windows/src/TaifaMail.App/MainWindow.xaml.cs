@@ -34,11 +34,7 @@ public sealed partial class MainWindow : Window
         var scale = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
         if (scale <= 0) scale = 1;
         AppWindow.Resize(new SizeInt32((int)(DefaultWidthDip * scale), (int)(DefaultHeightDip * scale)));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.PreferredMinimumWidth = (int)(MinWidthDip * scale);
-            presenter.PreferredMinimumHeight = (int)(MinHeightDip * scale);
-        }
+        ApplyMinimumSize(scale);
         AppWindow.Title = "Taifa Mail";
         var ico = Path.Combine(AppContext.BaseDirectory, "Assets", "taifa.ico");
         if (File.Exists(ico)) AppWindow.SetIcon(ico);
@@ -48,7 +44,22 @@ public sealed partial class MainWindow : Window
         bar.PreferredHeightOption = TitleBarHeightOption.Tall;
         Root.ActualThemeChanged += (_, _) => ApplyCaptionColors();
         Root.SizeChanged += (_, _) => UpdateChrome();
+        Root.Loaded += (_, _) =>
+        {
+            if (Root.XamlRoot is { } xr) xr.Changed += (_, _) => ApplyMinimumSize(xr.RasterizationScale);
+            ApplyMinimumSize(Root.XamlRoot?.RasterizationScale ?? 1);
+        };
         ApplyCaptionColors();
+    }
+
+    /// <summary>The minimum size is in DIP: reapplied whenever the monitor scale changes.</summary>
+    private void ApplyMinimumSize(double scale)
+    {
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.PreferredMinimumWidth = (int)(MinWidthDip * scale);
+            presenter.PreferredMinimumHeight = (int)(MinHeightDip * scale);
+        }
     }
 
     public void ApplyTheme(string theme) =>
