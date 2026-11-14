@@ -1,0 +1,243 @@
+using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
+using TaifaMail.Core.Avatars;
+using TaifaMail.Core.Cache;
+using TaifaMail.Core.Models;
+using TaifaMail.Core.Net;
+
+namespace TaifaMail.Core.ViewModels;
+
+/// <summary>
+/// Folders, thread list and the open conversation. Everything that touches the network is async and
+/// the UI only sees collections and flags. Reads are optimistic and roll back on failure.
+/// </summary>
+public sealed partial class MailShellViewModel : ObservableObject
+{
+    public const int PageSize = 50;
+
+    private readonly IMailApi _api;
+    private readonly OfflineCache? _cache;
+    private readonly Dictionary<string, AvatarBatchEntry> _avatars = new();
+    private CancellationTokenSource? _openCts;
+    private CancellationTokenSource? _listCts;
+
+    public MailShellViewModel(IMailApi api, string apiBase, OfflineCache? cache = null)
+    {
+        _api = api;
+        ApiBase = apiBase;
+        _cache = cache;
+    }
+
+    public string ApiBase { get; }
+    public ObservableCollection<ApiFolder> Folders { get; } = new();
+    public ObservableCollection<ThreadRow> Threads { get; } = new();
+    public ObservableCollection<ApiMailDetail> OpenMessages { get; } = new();
+
+    [ObservableProperty] private ApiFolder? _selectedFolder;
+    [ObservableProperty] private ThreadRow? _selectedThread;
+    [ObservableProperty] private bool _loading;
+    [ObservableProperty] private bool _loadingMore;
+    [ObservableProperty] private bool _offline;
+    [ObservableProperty] private string? _error;
+    [ObservableProperty] private int _total;
+    [ObservableProperty] private bool _isEmpty;
+    [ObservableProperty] private bool _openLoading;
+    [ObservableProperty] private string? _openError;
+
+    public bool HasMore => Threads.Count < Total;
+    public int TotalUnread => Folders.FirstOrDefault(f => string.Equals(f.SpecialUse, "\\Inbox", StringComparison.OrdinalIgnoreCase) || f.Path == "INBOX")?.Unseen ?? 0;
+
+    /// <summary>Paints cached folders and the cached first page immediately, then refreshes from the network.</summary>
+    public async Task StartAsync(CancellationToken ct = default)
+    {
+        if (_cache?.LoadFolders(_api.MailboxId) is { Count: > 0 } cached)
+        {
+            ReplaceFolders(cached);
+            SelectedFolder ??= Folders.FirstOrDefault(f => f.Path == "INBOX") ?? Folders.First();
+            if (_cache.LoadThreads(_api.MailboxId, SelectedFolder!.Path) is { } t) ShowThreads(t.Items, t.Total, SelectedFolder.Path);
+        }
+        await RefreshFoldersAsync(ct);
+        SelectedFolder ??= Folders.FirstOrDefault(f => f.Path == "INBOX") ?? Folders.FirstOrDefault();
+        if (SelectedFolder is not null) await LoadFolderAsync(SelectedFolder, ct);
+    }
+
+    public async Task RefreshFoldersAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var folders = await _api.FoldersAsync(ct);
+            Offline = false;
+            _cache?.SaveFolders(_api.MailboxId, folders);
+            ReplaceFolders(folders);
+        }
+        catch (ApiTransportError) { Offline = true; }
+        catch (ApiRequestError e) { Error = e.Message; }
+    }
+
+    private void ReplaceFolders(IReadOnlyList<ApiFolder> folders)
+    {
+        var selectedPath = SelectedFolder?.Path;
+        Folders.Clear();
+        foreach (var f in folders.OrderBy(FolderOrder).ThenBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase)) Folders.Add(f);
+        if (selectedPath is not null) SelectedFolder = Folders.FirstOrDefault(f => f.Path == selectedPath);
+        OnPropertyChanged(nameof(TotalUnread));
+    }
+
+    private static int FolderOrder(ApiFolder f)
+    {
+        var key = (f.SpecialUse ?? f.Path).ToLowerInvariant();
+        if (f.Path == "INBOX" || key.Contains("inbox")) return 0;
+        if (key.Contains("draft")) return 1;
+        if (key.Contains("sent")) return 2;
+        if (key.Contains("archive")) return 3;
+        if (key.Contains("junk") || key.Contains("spam")) return 4;
+        if (key.Contains("trash") || key.Contains("deleted")) return 5;
+        return 6;
+    }
+
+    public async Task LoadFolderAsync(ApiFolder folder, CancellationToken ct = default)
+    {
+        _listCts?.Cancel();
+        var cts = _listCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        SelectedFolder = folder;
+        Loading = true;
+        Error = null;
+        try
+        {
+            var page = await _api.ConversationsAsync(folder.Path, PageSize, 0, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            Offline = false;
+            _cache?.SaveThreads(_api.MailboxId, folder.Path, page.Items, page.Total);
+            ShowThreads(page.Items, page.Total, folder.Path);
+            await ResolveAvatarsAsync(Threads, cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (ApiTransportError) { Offline = true; }
+        catch (ApiRequestError e) { Error = e.Message; }
+        finally { if (_listCts == cts) Loading = false; }
+    }
+
+    /// <summary>Incremental loading: fetches the next page and appends it. Safe to call repeatedly from the scroll handler.</summary>
+    public async Task LoadMoreAsync(CancellationToken ct = default)
+    {
+        if (LoadingMore || Loading || !HasMore || SelectedFolder is null) return;
+        LoadingMore = true;
+        var folder = SelectedFolder;
+        try
+        {
+            var page = await _api.ConversationsAsync(folder.Path, PageSize, Threads.Count, ct);
+            if (SelectedFolder?.Path != folder.Path) return;
+            var outgoing = AvatarRule.IsOutgoingFolder(folder.Path, Folders);
+            var added = new List<ThreadRow>();
+            var seen = Threads.Select(t => t.ThreadKey).ToHashSet();
+            foreach (var item in page.Items.Where(i => seen.Add(i.ThreadKey))) { var r = new ThreadRow(item, outgoing); Threads.Add(r); added.Add(r); }
+            Total = page.Total;
+            OnPropertyChanged(nameof(HasMore));
+            await ResolveAvatarsAsync(added, ct);
+        }
+        catch (OperationCanceledException) { }
+        catch (ApiTransportError) { Offline = true; }
+        catch (ApiRequestError e) { Error = e.Message; }
+        finally { LoadingMore = false; }
+    }
+
+    private void ShowThreads(IReadOnlyList<ApiConversationSummary> items, int total, string folderPath)
+    {
+        var outgoing = AvatarRule.IsOutgoingFolder(folderPath, Folders);
+        Threads.Clear();
+        foreach (var it in items) Threads.Add(new ThreadRow(it, outgoing));
+        Total = total;
+        IsEmpty = Threads.Count == 0;
+        OnPropertyChanged(nameof(HasMore));
+        ApplyAvatars(Threads);
+    }
+
+    private async Task ResolveAvatarsAsync(IEnumerable<ThreadRow> rows, CancellationToken ct)
+    {
+        var need = rows.Select(r => r.AvatarAddress).Where(a => a.Length > 0 && !_avatars.ContainsKey(a)).Distinct().Take(100).ToList();
+        if (need.Count > 0)
+        {
+            try
+            {
+                var res = await _api.AvatarsAsync(need, ct);
+                foreach (var (k, v) in res.Results) _avatars[AvatarRule.NormalizeAddress(k)] = v;
+                foreach (var a in need) _avatars.TryAdd(a, new AvatarBatchEntry(null, null, null, null));
+            }
+            catch (ApiRequestError) { }
+            catch (ApiTransportError) { }
+        }
+        ApplyAvatars(rows);
+    }
+
+    private void ApplyAvatars(IEnumerable<ThreadRow> rows)
+    {
+        var outgoing = SelectedFolder is not null && AvatarRule.IsOutgoingFolder(SelectedFolder.Path, Folders);
+        foreach (var r in rows)
+        {
+            _avatars.TryGetValue(r.AvatarAddress, out var entry);
+            r.Avatar = AvatarRule.Decide(r.AvatarAddress, r.DisplayName, entry, r.Auth, outgoing ? AvatarTrust.Open : AvatarTrust.Gated, ApiBase);
+        }
+    }
+
+    /// <summary>Opens a thread and marks it read optimistically: the row clears at once, and is restored if the server refuses.</summary>
+    public async Task OpenAsync(ThreadRow row, CancellationToken ct = default)
+    {
+        _openCts?.Cancel();
+        var cts = _openCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        SelectedThread = row;
+        OpenMessages.Clear();
+        OpenError = null;
+        OpenLoading = true;
+        var wasUnread = row.Unread;
+        var folder = SelectedFolder;
+        var previousUnseen = folder?.Unseen ?? 0;
+        if (wasUnread) { row.Unread = false; AdjustUnseen(-1); }
+        try
+        {
+            var window = await _api.ConversationAsync(row.Uid, row.Folder, 20, null, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            foreach (var m in window.Messages.OrderBy(m => m.Date, StringComparer.Ordinal)) OpenMessages.Add(m);
+            if (wasUnread)
+            {
+                try
+                {
+                    var result = await _api.MarkThreadReadAsync(row.Uid, row.Folder, cts.Token);
+                    if (!result.Complete) throw new ApiRequestError("incomplete", 0);
+                }
+                catch (Exception e) when (e is ApiRequestError or ApiTransportError)
+                {
+                    row.Unread = true;
+                    AdjustUnseen(+1);
+                    OpenError = "Could not mark as read";
+                }
+            }
+        }
+        catch (OperationCanceledException) { if (wasUnread) { row.Unread = true; AdjustUnseen(+1); } }
+        catch (Exception e) when (e is ApiRequestError or ApiTransportError)
+        {
+            if (wasUnread) { row.Unread = true; AdjustUnseen(+1); }
+            OpenError = e is ApiTransportError ? "You are offline. This conversation is not cached yet." : e.Message;
+            if (e is ApiTransportError) Offline = true;
+        }
+        finally { if (_openCts == cts) OpenLoading = false; }
+        _ = previousUnseen;
+    }
+
+    private void AdjustUnseen(int delta)
+    {
+        if (SelectedFolder is null) return;
+        var i = Folders.IndexOf(SelectedFolder);
+        if (i < 0) return;
+        var f = Folders[i];
+        var updated = f with { Unseen = Math.Max(0, f.Unseen + delta) };
+        Folders[i] = updated;
+        SelectedFolder = updated;
+        OnPropertyChanged(nameof(TotalUnread));
+    }
+
+    public async Task ReconcileAsync(CancellationToken ct = default)
+    {
+        await RefreshFoldersAsync(ct);
+        if (SelectedFolder is { } f) await LoadFolderAsync(f, ct);
+    }
+}

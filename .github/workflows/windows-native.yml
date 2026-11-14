@@ -1,0 +1,42 @@
+name: Windows native
+
+# Build and test of the native WinUI 3 client in windows/. This is a branch
+# check, never a release: nothing is signed, tagged or published, and the
+# artifacts are unsigned builds for inspection only.
+
+on:
+  push:
+    branches: [feat/native-windows]
+    paths: ['windows/**', 'docs/native/**', '.github/workflows/windows-native.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-native-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+    working-directory: windows
+
+jobs:
+  core:
+    name: Core library tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore
+        run: dotnet restore src/TaifaMail.Core/TaifaMail.Core.csproj; dotnet restore tests/TaifaMail.Core.Tests/TaifaMail.Core.Tests.csproj
+      - name: Test
+        run: dotnet test tests/TaifaMail.Core.Tests -c Release --logger "trx;LogFileName=core.trx" --results-directory ../artifacts/test-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-test-results
+          path: windows/../artifacts/test-results
