@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       webmail_ref:
-        description: taifa-mail branch, tag or commit to bundle
+        description: taifa-mail branch, tag or commit to bundle (main, or a pinned sha)
         required: false
-        default: feat/webmail-desktop-build
+        default: main
 
 permissions:
   contents: read
@@ -62,6 +62,10 @@ jobs:
             exit 1
           fi
 
+      # A dispatch builds the ref it is given (default main). A push builds
+      # feat/webmail-desktop-build, which is taifa-mail main plus the three
+      # desktop build files, until those files are merged to main; then this
+      # fallback becomes 'main' too.
       - name: Check out the webmail (taifa-mail)
         uses: actions/checkout@v4
         with:
