@@ -46,10 +46,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The app's UI is the webmail, built from the PRIVATE taifa-mail repo and
+      # bundled into renderer/ (docs/BUNDLED_WEBMAIL.md). A release must never
+      # ship without it, so a missing token stops the run here, loudly.
+      - name: Require the taifa-mail read token
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.TAIFA_MAIL_READ_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error title=TAIFA_MAIL_READ_TOKEN missing::Add a read-only token for GovConnectKenya/taifa-mail as the TAIFA_MAIL_READ_TOKEN secret (see RELEASING.md). The app's UI is built from that private repo."
+            exit 1
+          fi
+
+      - name: Check out the webmail (taifa-mail, main)
+        uses: actions/checkout@v4
+        with:
+          repository: GovConnectKenya/taifa-mail
+          ref: main
+          token: ${{ secrets.TAIFA_MAIL_READ_TOKEN }}
+          path: taifa-mail
+
+      # Node 22: the webmail's Vite 8 needs 20.19 or later.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+
+      - name: Build the webmail desktop bundle into renderer/
+        run: node scripts/stage-webmail.mjs --build
+        env:
+          TAIFA_MAIL_DIR: taifa-mail
 
       # Cache the downloaded Electron binaries and electron-builder's tooling.
       # Keyed on the lockfile because that is what pins the Electron version.

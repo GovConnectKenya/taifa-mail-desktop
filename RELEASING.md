@@ -18,6 +18,13 @@ In the GitHub repo settings (Settings, Secrets and variables, Actions) add:
 - `APPLE_APP_SPECIFIC_PASSWORD`: an app-specific password for that Apple ID,
   generated at appleid.apple.com. Not the account password.
 - `APPLE_TEAM_ID`: the Apple Developer team ID.
+- `TAIFA_MAIL_READ_TOKEN`: a read-only token for the PRIVATE
+  `GovConnectKenya/taifa-mail` repo (a fine-grained personal access token with
+  Contents: Read on that one repo, or a GitHub App token). Since 0.2.0 the app's
+  UI is the webmail itself, built from that repo and bundled into renderer/
+  (see docs/BUNDLED_WEBMAIL.md), so every build checks it out. Without this
+  secret the release and branch builds stop at their first step with an error
+  saying so; they never package an app without its UI.
 
 `GITHUB_TOKEN` is provided automatically and is used to upload the installers.
 There is no `RELEASE_PUBLISH_SECRET`: that belonged to the website sync job,
