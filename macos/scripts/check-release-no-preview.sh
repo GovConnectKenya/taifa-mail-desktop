@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DD="${DD:-$(mktemp -d)}"
-xcodebuild -scheme TaifaMail -configuration Release -destination 'platform=macOS' -derivedDataPath "$DD" build >/dev/null
+xcodebuild -scheme TaifaMail -configuration Release -destination 'platform=macOS' -derivedDataPath "$DD" CODE_SIGNING_ALLOWED=NO build >/dev/null
 APP="$DD/Build/Products/Release/TaifaMail.app"
 status=0
 for f in "$APP"/Contents/MacOS/*; do

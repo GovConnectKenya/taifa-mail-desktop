@@ -35,11 +35,20 @@ final class StubService: MailService, @unchecked Sendable {
     var batchHandler: (BatchAction, [Int], String) async throws -> BatchResult = { _, u, _ in BatchResult(ok: true, requested: u.count, succeeded: u, failed: []) }
     var conversationsResult = ConversationList(folder: "INBOX", total: 0, limit: 50, offset: 0, items: [])
     var batches: [(BatchAction, [Int], String)] = []
+    var fileStatuses: [StoredFile] = []
+    var fileStatusCalls = 0
+    var saveDraftCalls = 0
+    var sendCalls = 0
+    var sendHandler: () async throws -> SendResult = { SendResult(ok: true, messageId: "x") }
+    var conversationsDelay: UInt64 = 0
 
     func folders() async throws -> [Folder] { Fixture.decode([Folder].self, "folders") }
     func folderCounts() async throws -> [FolderCount] { [] }
     func quota() async throws -> Quota? { nil }
-    func conversations(folder: String, offset: Int, limit: Int) async throws -> ConversationList { conversationsResult }
+    func conversations(folder: String, offset: Int, limit: Int) async throws -> ConversationList {
+        if conversationsDelay > 0 { try await Task.sleep(nanoseconds: conversationsDelay) }
+        return conversationsResult
+    }
     func messages(folder: String, offset: Int, limit: Int) async throws -> MessageList { MessageList(folder: folder, total: 0, limit: limit, offset: offset, items: []) }
     func search(query: String, folder: String, offset: Int, limit: Int) async throws -> MessageList { MessageList(folder: folder, total: 0, limit: limit, offset: offset, items: []) }
     func conversation(uid: Int, folder: String, before: Int?) async throws -> ConversationWindow { Fixture.decode(ConversationWindow.self, "conversation_window") }
@@ -51,11 +60,16 @@ final class StubService: MailService, @unchecked Sendable {
     func resolve(messageId: String, hint: String) async throws -> ResolvedMessage { ResolvedMessage(folder: hint, uid: 1) }
     func avatars(emails: [String]) async throws -> [String: AvatarEntry] { [:] }
     func attachment(uid: Int, folder: String, partId: String) async throws -> Data { Data() }
-    func send(_ payload: Endpoints.SendPayload) async throws -> SendResult { SendResult(ok: true, messageId: "x") }
-    func saveDraft(_ payload: Endpoints.SendPayload) async throws -> DraftResult { DraftResult(uid: 1, folder: "Drafts") }
-    func upload(filename: String, mime: String, data: Data) async throws -> StoredFile { StoredFile(id: "f", filename: filename, mime: mime, sizeBytes: data.count, status: "ready") }
+    func send(_ payload: Endpoints.SendPayload) async throws -> SendResult { sendCalls += 1; return try await sendHandler() }
+    func saveDraft(_ payload: Endpoints.SendPayload) async throws -> DraftResult { saveDraftCalls += 1; return DraftResult(uid: 1, folder: "Drafts") }
+    func upload(filename: String, mime: String, data: Data) async throws -> StoredFile { StoredFile(id: "f", filename: filename, mime: mime, sizeBytes: data.count, status: "ready", scanVerdict: nil) }
     func contacts(matching: String) async throws -> [Contact] { [] }
     func stageAttachments(uid: Int, folder: String) async throws -> [StagedAttachment] { [] }
+    func proxiedImage(_ url: String) async -> Data? { nil }
+    func fileStatus(_ id: String) async throws -> StoredFile {
+        fileStatusCalls += 1
+        return fileStatuses.isEmpty ? StoredFile(id: id, filename: "f", mime: nil, sizeBytes: 1, status: "ready", scanVerdict: nil) : fileStatuses.removeFirst()
+    }
     func signature() async throws -> MailBlock? { nil }
     func saveSignature(html: String, text: String, existing: MailBlock?) async throws {}
     func autoResponder() async throws -> AutoResponder { .empty }

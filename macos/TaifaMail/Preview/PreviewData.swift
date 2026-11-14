@@ -179,9 +179,9 @@ struct PreviewMailService: MailService {
         var out: [String: AvatarEntry] = [:]
         for (i, e) in emails.enumerated() {
             switch i % 4 {
-            case 0: out[e] = AvatarEntry(url: "/v1/avatars/mailbox/\(i).webp", name: nil, urlScope: nil, institution: nil)
-            case 1: out[e] = AvatarEntry(url: nil, name: nil, urlScope: nil, institution: InstitutionLogo(name: "Treasury (example)", logoUrl: "/fixtures/logo-\(i).png"))
-            case 2: out[e] = AvatarEntry(url: "/v1/avatars/mailbox/p\(i).webp", name: nil, urlScope: "platform", institution: nil)
+            case 0: out[e] = AvatarEntry(url: "/v1/avatars/mailbox/00000000-0000-4000-8000-\(String(format: "%012d", i)).webp", name: nil, urlScope: nil, institution: nil)
+            case 1: out[e] = AvatarEntry(url: nil, name: nil, urlScope: nil, institution: InstitutionLogo(name: "Treasury (example)", logoUrl: "/v1/organizations/00000000-0000-4000-8000-\(String(format: "%012d", 200 + i))/logo"))
+            case 2: out[e] = AvatarEntry(url: "/v1/avatars/user/00000000-0000-4000-8000-\(String(format: "%012d", 100 + i)).webp", name: nil, urlScope: "platform", institution: nil)
             default: out[e] = AvatarEntry(url: nil, name: nil, urlScope: nil, institution: nil)
             }
         }
@@ -199,6 +199,7 @@ struct PreviewMailService: MailService {
         PreviewFixtures.people.filter { ($0.name + $0.addr).lowercased().contains(matching.lowercased()) }.map { Contact(id: $0.addr, displayName: $0.name, emails: [ContactEmail(type: "work", value: $0.addr, primary: true)]) }
     }
     func stageAttachments(uid: Int, folder: String) async throws -> [StagedAttachment] { [] }
+    func proxiedImage(_ url: String) async -> Data? { nil }
     func fileStatus(_ id: String) async throws -> StoredFile { StoredFile(id: id, filename: "f", mime: nil, sizeBytes: nil, status: "ready", scanVerdict: nil) }
     func signature() async throws -> MailBlock? {
         MailBlock(id: "sig1", blockType: "signature", name: "Signature", html: "Wanjiku Kamau<br>Ministry of Health (example)", text: "Wanjiku Kamau\nMinistry of Health (example)", isDefault: true, scope: "mine")

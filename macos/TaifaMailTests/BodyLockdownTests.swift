@@ -49,11 +49,6 @@ final class BodyLockdownTests: XCTestCase {
         XCTAssertFalse(BodyLockdown.hasRemoteContent(#"<img src="data:image/png;base64,AAAA"><a href="https://x.example">l</a>"#))
     }
 
-    func testLinkCheckShowsTheRealHost() {
-        let c = BodyLockdown.linkCheck(URL(string: "https://Xn--e1afmkfd.example/path")!)
-        XCTAssertEqual(c.rawHost, "xn--e1afmkfd.example"); XCTAssertTrue(c.isUnicodeHost)
-    }
-
     /// The loaded page cannot run scripts: a script in the body must not execute.
     func testScriptInBodyDoesNotRun() async throws {
         let rules = await BodyLockdown.compileRules()

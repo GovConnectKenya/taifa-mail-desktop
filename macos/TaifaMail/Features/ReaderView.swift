@@ -5,7 +5,7 @@ import QuickLookUI
 struct ReaderView: View {
     var app: AppModel
     var store: MailStore
-    @State private var pendingLink: URL?
+    @State private var pendingLink: LinkAssessment?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,17 +21,11 @@ struct ReaderView: View {
             }
         }
         .background(Theme.bg)
-        .confirmationDialog(linkTitle, isPresented: Binding(get: { pendingLink != nil }, set: { if !$0 { pendingLink = nil } }), titleVisibility: .visible) {
-            Button("Open in Browser") { if let u = pendingLink { NSWorkspace.shared.open(u) }; pendingLink = nil }
+        .confirmationDialog(pendingLink?.title ?? "", isPresented: Binding(get: { pendingLink != nil }, set: { if !$0 { pendingLink = nil } }), titleVisibility: .visible) {
+            Button("Open in Browser") { if let a = pendingLink, LinkSafety.isAllowed(a.url) { NSWorkspace.shared.open(a.url) }; pendingLink = nil }
             Button("Cancel", role: .cancel) { pendingLink = nil }
-        } message: { Text(pendingLink?.absoluteString ?? "") }
+        } message: { Text(pendingLink?.message ?? "") }
         .task { await BodyRules.shared.prepare() }
-    }
-
-    private var linkTitle: String {
-        guard let u = pendingLink else { return "" }
-        let c = BodyLockdown.linkCheck(u)
-        return c.scheme == "mailto" ? "Write to \(c.host)?" : "Open link to \(c.host)?"
     }
 
     @ViewBuilder private func content(_ r: ReaderState) -> some View {
@@ -151,8 +145,18 @@ struct MessageRow: View {
     var app: AppModel
     var store: MailStore
     let first: Bool
-    var onLink: (URL) -> Void
+    var onLink: (LinkAssessment) -> Void
     @State private var bodyHeight: CGFloat = 40
+    @State private var proxiedHTML: String?
+
+    private var linksLocked: Bool { message.authWarning?.linksDisabled == true }
+    private var anyWarning: Bool { message.authWarning != nil || message.authLevel != nil || message.authWarned }
+
+    /// Every link goes through the scheme allowlist, then a visible host check. links_disabled makes links inert.
+    private func openLink(_ url: URL) {
+        guard !linksLocked, LinkSafety.isAllowed(url) else { return }
+        onLink(LinkSafety.assess(url, visibleText: message.html.flatMap { LinkSafety.visibleText(for: url, in: $0) }))
+    }
 
     private var expanded: Bool { reader.expanded.contains(message.id) }
     private var outgoing: Bool { store.isOutgoingFolder }
@@ -209,18 +213,25 @@ struct MessageRow: View {
     }
 
     @ViewBuilder private var bodyView: some View {
-        let allowImages = reader.imagesAllowed.contains(message.id) || store.trustedImageSenders.contains(message.fromAddr.lowercased())
+        // Trusted senders load images automatically only on clean mail; a warned message needs an explicit click.
+        let allowImages = reader.imagesAllowed.contains(message.id) || (!anyWarning && store.trustedImageSenders.contains(message.fromAddr.lowercased()))
         if !message.bodyLoaded {
             VStack(alignment: .leading, spacing: Space.s2) { ForEach(0..<4, id: \.self) { _ in SkeletonBar(height: 10) } }
         } else if let html = message.html, !html.isEmpty, BodyRules.shared.state == .ready {
             if BodyLockdown.hasRemoteContent(html) && !allowImages {
                 Banner(kind: .info, icon: .imageOff, message: "Remote images are blocked.", actionTitle: "Show images") { store.allowImages(for: message.id) }
             }
-            MessageBodyView(html: html, allowRemoteImages: allowImages, height: $bodyHeight, onLink: onLink)
+            // The web view never loads a remote image: allowed ones are fetched through the server proxy and inlined.
+            MessageBodyView(html: proxiedHTML ?? html, allowRemoteImages: false, linksLocked: linksLocked, height: $bodyHeight, onLink: openLink)
                 .frame(height: max(bodyHeight, 24))
+                .task(id: allowImages) {
+                    guard allowImages, BodyLockdown.hasRemoteContent(html) else { proxiedHTML = nil; return }
+                    let svc = store.service
+                    proxiedHTML = await ImageProxy.rewrite(html: html) { await svc.proxiedImage($0) }
+                }
                 .accessibilityIdentifier("message-body-web")
         } else {
-            PlainBody(text: message.text ?? Self.stripTags(message.html ?? ""), onLink: onLink)
+            PlainBody(text: message.text ?? Self.stripTags(message.html ?? ""), linksLocked: linksLocked, onLink: openLink)
         }
     }
 
@@ -231,12 +242,16 @@ struct MessageRow: View {
 
 struct PlainBody: View {
     let text: String
+    var linksLocked = false
     var onLink: (URL) -> Void
     var body: some View {
-        Text(Self.linked(text))
+        Text(linksLocked ? AttributedString(text) : Self.linked(text))
             .font(Fonts.sans(14)).foregroundStyle(Theme.text)
             .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            .environment(\.openURL, OpenURLAction { onLink($0); return .handled })
+            .environment(\.openURL, OpenURLAction { url in
+                if !linksLocked && LinkSafety.isAllowed(url) { onLink(url) }
+                return .handled
+            })
             .accessibilityIdentifier("message-body-text")
     }
 
@@ -245,7 +260,7 @@ struct PlainBody: View {
         guard let det = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return a }
         let ns = text as NSString
         for m in det.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-            guard let url = m.url, let r = Range(m.range, in: text), let ar = Range(r, in: a) else { continue }
+            guard let url = m.url, LinkSafety.isAllowed(url), let r = Range(m.range, in: text), let ar = Range(r, in: a) else { continue }
             a[ar].link = url
         }
         return a
@@ -274,7 +289,7 @@ struct AttachmentStrip: View {
                 HStack(spacing: Space.s2) {
                     Icon(.attachment, size: 16).foregroundStyle(Theme.text2)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(a.filename).taifa(.body).foregroundStyle(Theme.text).lineLimit(1)
+                        Text(AttachmentSafety.sanitizedName(a.filename)).taifa(.body).foregroundStyle(Theme.text).lineLimit(1)
                         Text(ByteCountFormatter.string(fromByteCount: Int64(a.size), countStyle: .file)).taifa(.caption).foregroundStyle(Theme.text3)
                     }
                     if busy == a.id { ProgressView().controlSize(.small) }
@@ -303,16 +318,28 @@ struct AttachmentStrip: View {
     }
 
     private func preview(_ a: Attachment) async {
+        // Programs and scripts are never opened or previewed from here; Save is offered with a warning.
+        if AttachmentSafety.isExecutable(a.filename) {
+            store.post("\"\(AttachmentSafety.sanitizedName(a.filename))\" is a program or script. It cannot be previewed; use Save if you are sure.", isError: true)
+            return
+        }
         if let url = await fetch(a) { AttachmentPreviewer.shared.show(url) }
     }
 
     private func save(_ a: Attachment) async {
+        if AttachmentSafety.isExecutable(a.filename) {
+            let alert = NSAlert(); alert.alertStyle = .warning
+            alert.messageText = "Save a program or script?"
+            alert.informativeText = "\"\(AttachmentSafety.sanitizedName(a.filename))\" can run code on your Mac. Only save it if you trust the sender."
+            alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
         guard let tmp = await fetch(a) else { return }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = a.filename
+        panel.nameFieldStringValue = AttachmentSafety.sanitizedName(a.filename)
         if panel.runModal() == .OK, let dest = panel.url {
             try? FileManager.default.removeItem(at: dest)
-            do { try FileManager.default.copyItem(at: tmp, to: dest) } catch { store.post("Could not save \(a.filename)", isError: true) }
+            do { try FileManager.default.copyItem(at: tmp, to: dest); AttachmentSafety.quarantine(dest) } catch { store.post("Could not save \(a.filename)", isError: true) }
         }
     }
 }
@@ -324,9 +351,9 @@ enum AttachmentFiles {
     static func write(_ data: Data, name: String) throws -> URL {
         let dir = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let safe = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
-        let url = dir.appendingPathComponent(safe.isEmpty ? "attachment" : safe)
+        let url = dir.appendingPathComponent(AttachmentSafety.sanitizedName(name))
         try data.write(to: url, options: .atomic)
+        AttachmentSafety.quarantine(url)
         return url
     }
     /// Downloaded attachments are temporary: removed at launch and on sign out.

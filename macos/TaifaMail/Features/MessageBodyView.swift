@@ -10,6 +10,7 @@ final class PassthroughWebView: WKWebView {
 struct MessageBodyView: NSViewRepresentable {
     let html: String
     let allowRemoteImages: Bool
+    var linksLocked = false
     @Binding var height: CGFloat
     var onLink: (URL) -> Void
 
@@ -49,7 +50,7 @@ struct MessageBodyView: NSViewRepresentable {
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      preferences: WKWebpagePreferences) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
             preferences.allowsContentJavaScript = false
-            switch BodyLockdown.decide(navigationType: navigationAction.navigationType, url: navigationAction.request.url) {
+            switch BodyLockdown.decide(navigationType: navigationAction.navigationType, url: navigationAction.request.url, linksLocked: parent.linksLocked) {
             case .allow: return (.allow, preferences)
             case .cancel: return (.cancel, preferences)
             case let .openExternally(url): parent.onLink(url); return (.cancel, preferences)
@@ -58,7 +59,7 @@ struct MessageBodyView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = navigationAction.request.url, ["http", "https", "mailto"].contains(url.scheme ?? "") { parent.onLink(url) }
+            if !parent.linksLocked, let url = navigationAction.request.url, LinkSafety.isAllowed(url) { parent.onLink(url) }
             return nil
         }
 

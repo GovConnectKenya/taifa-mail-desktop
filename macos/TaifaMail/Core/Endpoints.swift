@@ -91,6 +91,11 @@ enum Endpoints {
         APIRequest(path: box(mb) + "/messages/resolve", query: q([("message_id", messageId), ("folder", folder)]))
     }
 
+    static func imageProxyCapability(_ mb: String) -> APIRequest { APIRequest(path: box(mb) + "/image-proxy-capability") }
+    static func proxiedImage(_ mb: String, token: String, target: String) -> APIRequest {
+        APIRequest(path: box(mb) + "/images/\(token)", query: q([("u", ImageProxy.base64URL(target))]), timeout: 20)
+    }
+
     // MARK: Avatars
     static func avatars(_ mb: String, emails: [String]) -> APIRequest {
         APIRequest(method: "POST", path: box(mb) + "/avatars/batch", body: json(["emails": emails]))

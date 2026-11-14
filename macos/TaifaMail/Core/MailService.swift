@@ -23,6 +23,7 @@ protocol MailService: Sendable {
     func contacts(matching: String) async throws -> [Contact]
     func stageAttachments(uid: Int, folder: String) async throws -> [StagedAttachment]
     func fileStatus(_ id: String) async throws -> StoredFile
+    func proxiedImage(_ url: String) async -> Data?
     func signature() async throws -> MailBlock?
     func saveSignature(html: String, text: String, existing: MailBlock?) async throws
     func autoResponder() async throws -> AutoResponder
@@ -82,6 +83,12 @@ struct LiveMailService: MailService {
     func stageAttachments(uid: Int, folder: String) async throws -> [StagedAttachment] {
         let r: StagedAttachments = try await api.send(Endpoints.stageAttachments(mailboxId, uid: uid, folder: folder))
         return r.files
+    }
+
+    func proxiedImage(_ url: String) async -> Data? {
+        struct Cap: Decodable { var token: String }
+        guard let cap: Cap = try? await api.send(Endpoints.imageProxyCapability(mailboxId)) else { return nil }
+        return try? await api.rawData(Endpoints.proxiedImage(mailboxId, token: cap.token, target: url)).0
     }
 
     func fileStatus(_ id: String) async throws -> StoredFile {

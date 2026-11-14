@@ -45,6 +45,8 @@ struct NotificationsPane: View {
         PaneForm(title: "Notifications") {
             Toggle("Notify me about new mail in the Inbox", isOn: $prefs.notificationsEnabled)
             Toggle("Show unread count on the Dock icon", isOn: $prefs.badgeEnabled)
+            Toggle("Show sender and subject in alerts", isOn: $prefs.showSenderInAlerts)
+            Toggle("Include a preview of the message", isOn: $prefs.showSnippetInAlerts).disabled(!prefs.showSenderInAlerts)
             Text("Notifications arrive while Taifa Mail is running.").taifa(.meta).foregroundStyle(Theme.text3)
         }
     }

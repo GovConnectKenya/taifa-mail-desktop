@@ -12,6 +12,8 @@ final class AppPreferences {
     var density: Density { didSet { defaults.set(density.rawValue, forKey: "density") } }
     var notificationsEnabled: Bool { didSet { defaults.set(notificationsEnabled, forKey: "notifications") } }
     var badgeEnabled: Bool { didSet { defaults.set(badgeEnabled, forKey: "badge") } }
+    var showSenderInAlerts: Bool { didSet { defaults.set(showSenderInAlerts, forKey: "alertSender") } }
+    var showSnippetInAlerts: Bool { didSet { defaults.set(showSnippetInAlerts, forKey: "alertSnippet") } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -19,6 +21,8 @@ final class AppPreferences {
         density = Density(rawValue: defaults.string(forKey: "density") ?? "") ?? .comfortable
         notificationsEnabled = defaults.object(forKey: "notifications") as? Bool ?? true
         badgeEnabled = defaults.object(forKey: "badge") as? Bool ?? true
+        showSenderInAlerts = defaults.object(forKey: "alertSender") as? Bool ?? true
+        showSnippetInAlerts = defaults.object(forKey: "alertSnippet") as? Bool ?? false
     }
 }
 
@@ -55,9 +59,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let center = UNUserNotificationCenter.current()
         for e in fresh.prefix(3) {
             let c = UNMutableNotificationContent()
-            c.title = e.fromName.isEmpty ? e.fromAddr : e.fromName
-            c.subtitle = e.subject
-            c.body = e.snippet
+            let t = NotificationText.make(e, showSenderAndSubject: prefs.showSenderInAlerts, showSnippet: prefs.showSnippetInAlerts)
+            c.title = t.title; c.subtitle = t.subtitle; c.body = t.body
             c.sound = .default
             c.threadIdentifier = "inbox"
             c.userInfo = ["folder": e.folder, "uid": e.uid]

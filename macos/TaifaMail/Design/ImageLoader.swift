@@ -36,14 +36,14 @@ final class ImageLoader: @unchecked Sendable {
     func load(_ urlString: String, maxPixel: Int) async -> NSImage? {
         let k = key(urlString, maxPixel)
         if let hit = cache.object(forKey: k) { return hit }
+        guard AvatarURL.trusted(urlString, base: baseURL) != nil else { return nil }
         #if DEBUG
         if let data = fixtureData?(urlString), let img = Self.downsample(data, maxPixel: maxPixel) { cache.setObject(img, forKey: k); return img }
         #endif
         lock.lock()
         if let t = inflight[k as String] { lock.unlock(); return await t.value }
         let task = Task.detached(priority: .utility) { [session, baseURL] () -> NSImage? in
-            guard let url = URL(string: urlString, relativeTo: baseURL)?.absoluteURL,
-                  url.scheme == "https" || url.scheme == "http",
+            guard let url = AvatarURL.trusted(urlString, base: baseURL),
                   let (data, resp) = try? await session.data(from: url),
                   (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false else { return nil }
             return Self.downsample(data, maxPixel: maxPixel)

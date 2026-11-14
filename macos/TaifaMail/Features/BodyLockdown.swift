@@ -18,34 +18,19 @@ enum BodyLockdown {
         case openExternally(URL)
     }
 
-    static func decide(navigationType: WKNavigationType, url: URL?) -> NavigationDecision {
+    static func decide(navigationType: WKNavigationType, url: URL?, linksLocked: Bool = false) -> NavigationDecision {
         let isOwnDocument = url == nil || url?.scheme == "about"
         switch navigationType {
         case .other, .reload:
             // Only the initial load of our own HTML (about:blank base). Redirects, meta refresh and scripts are cancelled.
             return isOwnDocument ? .allow : .cancel
         case .linkActivated:
-            guard let url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { return .cancel }
+            // links_disabled: inert, nothing opens and nothing prompts.
+            guard !linksLocked, let url, LinkSafety.isAllowed(url) else { return .cancel }
             return .openExternally(url)
         default:
             return .cancel
         }
-    }
-
-    /// What the visible host check shows before a link leaves the app.
-    struct LinkCheck: Equatable {
-        var url: URL
-        var host: String          // as the system will use it (punycode form kept in `rawHost`)
-        var rawHost: String
-        var isUnicodeHost: Bool   // internationalised name: show both forms
-        var scheme: String
-    }
-
-    static func linkCheck(_ url: URL) -> LinkCheck {
-        let raw = (url.host ?? "").lowercased()
-        let decoded = raw
-        return LinkCheck(url: url, host: url.scheme == "mailto" ? url.absoluteString.replacingOccurrences(of: "mailto:", with: "") : decoded,
-                         rawHost: raw, isUnicodeHost: raw.contains("xn--"), scheme: url.scheme ?? "")
     }
 
     /// Builds the web view configuration. `allowRemoteImages` only controls the content rule list;
