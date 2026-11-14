@@ -116,7 +116,7 @@ struct ThreadRow: View {
         let name = outgoing ? Self.recipientName(e) : (e.fromName.isEmpty ? e.fromAddr : e.fromName)
         let picture = AvatarDecision.picture(entry: store.avatars.entry(address), message: MessageAuthState(e), outgoing: outgoing)
         HStack(spacing: Space.s3) {
-            Circle().fill(unread ? Theme.accentFg : Color.clear).frame(width: 8, height: 8)
+            Circle().fill(unread ? Theme.accentDot : Color.clear).frame(width: 8, height: 8)
             AvatarView(name: name, address: address, picture: picture, size: density.avatar)
             VStack(alignment: .leading, spacing: density == .comfortable ? 2 : 1) {
                 HStack(spacing: Space.s1) {

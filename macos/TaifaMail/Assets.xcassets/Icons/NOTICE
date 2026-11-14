@@ -3,3 +3,6 @@ project's local icon library. They are used under the Iconsax licence terms (htt
 Each SVG is vendored unmodified as its own imageset; scripts/vendor-icons.sh lists the exact
 source glyphs. Chevrons only for directional affordances (arrow-down4, arrow-up3, arrow-right4;
 left is the right chevron mirrored because rounded/linear has no arrow-left4).
+
+TaifaLogo.imageset: the Taifa Mail logo (webmail/static/logos/taifa_logo.svg, taifa_logo_white.svg for dark).
+AppIcon.appiconset: derived from taifa-mail-desktop assets/branding/icon.png (dark body icon).

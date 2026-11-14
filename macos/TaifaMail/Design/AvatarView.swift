@@ -22,9 +22,11 @@ struct AvatarView: View {
                     .clipShape(RoundedRectangle(cornerRadius: max(6, size * 0.25), style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: max(6, size * 0.25), style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
             default:
-                Circle().fill(Theme.avatarPalette[AvatarDecision.colorIndex(for: address)])
-                    .overlay(Text(AvatarDecision.initial(name: name, address: address))
-                        .font(.system(size: size * 0.42, weight: .semibold)).foregroundStyle(.white))
+                // Like the webmail Avatar: a person silhouette on a deterministic colour when an address is known.
+                Circle().fill(Theme.avatarPalette[AvatarDecision.colorIndex(for: address.isEmpty ? name : address)])
+                    .overlay(address.isEmpty
+                        ? AnyView(Text(AvatarDecision.initial(name: name, address: address)).font(.system(size: size * 0.42, weight: .semibold)).foregroundStyle(.white))
+                        : AnyView(Icon(.user, size: size * 0.55).foregroundStyle(.white)))
             }
         }
         .frame(width: size, height: size)

@@ -6,6 +6,12 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: Space.s2) {
+                BrandLogo(height: 24)
+                Text("Taifa Mail").taifa(.title).foregroundStyle(Theme.text)
+                Spacer()
+            }
+            .padding(.horizontal, Space.s4).padding(.top, Space.s4).padding(.bottom, Space.s1)
             MailboxSwitcher(app: app)
                 .padding(.horizontal, Space.s3).padding(.top, Space.s3).padding(.bottom, Space.s2)
             ScrollView {
@@ -35,7 +41,7 @@ struct SidebarView: View {
             }
             .accessibilityIdentifier("sidebar-folders")
         }
-        .background(.regularMaterial)
+        .background(Theme.sidebar)
     }
 
     private func row(_ f: Folder) -> some View {

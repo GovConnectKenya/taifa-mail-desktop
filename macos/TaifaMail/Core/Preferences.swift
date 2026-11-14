@@ -79,3 +79,20 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         await MainActor.run { self.onOpen?(folder, uid) }
     }
 }
+
+
+/// When to notify: only Inbox mail that is unread, not sent by the owner, not already known to the app.
+enum NotificationPolicy {
+    struct Decision: Equatable { var notify: [Envelope]; var knownAfter: Set<String> }
+
+    /// `known` is nil on the first load of a session: everything is recorded, nothing notifies.
+    static func decide(incoming: [ConversationSummary], known: Set<String>?, ownAddress: String) -> Decision {
+        let ids = Set(incoming.map(\.latest.id))
+        guard let known else { return Decision(notify: [], knownAfter: ids) }
+        let own = ownAddress.lowercased()
+        let fresh = incoming.filter(\.unread)
+            .map(\.latest)
+            .filter { !known.contains($0.id) && !$0.seen && $0.fromAddr.lowercased() != own }
+        return Decision(notify: fresh, knownAfter: known.union(ids))
+    }
+}

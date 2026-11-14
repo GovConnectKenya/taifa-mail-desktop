@@ -13,7 +13,7 @@ struct SignInView: View {
             Theme.bg.ignoresSafeArea()
             VStack(spacing: Space.s6) {
                 VStack(spacing: Space.s2) {
-                    Icon(.mail, size: 40).foregroundStyle(Theme.accentFg)
+                    BrandLogo(height: 56)
                     Text("Taifa Mail").taifa(.hero).foregroundStyle(Theme.text)
                     Text(subtitle).taifa(.body).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
                 }

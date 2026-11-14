@@ -67,7 +67,6 @@ final class AppModel {
         #endif
         cookies.restore()
         connectivity.start()
-        notifications.requestAuthorizationIfNeeded()
         notifications.onOpen = { [weak self] folder, uid in self?.openFromNotification(folder: folder, uid: uid) }
         guard cookies.hasSession else { phase = .signedOut; return }
         do {
@@ -154,6 +153,9 @@ final class AppModel {
         let svc = LiveMailService(api: api, mailboxId: s.mailboxId)
         let st = MailStore(service: svc, cache: cache)
         wire(st)
+        st.ownAddress = s.address
+        // Ask for notification permission once the user is in their mailbox, not at launch.
+        notifications.requestAuthorizationIfNeeded()
         if offline { st.setOffline(true) }
         store = st
         phase = .signedIn

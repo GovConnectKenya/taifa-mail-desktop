@@ -70,6 +70,7 @@ final class MailStore {
     @ObservationIgnored private var reconcileTask: Task<Void, Never>?
     @ObservationIgnored private var knownInbox: Set<String>?
     @ObservationIgnored var trustedImageSenders: Set<String> = []
+    @ObservationIgnored var ownAddress = ""
 
     static let pageSize = 50
 
@@ -220,13 +221,9 @@ final class MailStore {
 
     private func trackInbox(_ items: [ConversationSummary], folder: String) {
         guard folders.first(where: { $0.path == folder })?.role == .inbox else { return }
-        let unseen = items.filter(\.unread)
-        let ids = Set(items.map(\.latest.id))
-        if let known = knownInbox {
-            let fresh = unseen.filter { !known.contains($0.latest.id) }.map(\.latest)
-            if !fresh.isEmpty { onNewMail?(fresh) }
-            knownInbox = known.union(ids)
-        } else { knownInbox = ids }
+        let d = NotificationPolicy.decide(incoming: items, known: knownInbox, ownAddress: ownAddress)
+        knownInbox = d.knownAfter
+        if !d.notify.isEmpty { onNewMail?(d.notify) }
     }
 
     // MARK: Search

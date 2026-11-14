@@ -44,7 +44,7 @@ struct EmptyState: View {
     var hint: String
     var body: some View {
         VStack(spacing: Space.s3) {
-            Icon(icon, size: 32).foregroundStyle(Theme.text4)
+            BrandLogo(height: 40).opacity(0.9)
             Text(title).taifa(.display).foregroundStyle(Theme.text)
             Text(hint).taifa(.body).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
         }
@@ -86,5 +86,16 @@ struct FieldStyle: TextFieldStyle {
             .frame(height: Metrics.field)
             .background(Theme.panel2, in: RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Radius.ctl, style: .continuous).strokeBorder(Theme.border2, lineWidth: 1))
+    }
+}
+
+
+/// The real Taifa Mail logo (webmail/static/logos), white variant on dark surfaces via the asset catalog.
+struct BrandLogo: View {
+    var height: CGFloat = 24
+    var body: some View {
+        Image("TaifaLogo").resizable().scaledToFit().frame(height: height)
+            .accessibilityLabel("Taifa Mail")
+            .accessibilityIdentifier("brand-logo")
     }
 }
