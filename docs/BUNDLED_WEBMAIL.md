@@ -29,11 +29,27 @@ handler for `https` with `session.protocol.handle`:
   goes to the network before first paint.
 - **Backend paths** (the prefixes nginx routes to the API on that host: `/v1`,
   `/t`, `/auth`, `/oauth`, `/unsubscribe`, `/health`) and **every other host**
-  are handed back to Chromium's own network stack with
-  `ses.fetch(request, { bypassCustomProtocolHandlers: true })`. That is the same
-  stack the window would have used: this session's cookie jar is attached and
-  updated, connections are pooled and kept alive, compression is negotiated,
-  and bodies stream in both directions.
+  go to the real network through `net.request` on this session
+  (`useSessionCookies`, `redirect: 'manual'`, `bypassCustomProtocolHandlers`).
+  That is Chromium's own network stack: this session's cookie jar is attached
+  and updated (including Set-Cookie on a redirect), connections are pooled and
+  kept alive, compression is decoded, and responses stream back with
+  backpressure. Request bodies are sent whole with an exact Content-Length,
+  because object stores reject a chunked PUT to a presigned URL.
+- **Redirects** are not followed in the main process. Every 3xx goes back to
+  the renderer as a 3xx, so Chromium follows it exactly as for any page:
+  `will-redirect`, the navigation lock and CORS all apply, and a redirect to
+  another site can never come back as that site's content under the webmail
+  origin. (The first version used `ses.fetch`, which follows redirects inside
+  the main process and reports neither `redirected` nor the final URL;
+  `redirect: 'manual'` on `ses.fetch` never resolves in Electron 45. Both
+  measured.)
+- **Credentials and cache modes** of the page's request cannot be carried over:
+  the Request a protocol handler receives always reports `credentials:
+  'same-origin'`, `cache: 'default'` and `mode: 'cors'`, whatever the page set
+  (measured). Every request therefore goes with the session's cookies, as with
+  `ses.fetch` before: each host only ever receives its own cookies, under the
+  jar's SameSite rules.
 - **The websocket** (`wss://mail.govconnect.ke/ws/mailbox`) is not an https
   request, so the handler never sees it. Chromium opens it directly to the
   backend with the real Origin and this session's cookies.
@@ -100,10 +116,25 @@ Two further benefits of the real origin:
   Notifications use the standard Web Notification API (Electron implements it
   natively); the unread badge is read from the document title the webmail
   already sets. Neither needs IPC.
-- **The service worker is not served** (`/sw.js` returns 404). On the web it
+- **The service worker is not served** (`/sw.js` returns 404), and the one 0.1.x
+  registered in the same partition is removed on every launch, before the
+  window opens (`clearStorageData` for `serviceworkers` and `cachestorage` on
+  the webmail origin only; cookies, localStorage and IndexedDB are kept).
+  Otherwise that worker would keep answering `/` with its cached copy of the
+  old web shell, ahead of the bundle, and could never update itself away. On the web it
   caches the shell for flaky networks and prompts a reload after a deploy; in
   the app the shell is local and changes only with an app update, so a worker
   would only add a stale second copy.
+- **Electron fuses** (scripts/after-pack.js, flipped before signing): no
+  `ELECTRON_RUN_AS_NODE`, no `NODE_OPTIONS`, no `--inspect`, the app loads only
+  from its asar, the asar is checked against the hash sealed in the signed
+  Info.plist (macOS; electron-builder 24 cannot embed it on Windows), and
+  file:// gets no extra privileges. Cookies are encrypted at rest (Keychain on
+  macOS, DPAPI on Windows); existing plaintext cookies stay readable, so the
+  0.1.x session carries over (tested as a profile upgrade). Packaged builds also
+  ignore `--remote-debugging-port` / `--remote-debugging-pipe`, which would
+  otherwise let any local process read the session over the DevTools protocol.
+- **Entitlements** are only JIT and unsigned executable memory.
 - **What a compromised bundle could do** is what a compromised webmail can do
   in a browser: the renderer is sandboxed, context-isolated, without Node, and
   without a bridge. The trust boundary is the same as the thin shell's.
@@ -150,6 +181,24 @@ without a second OS prompt.
 - Badge: dock count on macOS, an overlay dot on the Windows taskbar button, the
   launcher count on Linux, all from the `(n)` the webmail puts in its title.
 - Startup: tray, popover and the updater start only after the window is shown.
+
+## Bundle and backend skew
+
+The bundle is fixed at build time while the backend deploys on its own. Two
+safety valves:
+
+- Assets that are not in the bundle (an `/_app/` chunk from a newer build, a
+  server-only file) are fetched from the web host as before.
+- If a `/health` or `/v1` response carries `X-Taifa-Min-Desktop-Bundle` (the
+  ISO 8601 commit date of the oldest webmail the backend supports) and the
+  bundle's commit date (`desktop-bundle.json`) is older, the app drops the
+  interception for that launch, reloads the live site (the thin shell, which
+  always matches the backend) and runs an update check that offers the
+  restart.
+
+Follow-up, backend: send that header when an API change breaks older webmail
+builds. Nothing sends it yet; the client side is in `src/bundle.js` and
+`src/main.js` (`fallBackToLiveSite`).
 
 ## Known limits
 

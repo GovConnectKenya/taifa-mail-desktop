@@ -342,11 +342,37 @@ Two more things in the workflow that look redundant and are not:
 
 ### The entitlements file is copied verbatim
 
-`build/entitlements.mac.plist` is copied as-is from the proven template. The
-hardened runtime is mandatory for notarization, and Electron needs every key in
-that file (JIT, unsigned executable memory, dyld environment variables, library
-validation) to run under it. Trimming keys that "look unsafe" produces an app
-that notarizes and then crashes on launch.
+`build/entitlements.mac.plist` holds only what Electron's V8 needs under the
+hardened runtime: JIT and unsigned executable memory. Since 0.2.0 it no longer
+carries `allow-dyld-environment-variables` (DYLD_INSERT_LIBRARIES could load
+foreign code into the signed app) or `disable-library-validation` (every
+framework in the bundle is signed with our own identity and there are no
+third-party native modules). 0.2.0 was signed, notarized and launched without
+them. Add either back only for a concrete need, such as a native module signed
+by someone else, and test a launch of the notarized build before releasing.
+
+### Electron 45, macOS 13 and rollbacks
+
+0.2.0 moved from Electron 31 to Electron 45, which needs macOS 13 or later.
+`scripts/set-min-macos.mjs` writes `minimumSystemVersion: 22.0.0` (Darwin 22,
+macOS 13) into `latest-mac.yml`; `npm run dist` and both workflows run it.
+Without it, electron-updater in installed 0.1.x apps would download 0.2.0 onto
+macOS 10.15 to 12, where it cannot start.
+
+Never roll back to a build on an older Electron than 45. Chromium migrates the
+profile (cookies, storage) forward when a newer version opens it, and an older
+Electron cannot read the migrated profile: users would be signed out or worse.
+Rollbacks are a new patch version built on Electron 45 or later, with the same
+Electron fuses (scripts/after-pack.js): in particular EnableCookieEncryption
+must stay on, or the build cannot read cookies written since 0.2.0 and every
+user is signed out.
+
+### The webmail commit is pinned
+
+`WEBMAIL_REF` holds the full taifa-mail commit the app bundles. Release and
+branch builds check out exactly that commit, and `scripts/stage-webmail.mjs`
+refuses a bundle built from anything else. To ship a newer webmail, update
+`WEBMAIL_REF` in its own commit, and say so in the changelog.
 
 ## The tag prefix and the update provider are coupled
 
