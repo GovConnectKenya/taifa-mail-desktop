@@ -235,6 +235,8 @@ jobs:
         run: |
           set -uo pipefail
           APP="$RUNNER_TEMP/app/Taifa Mail.app"
+          # the quarantine flag was only there for the Gatekeeper assessment; a runner cannot click the first-open dialog
+          xattr -dr com.apple.quarantine "$APP" || true
           # open returns once LaunchServices has the app; run it in the background so a stall is visible
           open -n "$APP" > "$RUNNER_TEMP/open.log" 2>&1 &
           OPENPID=$!
@@ -247,7 +249,7 @@ jobs:
           ps -axo pid,etime,command | grep -i 'taifa' | grep -v grep | cut -c1-200 || true
           if ! pgrep -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' >/dev/null; then echo "CHECK FAIL process never started"; exit 1; fi
           echo "CHECK PASS process started"
-          sleep 12
+          sleep 15
 
       - name: Screenshot
         run: |
