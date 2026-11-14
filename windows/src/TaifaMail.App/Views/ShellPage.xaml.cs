@@ -364,8 +364,8 @@ public sealed partial class ShellPage : Page, IChromePage
             move.Items.Add(mi);
         }
         menu.Items.Add(move);
-        if (args.TryGetPosition(sender, out var pos)) menu.ShowAt(sender, new FlyoutShowOptions { Position = pos });
-        else menu.ShowAt(sender);
+        if (args.TryGetPosition(sender, out var pos)) menu.ShowAt((FrameworkElement)sender, new FlyoutShowOptions { Position = pos });
+        else menu.ShowAt((FrameworkElement)sender);
         args.Handled = true;
     }
 
