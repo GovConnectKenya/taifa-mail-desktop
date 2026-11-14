@@ -37,6 +37,8 @@ jobs:
   build:
     name: Build Release ${{ matrix.platform }}
     runs-on: windows-latest
+    env:
+      SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
     strategy:
       fail-fast: false
       matrix:
@@ -102,6 +104,19 @@ jobs:
           $missing = $need | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
           if ($missing) { Write-Error "Missing from the output: $($missing -join ', ')"; exit 1 }
           Write-Host "All $($need.Count) asset files are in $dir."
+      - name: Sign (skipped unless signing secrets exist)
+        if: ${{ env.SIGN_PFX_BASE64 != '' }}
+        env:
+          SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe | Where-Object { $_.FullName -match 'x64' } | Select-Object -Last 1).FullName
+          Get-ChildItem artifacts/publish-${{ matrix.rid }} -Include TaifaMail.exe,TaifaMail.dll -Recurse | ForEach-Object {
+            & $signtool sign /fd SHA256 /f $pfx /p $env:SIGN_PFX_PASSWORD /tr http://timestamp.digicert.com /td SHA256 $_.FullName
+          }
+          Remove-Item $pfx -Force
       - name: Zip
         run: Compress-Archive -Path artifacts/publish-${{ matrix.rid }}/* -DestinationPath artifacts/TaifaMail-windows-${{ matrix.rid }}-unsigned.zip
       - uses: actions/upload-artifact@v4
