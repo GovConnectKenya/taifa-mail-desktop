@@ -10,6 +10,7 @@ namespace TaifaMail.App.Services;
 public static class Fmt
 {
     public static FontWeight Weight(bool unread) => unread ? FontWeights.SemiBold : FontWeights.Normal;
+    public static FontWeight Bold(bool unread) => unread ? FontWeights.Bold : FontWeights.Normal;
     public static Visibility Show(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
     public static Microsoft.UI.Xaml.Controls.InfoBarSeverity AuthSeverity(string level) => level switch
     {

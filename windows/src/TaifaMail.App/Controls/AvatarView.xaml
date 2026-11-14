@@ -2,9 +2,11 @@
     x:Class="TaifaMail.App.Controls.AvatarView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:TaifaMail.App.Controls"
     IsTabStop="False">
   <Grid x:Name="_root">
     <Border x:Name="_placeholder"/>
+    <local:IconView x:Name="_person" IconName="profile" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
     <TextBlock x:Name="_initial" Foreground="White" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
     <Border x:Name="_logo" Visibility="Collapsed" Background="{ThemeResource TmPanel2Brush}">
       <Image x:Name="_logoImage" Stretch="Uniform"/>

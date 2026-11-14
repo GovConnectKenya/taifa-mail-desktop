@@ -9,7 +9,7 @@
 
   <Page.Resources>
     <DataTemplate x:Key="ThreadRowTemplate" x:DataType="vm:ThreadRow">
-      <Grid Height="76" Padding="4,12,12,12" ColumnSpacing="8" AutomationProperties.Name="{x:Bind SpokenName}">
+      <Grid Height="76" Padding="4,12,12,12" ColumnSpacing="8" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource TmBorderSoftBrush}" AutomationProperties.Name="{x:Bind SpokenName}">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="12"/>
           <ColumnDefinition Width="36"/>
@@ -30,11 +30,12 @@
               <ColumnDefinition Width="Auto"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource TmBody}" FontWeight="{x:Bind svc:Fmt.Weight(Unread), Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
+            <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource TmBody}" FontWeight="{x:Bind svc:Fmt.Bold(Unread), Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
             <Border Grid.Column="1" CornerRadius="4" Padding="4,0" Background="{ThemeResource TmPanel3Brush}" VerticalAlignment="Center" Visibility="{x:Bind svc:Fmt.ShowIf(Count, 2)}">
               <TextBlock Text="{x:Bind Count}" Style="{StaticResource TmCaption}"/>
             </Border>
-            <TextBlock Grid.Column="2" Text="{x:Bind svc:Fmt.Time(When)}" Style="{StaticResource TmCaption}"/>
+            <TextBlock Grid.Column="2" Text="{x:Bind svc:Fmt.Time(When)}" Style="{StaticResource TmCaption}" FontWeight="{x:Bind svc:Fmt.Bold(Unread), Mode=OneWay}"/>
+            <TextBlock Grid.Column="2" Text="{x:Bind svc:Fmt.Time(When)}" Style="{StaticResource TmCaption}" FontWeight="Bold" Foreground="{ThemeResource TmAccentInkBrush}" Visibility="{x:Bind svc:Fmt.Show(Unread), Mode=OneWay}"/>
           </Grid>
           <Grid Grid.Row="1" ColumnSpacing="4">
             <Grid.ColumnDefinitions>
@@ -130,7 +131,8 @@
         <ColumnDefinition x:Name="CaptionInsetColumn" Width="138"/>
       </Grid.ColumnDefinitions>
       <StackPanel Orientation="Horizontal" Spacing="8" Margin="16,0,0,0" VerticalAlignment="Center">
-        <TextBlock Text="Taifa Mail" Style="{StaticResource TmBodyStrong}"/>
+        <ctl:LogoView HeightPx="24"/>
+        <TextBlock Text="Taifa Mail" Style="{StaticResource TmBodyStrong}" VerticalAlignment="Center"/>
       </StackPanel>
       <Grid x:Name="SearchHost" Grid.Column="1" Width="360" Height="32" CornerRadius="8" Background="{ThemeResource TmPanel2Brush}" VerticalAlignment="Center">
         <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -212,7 +214,7 @@
             </ItemsControl>
             <!-- empty -->
             <StackPanel x:Name="EmptyState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-              <ctl:IconView IconName="mail" Size="24" Foreground="{ThemeResource TmText3Brush}" HorizontalAlignment="Center"/>
+              <ctl:LogoView HeightPx="40" HorizontalAlignment="Center"/>
               <TextBlock Text="Nothing here" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center"/>
               <TextBlock x:Name="EmptyHint" Text="This folder has no messages." Style="{StaticResource TmMeta}" HorizontalAlignment="Center"/>
             </StackPanel>
@@ -234,7 +236,7 @@
             </StackPanel>
           </ScrollViewer>
           <StackPanel x:Name="ReaderEmpty" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-            <ctl:IconView IconName="mail" Size="24" Foreground="{ThemeResource TmText3Brush}" HorizontalAlignment="Center"/>
+            <ctl:LogoView HeightPx="40" HorizontalAlignment="Center"/>
             <TextBlock Text="Select a message" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center"/>
           </StackPanel>
           <StackPanel x:Name="ReaderSkeleton" Visibility="Collapsed" Padding="24" Spacing="12" VerticalAlignment="Top">

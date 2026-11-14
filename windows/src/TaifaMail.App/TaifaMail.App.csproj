@@ -33,7 +33,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
-    <PackageReference Include="System.Drawing.Common" Version="8.0.10" Condition="'$(Configuration)' == 'Debug'" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,6 +42,8 @@
 
   <ItemGroup>
     <Content Include="Assets\**\*.svg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Logo\*.*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\taifa.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\NOTICE-icons.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

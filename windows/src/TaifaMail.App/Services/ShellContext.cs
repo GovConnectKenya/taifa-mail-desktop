@@ -15,6 +15,9 @@ public sealed class ShellContext
     public MailApi? RealMail { get; init; }
     public OfflineCache? Cache { get; init; }
     public LocalSettings Settings { get; init; } = new();
+    public TaifaApiClient? Api { get; init; }
+    public NotificationService? Notifications { get; init; }
+    public Action SaveSettings { get; init; } = () => { };
     public Func<Task> SignOut { get; init; } = () => Task.CompletedTask;
     public Func<string, Task> SwitchMailbox { get; init; } = _ => Task.CompletedTask;
     public bool IsPreview { get; init; }

@@ -21,6 +21,7 @@ public sealed partial class AvatarView : UserControl
     public static readonly DependencyProperty SizeProperty = DependencyProperty.Register(nameof(Size), typeof(double), typeof(AvatarView), new PropertyMetadata(36.0, (d, _) => ((AvatarView)d).Layout()));
     public static readonly DependencyProperty DecisionProperty = DependencyProperty.Register(nameof(Decision), typeof(AvatarDecision), typeof(AvatarView), new PropertyMetadata(null, (d, _) => ((AvatarView)d).Apply()));
     public static readonly DependencyProperty InitialsProperty = DependencyProperty.Register(nameof(Initials), typeof(string), typeof(AvatarView), new PropertyMetadata("", (d, _) => ((AvatarView)d).Layout()));
+    public static readonly DependencyProperty IsPersonProperty = DependencyProperty.Register(nameof(IsPerson), typeof(bool), typeof(AvatarView), new PropertyMetadata(true, (d, _) => ((AvatarView)d).Layout()));
     public static readonly DependencyProperty FillColorProperty = DependencyProperty.Register(nameof(FillColor), typeof(string), typeof(AvatarView), new PropertyMetadata("#006900", (d, _) => ((AvatarView)d).Layout()));
 
     public AvatarView()
@@ -32,6 +33,8 @@ public sealed partial class AvatarView : UserControl
     public double Size { get => (double)GetValue(SizeProperty); set => SetValue(SizeProperty, value); }
     public AvatarDecision? Decision { get => (AvatarDecision?)GetValue(DecisionProperty); set => SetValue(DecisionProperty, value); }
     public string Initials { get => (string)GetValue(InitialsProperty); set => SetValue(InitialsProperty, value); }
+    /// <summary>People get a silhouette, anything else gets its letter (webmail Avatar.svelte).</summary>
+    public bool IsPerson { get => (bool)GetValue(IsPersonProperty); set => SetValue(IsPersonProperty, value); }
     public string FillColor { get => (string)GetValue(FillColorProperty); set => SetValue(FillColorProperty, value); }
 
     private static Color Parse(string hex)
@@ -48,6 +51,9 @@ public sealed partial class AvatarView : UserControl
         _placeholder.CornerRadius = new CornerRadius(s / 2);
         try { _placeholder.Background = new SolidColorBrush(Parse(FillColor)); } catch (FormatException) { }
         _initial.Text = Initials;
+        _person.Size = Math.Round(s * 0.56);
+        _person.Visibility = IsPerson ? Visibility.Visible : Visibility.Collapsed;
+        _initial.Visibility = IsPerson ? Visibility.Collapsed : Visibility.Visible;
         _initial.FontSize = Math.Max(11, Math.Round(s * 0.4));
         _photo.Width = s; _photo.Height = s; _photo.CornerRadius = new CornerRadius(s / 2);
         var tile = Math.Max(6, s * 0.25);
@@ -62,7 +68,8 @@ public sealed partial class AvatarView : UserControl
         _photo.Visibility = Visibility.Collapsed;
         _logo.Visibility = Visibility.Collapsed;
         _placeholder.Visibility = Visibility.Visible;
-        _initial.Visibility = Visibility.Visible;
+        _initial.Visibility = IsPerson ? Visibility.Collapsed : Visibility.Visible;
+        _person.Visibility = IsPerson ? Visibility.Visible : Visibility.Collapsed;
         if (d is null || d.Kind == AvatarKind.None || d.Url is null || ImageCache.Instance is null) return;
         BitmapImage? image;
         try { image = await ImageCache.Instance.GetAsync(d.Url, (int)Size); }
@@ -80,5 +87,6 @@ public sealed partial class AvatarView : UserControl
         }
         _placeholder.Visibility = Visibility.Collapsed;
         _initial.Visibility = Visibility.Collapsed;
+        _person.Visibility = Visibility.Collapsed;
     }
 }

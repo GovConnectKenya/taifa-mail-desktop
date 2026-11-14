@@ -16,6 +16,7 @@ public sealed class AppServices
     public OfflineCache Cache { get; }
     public ImageCache Images { get; }
     public LocalSettings Settings { get; private set; }
+    public NotificationService Notifications { get; } = new();
 
     public AppServices(DispatcherQueue ui)
     {

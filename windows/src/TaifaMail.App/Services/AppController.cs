@@ -69,12 +69,21 @@ public sealed class AppController
         {
             Mail = _svc.MailFor(me.MailboxId),
             RealMail = _svc.MailFor(me.MailboxId),
+            Api = _svc.Api,
+            Notifications = _svc.Notifications,
+            SaveSettings = _svc.SaveSettings,
             Auth = _svc.Auth,
             Me = me,
             ApiBase = _svc.Api.BaseUri.ToString().TrimEnd('/'),
             Cache = _svc.Cache,
             Settings = _svc.Settings,
-            SignOut = async () => { await _svc.SignOutAsync(); ShowSignIn(sessionEnded: false); },
+            SignOut = async () =>
+            {
+                await _svc.SignOutAsync();
+                _svc.Notifications.ClearAll();
+                _svc.Notifications.SetBadge(WinRT.Interop.WindowNative.GetWindowHandle(_window), "");
+                ShowSignIn(sessionEnded: false);
+            },
             SwitchMailbox = async mailboxId =>
             {
                 try

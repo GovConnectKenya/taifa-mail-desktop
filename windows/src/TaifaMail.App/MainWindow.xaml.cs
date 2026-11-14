@@ -31,6 +31,8 @@ public sealed partial class MainWindow : Window
         }
         AppWindow.Resize(DefaultSize);
         AppWindow.Title = "Taifa Mail";
+        var ico = Path.Combine(AppContext.BaseDirectory, "Assets", "taifa.ico");
+        if (File.Exists(ico)) AppWindow.SetIcon(ico);
         var bar = AppWindow.TitleBar;
         bar.ButtonBackgroundColor = Colors.Transparent;
         bar.ButtonInactiveBackgroundColor = Colors.Transparent;

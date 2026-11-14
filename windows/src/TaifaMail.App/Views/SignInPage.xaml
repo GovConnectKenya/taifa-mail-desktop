@@ -7,13 +7,17 @@
   <Grid>
     <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition Height="*"/></Grid.RowDefinitions>
     <Grid x:Name="TitleRow" Background="Transparent">
-      <TextBlock Text="Taifa Mail" Style="{StaticResource TmBodyStrong}" VerticalAlignment="Center" Margin="16,0,0,0"/>
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="16,0,0,0" VerticalAlignment="Center">
+        <ctl:LogoView HeightPx="24"/>
+        <TextBlock Text="Taifa Mail" Style="{StaticResource TmBodyStrong}" VerticalAlignment="Center"/>
+      </StackPanel>
     </Grid>
     <Border x:Name="Card" Grid.Row="1" Margin="24" Width="400" HorizontalAlignment="Center" VerticalAlignment="Center"
             Padding="24" CornerRadius="16" BorderThickness="1"
             Background="{ThemeResource TmPanelBrush}" BorderBrush="{ThemeResource TmBorderBrush}">
       <StackPanel Spacing="16">
-        <StackPanel Spacing="4">
+        <StackPanel Spacing="8">
+          <ctl:LogoView HeightPx="56" HorizontalAlignment="Left"/>
           <TextBlock Text="Taifa Mail" Style="{StaticResource TmHero}"/>
           <TextBlock x:Name="Subtitle" Text="Sign in to your mailbox" Style="{StaticResource TmMeta}"/>
         </StackPanel>
@@ -45,7 +49,7 @@
             </Grid>
           </Button>
           <Button Style="{StaticResource TmTextButton}" HorizontalAlignment="Stretch" IsEnabled="{x:Bind Vm.CanRequestCode, Mode=OneWay}" Click="OnEmailCode">
-            <TextBlock Text="Email me a sign-in code" Foreground="{ThemeResource TmAccentFgBrush}"/>
+            <TextBlock Text="Email me a sign-in code" Foreground="{ThemeResource TmAccentInkBrush}"/>
           </Button>
           <TextBlock Text="Passkey sign-in is not available in this version." Style="{StaticResource TmMeta}" TextWrapping="Wrap"/>
         </StackPanel>
@@ -66,7 +70,7 @@
             </Grid>
           </Button>
           <Button Style="{StaticResource TmTextButton}" HorizontalAlignment="Stretch" Click="OnEmailSecondFactor" Visibility="{x:Bind Vm.ShowSecondFactor, Mode=OneWay}">
-            <TextBlock Text="Email me a code" Foreground="{ThemeResource TmAccentFgBrush}"/>
+            <TextBlock Text="Email me a code" Foreground="{ThemeResource TmAccentInkBrush}"/>
           </Button>
           <Button Style="{StaticResource TmTextButton}" HorizontalAlignment="Stretch" Click="OnBack">
             <TextBlock Text="Back" Foreground="{ThemeResource TmText2Brush}"/>

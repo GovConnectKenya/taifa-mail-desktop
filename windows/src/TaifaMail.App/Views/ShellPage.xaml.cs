@@ -11,9 +11,12 @@ using TaifaMail.App.Services;
 using TaifaMail.Core.Avatars;
 using TaifaMail.Core.Content;
 using TaifaMail.Core.Models;
+using TaifaMail.Core.Net;
 using TaifaMail.Core.ViewModels;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using TaifaMail.Core.Notifications;
+using TaifaMail.Core.Realtime;
 using Windows.System;
 
 namespace TaifaMail.App.Views;
@@ -26,6 +29,11 @@ public sealed partial class ShellPage : Page, IChromePage
     private CancellationTokenSource? _searchDelay;
     private ScrollViewer? _listScroll;
     private bool _buildingNav;
+    private RealtimeClient? _realtime;
+    private CancellationTokenSource? _reconcileDelay;
+    private System.Threading.Timer? _poll;
+    private long? _highWater;
+    private bool _connected;
     private bool _draggingSplitter;
     private double _splitterStartX, _splitterStartWidth;
 
@@ -61,7 +69,10 @@ public sealed partial class ShellPage : Page, IChromePage
             UpdateReaderState();
             await Vm.StartAsync();
             try { _siblings = await _ctx.Auth.SwitchableAsync(); } catch (Exception) { }
+            await CheckNewMailAsync();
+            StartRealtime();
         };
+        Unloaded += async (_, _) => await StopRealtimeAsync();
     }
 
     private void AddAccelerator(VirtualKey key, VirtualKeyModifiers mods, Action action)
@@ -84,6 +95,9 @@ public sealed partial class ShellPage : Page, IChromePage
                 case nameof(MailShellViewModel.Searching):
                 case nameof(MailShellViewModel.SelectedFolder):
                     UpdateListState();
+                    break;
+                case nameof(MailShellViewModel.TotalUnread):
+                    UpdateBadge();
                     break;
                 case nameof(MailShellViewModel.OpenLoading):
                 case nameof(MailShellViewModel.OpenError):
@@ -115,6 +129,83 @@ public sealed partial class ShellPage : Page, IChromePage
         ReaderEmpty.Visibility = Vm.SelectedThread is null || (!hasCards && !loading && !failed) ? Visibility.Visible : Visibility.Collapsed;
         ReaderErrorText.Text = Vm.OpenError ?? "";
         if (hasCards) ReaderSubject.Text = Vm.OpenMessages[^1].Subject;
+    }
+
+    // ---- realtime, toasts, badge ----
+
+    private void StartRealtime()
+    {
+        if (_ctx.Api is null || _realtime is not null) return;
+        _ctx.Notifications?.Register(DispatcherQueue);
+        if (_ctx.Notifications is { } n) n.ThreadRequested += OnToastActivated;
+        _realtime = new RealtimeClient(_ctx.Api);
+        _realtime.EventReceived += e =>
+        {
+            if (!e.IsFor(_ctx.Mail.MailboxId) || e.Kind is RealtimeKind.Connected or RealtimeKind.Pong) return;
+            ScheduleReconcile();
+        };
+        _realtime.ConnectionChanged += up => { _connected = up; DispatcherQueue.TryEnqueue(() => { if (up) Vm.Offline = false; }); };
+        _realtime.Reconnected += () => ScheduleReconcile();
+        _realtime.Start();
+        // While the socket is down, a 60 second REST poll keeps the list and the badge honest (contract section 8).
+        _poll = new System.Threading.Timer(_ => { if (!_connected) ScheduleReconcile(); }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+    }
+
+    private async Task StopRealtimeAsync()
+    {
+        _poll?.Dispose();
+        if (_ctx.Notifications is { } n) n.ThreadRequested -= OnToastActivated;
+        if (_realtime is { } rt) { _realtime = null; await rt.StopAsync(); }
+    }
+
+    private void ScheduleReconcile()
+    {
+        _reconcileDelay?.Cancel();
+        var cts = _reconcileDelay = new CancellationTokenSource();
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(500, cts.Token); } catch (OperationCanceledException) { return; }
+            DispatcherQueue.TryEnqueue(async () =>
+            {
+                if (cts.IsCancellationRequested || Vm.Searching) return;
+                await Vm.ReconcileAsync();
+                await CheckNewMailAsync();
+            });
+        });
+    }
+
+    private async Task CheckNewMailAsync()
+    {
+        try
+        {
+            var page = await _ctx.Mail.ConversationsAsync("INBOX", 20, 0);
+            var latest = page.Items.Select(i => i.Latest).ToList();
+            var decision = NotifyPolicy.Decide(latest, _highWater, _ctx.Me.Address, _ctx.Settings.NewMailAlerts);
+            _highWater = decision.HighWater;
+            if (!_ctx.IsPreview)
+                foreach (var t in NotifyPolicy.Collapse(decision.Toasts)) _ctx.Notifications?.Show(t);
+        }
+        catch (Exception e) when (e is ApiRequestError or ApiTransportError) { }
+        UpdateBadge();
+    }
+
+    private void UpdateBadge()
+    {
+        if (_ctx.Notifications is null || _ctx.IsPreview || App.MainWindow is null) return;
+        var label = NotifyPolicy.BadgeLabel(Vm.TotalUnread, _ctx.Settings.TaskbarBadge);
+        _ctx.Notifications.SetBadge(WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow), label);
+    }
+
+    private async void OnToastActivated(string folder, long uid)
+    {
+        var inbox = Vm.Folders.FirstOrDefault(f => f.Path == folder) ?? Vm.Folders.FirstOrDefault(f => f.Path == "INBOX");
+        if (inbox is null) return;
+        if (Vm.SelectedFolder?.Path != inbox.Path || Vm.Searching) { SearchBox.Text = ""; await Vm.LoadFolderAsync(inbox); }
+        else await Vm.ReconcileAsync();
+        var row = Vm.Threads.FirstOrDefault(t => t.Uids.Contains(uid));
+        if (row is null) return;
+        ThreadList.SelectedItem = row;
+        if (!ReferenceEquals(Vm.SelectedThread, row)) await Vm.OpenAsync(row);
     }
 
     private void OnOpenMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e) => DispatcherQueue.TryEnqueue(UpdateReaderState);
@@ -187,6 +278,13 @@ public sealed partial class ShellPage : Page, IChromePage
             IdentityFlyout.Items.Add(item);
         }
         if (_siblings.Count > 0) IdentityFlyout.Items.Add(new MenuFlyoutSeparator());
+        var alerts = new ToggleMenuFlyoutItem { Text = "New mail notifications", IsChecked = _ctx.Settings.NewMailAlerts };
+        alerts.Click += (_, _) => { _ctx.Settings.NewMailAlerts = alerts.IsChecked; _ctx.SaveSettings(); };
+        var badge = new ToggleMenuFlyoutItem { Text = "Taskbar badge", IsChecked = _ctx.Settings.TaskbarBadge };
+        badge.Click += (_, _) => { _ctx.Settings.TaskbarBadge = badge.IsChecked; _ctx.SaveSettings(); UpdateBadge(); };
+        IdentityFlyout.Items.Add(alerts);
+        IdentityFlyout.Items.Add(badge);
+        IdentityFlyout.Items.Add(new MenuFlyoutSeparator());
         var signOut = new MenuFlyoutItem { Text = "Sign out" };
         signOut.Click += async (_, _) => await _ctx.SignOut();
         IdentityFlyout.Items.Add(signOut);

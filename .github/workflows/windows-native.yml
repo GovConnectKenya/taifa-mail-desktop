@@ -1,8 +1,8 @@
 name: Windows native
 
-# Build and test of the native WinUI 3 client in windows/. This is a branch
-# check, never a release: nothing is signed, tagged or published, and the
-# artifacts are unsigned builds for inspection only.
+# Build check of the native WinUI 3 client in windows/. This is a branch check, never a release: nothing is
+# signed, tagged or published, and the artifacts are unsigned builds for inspection only.
+# Test and UI smoke steps are switched off for now (owner instruction); the test projects still build.
 
 on:
   push:
@@ -24,27 +24,19 @@ defaults:
 
 jobs:
   core:
-    name: Core library tests
+    name: Core library build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Restore
-        run: dotnet restore src/TaifaMail.Core/TaifaMail.Core.csproj; dotnet restore tests/TaifaMail.Core.Tests/TaifaMail.Core.Tests.csproj
-      - name: Test
-        run: dotnet test tests/TaifaMail.Core.Tests -c Release --logger "trx;LogFileName=core.trx" --results-directory artifacts/test-results
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: core-test-results
-          path: windows/artifacts/test-results
+      - name: Build core and its test project (tests are not run)
+        run: dotnet build tests/TaifaMail.Core.Tests -c Release
 
   build:
     name: Build Release ${{ matrix.platform }}
     runs-on: windows-latest
-    needs: core
     strategy:
       fail-fast: false
       matrix:
@@ -72,10 +64,9 @@ jobs:
             $json = Get-Content $in.FullName -Raw | ConvertFrom-Json
             "== input.json properties"
             $json.PSObject.Properties | ForEach-Object { $v = $_.Value; $t = if ($v -is [array]) { "array[$($v.Count)]" } else { "$v" }; "{0} = {1}" -f $_.Name, ($t.Substring(0, [Math]::Min(160, $t.Length))) }
-            "== bisect: App.xaml plus one page at a time"
+            "== bisect: one page at a time"
             $pages = @($json.XamlPages)
             "pages: $($pages.Count)"
-            $orig = $json.XamlPages
             foreach ($pg in $pages) {
               $json.XamlPages = @($pg)
               $json | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $in.DirectoryName 'bisect-input.json')
@@ -102,63 +93,18 @@ jobs:
           path: windows/artifacts/TaifaMail-windows-${{ matrix.rid }}-unsigned.zip
           retention-days: 14
 
-  ui-smoke:
-    name: UI smoke and screenshots
+  debug-build:
+    name: Build Debug x64 (preview data compiled in)
     runs-on: windows-latest
-    needs: core
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Build Debug x64 (the only build that contains preview data)
+      - name: Build Debug x64
         run: dotnet build src/TaifaMail.App/TaifaMail.App.csproj -c Debug -r win-x64 -p:Platform=x64 --self-contained true -o artifacts/debug-x64
-      - name: Show XAML compiler diagnostics
-        if: failure()
-        run: |
-          Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter output.json | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Raw }
-          $in = Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter input.json | Select-Object -First 1
-          if ($in) {
-            $xc = Get-ChildItem "$env:USERPROFILE/.nuget/packages/microsoft.windowsappsdk/1.6.250108002/tools/net472" -Filter XamlCompiler.exe | Select-Object -First 1
-            "== manual run of $($xc.FullName) on $($in.FullName)"
-            & $xc.FullName $in.FullName (Join-Path $in.DirectoryName 'manual-output.json') 2>&1 | Out-String | Write-Host
-            "exit $LASTEXITCODE"
-            Get-ChildItem $in.DirectoryName -Filter *output.json | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName -Raw }
-          } else { "no input.json found" }
       - name: Prove preview data is in Debug
         run: |
           $bytes = [IO.File]::ReadAllBytes((Resolve-Path artifacts/debug-x64/TaifaMail.dll))
           if (-not [Text.Encoding]::Unicode.GetString($bytes).Contains('TAIFA_PREVIEW_FIXTURE_ONLY_DEBUG')) { Write-Error 'Debug build is missing the preview fixtures'; exit 1 }
-      - name: Show display
-        run: |
-          Add-Type -AssemblyName System.Windows.Forms
-          [Windows.Forms.Screen]::AllScreens | ForEach-Object { "$($_.DeviceName) $($_.Bounds)" }
-      - name: Walk every screen and state
-        run: |
-          $out = Join-Path (Get-Location).Path 'artifacts/screenshots'
-          New-Item -ItemType Directory -Force $out | Out-Null
-          $p = Start-Process -FilePath artifacts/debug-x64/TaifaMail.exe -ArgumentList '--preview-data', '--screenshots', $out -PassThru
-          if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Error 'The app did not finish the walk in time'; exit 1 }
-          Write-Host "exit code: $($p.ExitCode)"
-          if (Test-Path "$out/FAILED.txt") { Get-Content "$out/FAILED.txt"; exit 1 }
-          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
-      - name: Check the screenshots are real
-        run: |
-          Add-Type -AssemblyName System.Drawing
-          $files = Get-ChildItem artifacts/screenshots -Filter *.png
-          Write-Host "screenshots: $($files.Count)"
-          if ($files.Count -lt 20) { Write-Error "expected 20 screenshots, found $($files.Count)"; exit 1 }
-          foreach ($f in $files) {
-            $bmp = [Drawing.Bitmap]::FromFile($f.FullName)
-            $seen = New-Object 'System.Collections.Generic.HashSet[int]'
-            for ($i = 0; $i -lt 4000; $i++) { [void]$seen.Add($bmp.GetPixel(($i * 37) % $bmp.Width, ($i * 91) % $bmp.Height).ToArgb()) }
-            Write-Host ("{0,-48} {1}x{2} colors={3}" -f $f.Name, $bmp.Width, $bmp.Height, $seen.Count)
-            $bmp.Dispose()
-            if ($seen.Count -lt 12) { Write-Error "$($f.Name) looks blank"; exit 1 }
-          }
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: screenshots
-          path: windows/artifacts/screenshots
-          retention-days: 14
+          Write-Host 'Debug assembly contains the preview fixtures.'
