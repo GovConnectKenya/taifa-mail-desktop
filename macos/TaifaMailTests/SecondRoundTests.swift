@@ -264,3 +264,83 @@ final class SecondRoundTests: XCTestCase {
         XCTAssertNil(m.attributed.attribute(.attachment, at: 0, effectiveRange: nil))
     }
 }
+
+@MainActor
+final class ThirdRoundTests: XCTestCase {
+    var dir: URL!
+    override func setUp() { dir = FileManager.default.temporaryDirectory.appendingPathComponent("TaifaRound3-\(UUID().uuidString)") }
+    override func tearDown() { try? FileManager.default.removeItem(at: dir) }
+
+    func testUnknownSendOutcomesAreClassified() {
+        for e: Error in [APIError.transport("t"), APIError.decoding("empty"), APIError.http(status: 502, code: nil, message: ""), APIError.http(status: 504, code: nil, message: "Gateway Timeout"),
+                         APIError.http(status: 500, code: nil, message: ""), APIError.cancelled, APIError.sessionEnded, URLError(.badServerResponse)] {
+            XCTAssertTrue(ComposeModel.sendOutcomeIsUnknown(e), "\(e)")
+        }
+        for e: Error in [APIError.http(status: 422, code: "file_not_ready", message: "x"), APIError.http(status: 403, code: nil, message: "blocked"), APIError.http(status: 429, code: nil, message: "slow")] {
+            XCTAssertFalse(ComposeModel.sendOutcomeIsUnknown(e), "\(e)")
+        }
+    }
+
+    func testA502AfterAcceptanceLocksSendForever() async {
+        let svc = StubService()
+        svc.sendHandler = { throw APIError.http(status: 502, code: nil, message: "Bad Gateway") }
+        let m = ComposeModel(seed: ComposeSeed(), service: svc, from: "me@x.ke")
+        m.to = ["a@x.ke"]
+        let first = await m.send()
+        XCTAssertFalse(first)
+        XCTAssertTrue(m.isUnconfirmed); XCTAssertFalse(m.canSend)
+        let second = await m.send()
+        XCTAssertFalse(second); XCTAssertEqual(svc.sendCalls, 1, "no second request")
+    }
+
+    func testAnUnreadableAnswerAlsoLocksSend() async {
+        let svc = StubService()
+        svc.sendHandler = { throw APIError.decoding("empty body") }
+        let m = ComposeModel(seed: ComposeSeed(), service: svc, from: "me@x.ke")
+        m.to = ["a@x.ke"]
+        _ = await m.send()
+        XCTAssertTrue(m.isUnconfirmed); XCTAssertFalse(m.canSend)
+    }
+
+    func testADefiniteRefusalAllowsFixingAndResending() async {
+        let svc = StubService()
+        svc.sendHandler = { throw APIError.http(status: 422, code: "file_not_ready", message: "Wait for the scan") }
+        let m = ComposeModel(seed: ComposeSeed(), service: svc, from: "me@x.ke")
+        m.to = ["a@x.ke"]
+        _ = await m.send()
+        XCTAssertFalse(m.isUnconfirmed); XCTAssertTrue(m.canSend)
+    }
+
+    func testCorruptCacheFilesAreDeletedAndRecreated() async throws {
+        let cache = OfflineCache(directory: dir)
+        await cache.saveFolders(Fixture.decode([Folder].self, "folders"), mailbox: "mb")
+        let file = dir.appendingPathComponent(OfflineCache.safe("mb")).appendingPathComponent("folders.json")
+        try Data("garbage that is not a sealed box".utf8).write(to: file)
+        let r = await cache.folders(mailbox: "mb")
+        XCTAssertNil(r); XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        await cache.saveFolders(Fixture.decode([Folder].self, "folders"), mailbox: "mb")      // recreated
+        let again = await cache.folders(mailbox: "mb"); XCTAssertEqual(again?.count, 5)
+    }
+
+    func testACacheFolderThatIsAFileIsReplaced() async throws {
+        try FileManager.default.createDirectory(at: dir.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: dir)                                   // a file where the cache folder belongs
+        let cache = OfflineCache(directory: dir)
+        await cache.saveFolders(Fixture.decode([Folder].self, "folders"), mailbox: "mb")
+        let r = await cache.folders(mailbox: "mb"); XCTAssertEqual(r?.count, 5)
+    }
+
+    func testAKeyMismatchStartsFreshWithoutCrashing() async {
+        let a = OfflineCache(directory: dir)
+        await a.saveFolders(Fixture.decode([Folder].self, "folders"), mailbox: "mb")
+        let b = OfflineCache(directory: dir)                 // another install key
+        let miss = await b.folders(mailbox: "mb"); XCTAssertNil(miss)
+        await b.saveFolders(Fixture.decode([Folder].self, "folders"), mailbox: "mb")
+        let ok = await b.folders(mailbox: "mb"); XCTAssertEqual(ok?.count, 5)
+    }
+
+    func testSingleInstanceIgnoresItself() {
+        XCTAssertNil(SingleInstance.otherRunning(bundleID: "ke.govconnect.no-such-app"))
+        XCTAssertNil(SingleInstance.otherRunning(bundleID: nil))
+    }
+}

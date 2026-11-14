@@ -31,6 +31,8 @@ actor OfflineCache {
 
     private static func prepare(_ dir: URL) {
         let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: dir.path, isDirectory: &isDir), !isDir.boolValue { try? fm.removeItem(at: dir) }   // corrupt: a file where the folder belongs
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var u = dir
         var v = URLResourceValues(); v.isExcludedFromBackup = true
@@ -72,7 +74,11 @@ actor OfflineCache {
         }
         // Opening counts as use: the age cap drops what has not been opened for 30 days.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
-        return try? decoder.decode(T.self, from: plain)
+        guard let value = try? decoder.decode(T.self, from: plain) else {
+            try? fm.removeItem(at: url)   // decrypts but no longer decodes (older format or damage): drop it, it refetches
+            return nil
+        }
+        return value
     }
 
     // MARK: Folders

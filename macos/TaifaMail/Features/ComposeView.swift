@@ -224,6 +224,7 @@ struct ComposeView: View {
             }
             if !model.attachments.isEmpty { attachmentStrip }
             if case let .failed(m) = model.status { Banner(kind: .danger, icon: .danger, message: m).padding(Space.s3) }
+            if case let .unconfirmed(m) = model.status { Banner(kind: .warn, icon: .warning, message: m).padding(Space.s3).accessibilityIdentifier("compose-unconfirmed") }
             if let n = model.notice { Banner(kind: .warn, icon: .warning, message: n).padding(Space.s3) }
             if let e = model.attachmentError { Banner(kind: .danger, icon: .danger, message: e, actionTitle: "Dismiss") { model.attachmentError = nil }.padding(Space.s3) }
             footer

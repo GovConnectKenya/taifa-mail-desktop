@@ -144,7 +144,7 @@ final class ParityFixTests: XCTestCase {
         m.to = ["a@x.ke"]
         let ok = await m.send()
         XCTAssertFalse(ok); XCTAssertEqual(svc.sendCalls, 1)
-        if case let .failed(msg) = m.status { XCTAssertTrue(msg.contains("Sent folder")) } else { XCTFail() }
+        if case let .unconfirmed(msg) = m.status { XCTAssertTrue(msg.contains("Sent folder")) } else { XCTFail() }
     }
 
     func testNoSaveAfterSend() async {

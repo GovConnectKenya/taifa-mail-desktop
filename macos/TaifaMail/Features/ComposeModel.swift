@@ -124,7 +124,8 @@ enum Address {
 
 @MainActor @Observable
 final class ComposeModel {
-    enum Status: Equatable { case editing, sending, failed(String), sent }
+    /// `unconfirmed`: the server may have accepted the message but the answer was lost or unreadable. Send stays locked.
+    enum Status: Equatable { case editing, sending, failed(String), unconfirmed(String), sent }
 
     var to: [String]
     var cc: [String]
@@ -167,7 +168,19 @@ final class ComposeModel {
 
     var canSend: Bool {
         !allTo.isEmpty && allTo.allSatisfy(Address.isValid) && allCc.allSatisfy(Address.isValid) && allBcc.allSatisfy(Address.isValid)
-            && !hasUploading && !hasFailedAttachment && status != .sending && !closed
+            && !hasUploading && !hasFailedAttachment && status != .sending && !isUnconfirmed && !closed
+    }
+
+    var isUnconfirmed: Bool { if case .unconfirmed = status { return true }; return false }
+
+    /// True when a failed send might still have been accepted: timeouts and lost connections, any 5xx (a proxy
+    /// can answer 502 or 504 after the server accepted), an empty or unreadable body. Only a definite 4xx is safe to retry.
+    static func sendOutcomeIsUnknown(_ error: Error) -> Bool {
+        guard let e = error as? APIError else { return true }
+        switch e {
+        case .transport, .decoding, .cancelled, .sessionEnded: return true
+        case let .http(status, _, _): return status >= 500 || status == 0
+        }
     }
 
     func commitPending() {
@@ -358,9 +371,10 @@ final class ComposeModel {
             await trashDraft()
             return true
         } catch {
-            if case .transport = (error as? APIError) ?? .cancelled {
-                // The request may have reached the server: never auto-retry, tell the user to check Sent.
-                status = .failed("Could not confirm that the message was sent. Check your Sent folder before sending it again.")
+            if Self.sendOutcomeIsUnknown(error) {
+                // The request may have reached the server: never re-enable Send and never retry on our own.
+                status = .unconfirmed("The send could not be confirmed. Check your Sent folder before sending this message again.")
+                autosave?.cancel(); closed = true      // no draft save may race a message that might be on its way
             } else if case let .http(_, _, m) = (error as? APIError) ?? .cancelled, !m.isEmpty {
                 status = .failed(m)
             } else {

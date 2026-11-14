@@ -11,6 +11,14 @@ enum AuthMessages {
 /// What to do with a failed launch check. Only a session the client itself declared over (the refresh was
 /// refused with 401 or 403) ends it; offline, timeouts, 5xx, a bare 401 or a response the app cannot read all
 /// open the cached mailbox and retry.
+/// A second launch must not purge the first instance's temp files or touch its caches: it hands over and quits.
+enum SingleInstance {
+    static func otherRunning(bundleID: String? = Bundle.main.bundleIdentifier, pid: pid_t = ProcessInfo.processInfo.processIdentifier) -> NSRunningApplication? {
+        guard let bundleID else { return nil }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { $0.processIdentifier != pid && !$0.isTerminated }
+    }
+}
+
 enum LaunchDecision: Equatable {
     case endSession, openOffline
     static func classify(_ error: Error) -> LaunchDecision { (error as? APIError) == .sessionEnded ? .endSession : .openOffline }
@@ -99,6 +107,12 @@ final class AppModel {
         #if DEBUG
         if isPreview { startPreview(); return }
         #endif
+        // One instance only: hand over to the running one before touching any shared file.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil, let other = SingleInstance.otherRunning() {
+            other.activate()
+            NSApp.terminate(nil)
+            return
+        }
         AttachmentFiles.purge()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in AttachmentFiles.purge() }
         cookies.restore()
