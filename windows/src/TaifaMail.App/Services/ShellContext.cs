@@ -21,4 +21,5 @@ public sealed class ShellContext
     public Func<Task> SignOut { get; init; } = () => Task.CompletedTask;
     public Func<string, Task> SwitchMailbox { get; init; } = _ => Task.CompletedTask;
     public bool IsPreview { get; init; }
+    public Action<string> ApplyTheme { get; init; } = _ => { };
 }

@@ -75,6 +75,33 @@ public sealed class MailApi : IMailApi
     public Task<ApiBatchResult> BatchDeleteAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) =>
         _api.PostAsync<ApiBatchResult>(P("/messages/batch/delete" + Q(("folder", folder))), new { uids }, ct);
 
+    public Task<ApiQuota?> QuotaAsync(CancellationToken ct = default) => _api.GetAsync<ApiQuota?>(P("/quota"), ct);
+
+    public Task<ApiBatchResult> BatchSpamAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) =>
+        _api.PostAsync<ApiBatchResult>(P("/messages/batch/spam" + Q(("folder", folder))), new { uids }, ct);
+
+    public Task<ApiResolved> ResolveAsync(string messageId, string folder, CancellationToken ct = default) =>
+        _api.GetAsync<ApiResolved>(P("/messages/resolve" + Q(("message_id", messageId), ("folder", folder))), ct);
+
+    public Task<ApiConversationWindow> OlderAsync(long uid, string folder, long before, CancellationToken ct = default) =>
+        ConversationAsync(uid, folder, 20, before, ct);
+
+    public Task<ApiContactList> ContactsAsync(string q, int limit = 8, CancellationToken ct = default) =>
+        _api.GetAsync<ApiContactList>("/v1/mailbox/contacts/" + Q(("q", q), ("limit", limit)), ct);
+
+    public Task<ApiFileTicket> CreateUploadAsync(string filename, string mime, long size, CancellationToken ct = default) =>
+        _api.PostAsync<ApiFileTicket>("/v1/files/", new { filename, mime, size, access = "link", mailbox_id = MailboxId, expires_in_days = (int?)null }, ct);
+
+    public Task<ApiFileEnvelope> CompleteUploadAsync(string fileId, CancellationToken ct = default) =>
+        _api.PostAsync<ApiFileEnvelope>($"/v1/files/{Uri.EscapeDataString(fileId)}/complete", null, ct);
+
+    public Task DeleteUploadAsync(string fileId, CancellationToken ct = default) => _api.DeleteAsync($"/v1/files/{Uri.EscapeDataString(fileId)}", ct);
+
+    public Task<ApiStaged> StageAttachmentsAsync(long uid, string folder, CancellationToken ct = default) =>
+        _api.PostAsync<ApiStaged>(P($"/messages/{uid}/stage-attachments" + Q(("folder", folder))), null, ct);
+
+    public Task UploadBytesAsync(ApiUploadTarget target, Stream content, CancellationToken ct = default) => _api.PutPresignedAsync(target, content, ct);
+
     public Task<AvatarBatchResponse> AvatarsAsync(IReadOnlyCollection<string> emails, CancellationToken ct = default) =>
         _api.PostAsync<AvatarBatchResponse>(P("/avatars/batch"), new { emails }, ct);
 

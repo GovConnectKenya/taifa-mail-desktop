@@ -72,6 +72,7 @@ public sealed class AppController
             Api = _svc.Api,
             Notifications = _svc.Notifications,
             SaveSettings = _svc.SaveSettings,
+            ApplyTheme = t => _window.ApplyTheme(t),
             Auth = _svc.Auth,
             Me = me,
             ApiBase = _svc.Api.BaseUri.ToString().TrimEnd('/'),

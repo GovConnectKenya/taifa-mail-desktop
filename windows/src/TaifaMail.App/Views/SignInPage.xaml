@@ -18,8 +18,8 @@
       <StackPanel Spacing="16">
         <StackPanel Spacing="8">
           <ctl:LogoView HeightPx="56" HorizontalAlignment="Left"/>
-          <TextBlock Text="Taifa Mail" Style="{StaticResource TmHero}"/>
-          <TextBlock x:Name="Subtitle" Text="Sign in to your mailbox" Style="{StaticResource TmMeta}"/>
+          <TextBlock Text="Sign in to Taifa Mail" Style="{StaticResource TmDisplay}"/>
+          <TextBlock x:Name="Subtitle" Text="Sign in with your mailbox address and password to read and send mail." Style="{StaticResource TmMeta}" TextWrapping="Wrap"/>
         </StackPanel>
 
         <InfoBar x:Name="EndedBar" Severity="Warning" IsOpen="False" IsClosable="False" Message="Your session ended. Sign in again."/>
@@ -41,7 +41,7 @@
                          KeyDown="OnFieldKeyDown"/>
           </StackPanel>
           <InfoBar Severity="Error" IsClosable="False" IsOpen="{x:Bind svc:Fmt.HasText(Vm.Error), Mode=OneWay}" Message="{x:Bind Vm.Error, Mode=OneWay}"/>
-          <Button x:Name="SignInButton" Style="{StaticResource TmPrimaryButton}" HorizontalAlignment="Stretch" Height="36"
+          <Button x:Name="SignInButton" Style="{StaticResource TmPrimaryButton}" HorizontalAlignment="Stretch" Height="40"
                   IsEnabled="{x:Bind Vm.CanSubmitPassword, Mode=OneWay}" Click="OnSignIn" AutomationProperties.Name="Sign in">
             <Grid>
               <TextBlock Text="Sign in" Visibility="{x:Bind svc:Fmt.Hide(Vm.Busy), Mode=OneWay}" HorizontalAlignment="Center"/>
@@ -63,7 +63,7 @@
                      Text="{x:Bind Vm.Code, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{x:Bind Vm.Idle, Mode=OneWay}" KeyDown="OnCodeKeyDown"/>
           </StackPanel>
           <InfoBar Severity="Error" IsClosable="False" IsOpen="{x:Bind svc:Fmt.HasText(Vm.Error), Mode=OneWay}" Message="{x:Bind Vm.Error, Mode=OneWay}"/>
-          <Button Style="{StaticResource TmPrimaryButton}" HorizontalAlignment="Stretch" Height="36" Click="OnVerify" IsEnabled="{x:Bind Vm.Idle, Mode=OneWay}">
+          <Button Style="{StaticResource TmPrimaryButton}" HorizontalAlignment="Stretch" Height="40" Click="OnVerify" IsEnabled="{x:Bind Vm.Idle, Mode=OneWay}">
             <Grid>
               <TextBlock Text="Verify" Visibility="{x:Bind svc:Fmt.Hide(Vm.Busy), Mode=OneWay}" HorizontalAlignment="Center"/>
               <ProgressRing IsActive="{x:Bind Vm.Busy, Mode=OneWay}" Width="16" Height="16" Foreground="White" HorizontalAlignment="Center"/>

@@ -1,22 +1,24 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
-using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using TaifaMail.App.Controls;
 using TaifaMail.App.Services;
 using TaifaMail.Core.Avatars;
+using TaifaMail.Core.Compose;
 using TaifaMail.Core.Content;
 using TaifaMail.Core.Models;
 using TaifaMail.Core.Net;
+using TaifaMail.Core.Notifications;
+using TaifaMail.Core.Realtime;
 using TaifaMail.Core.ViewModels;
 using Windows.Storage;
 using Windows.Storage.Pickers;
-using TaifaMail.Core.Notifications;
-using TaifaMail.Core.Realtime;
 using Windows.System;
 
 namespace TaifaMail.App.Views;
@@ -29,13 +31,17 @@ public sealed partial class ShellPage : Page, IChromePage
     private CancellationTokenSource? _searchDelay;
     private ScrollViewer? _listScroll;
     private bool _buildingNav;
+    private bool _draggingSplitter;
+    private double _splitterStartX, _splitterStartWidth;
     private RealtimeClient? _realtime;
     private CancellationTokenSource? _reconcileDelay;
     private System.Threading.Timer? _poll;
     private long? _highWater;
     private bool _connected;
-    private bool _draggingSplitter;
-    private double _splitterStartX, _splitterStartWidth;
+    private Func<Task>? _toastUndo;
+    private DispatcherTimer? _toastTimer;
+    private Func<Task>? _lastUndo;
+    private SettingsWindow? _settings;
 
     public FrameworkElement TitleBarElement => TitleRow;
     public IEnumerable<FrameworkElement> InteractiveElements => new FrameworkElement[] { SearchHost, CommandHost };
@@ -44,9 +50,11 @@ public sealed partial class ShellPage : Page, IChromePage
     public ShellPage(ShellContext ctx)
     {
         _ctx = ctx;
-        Vm = new MailShellViewModel(ctx.Mail, ctx.ApiBase, ctx.Cache) { OwnAddress = ctx.Me.Address };
+        Vm = new MailShellViewModel(ctx.Mail, ctx.ApiBase, ctx.Cache) { OwnAddress = ctx.Me.Address, Compact = ctx.Settings.Density == "compact" };
         InitializeComponent();
         Skeleton.ItemsSource = new int[8];
+        ToastPill.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(150) };
+        ToastPill.TranslationTransition = new Vector3Transition { Duration = TimeSpan.FromMilliseconds(150) };
 
         IdentityName.Text = string.IsNullOrWhiteSpace(ctx.Me.DisplayName) ? ctx.Me.Address : ctx.Me.DisplayName;
         IdentityAddress.Text = ctx.Me.Address;
@@ -58,11 +66,27 @@ public sealed partial class ShellPage : Page, IChromePage
 
         Vm.Folders.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(RebuildNav);
         Vm.Threads.CollectionChanged += (_, _) => UpdateListState();
-        Vm.OpenMessages.CollectionChanged += OnOpenMessagesChanged;
+        Vm.OpenMessages.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateReaderState);
         Vm.PropertyChanged += OnVmChanged;
+        Vm.Notice += (msg, undo) => DispatcherQueue.TryEnqueue(() => ShowToast(msg, undo));
 
-        AddAccelerator(VirtualKey.F5, VirtualKeyModifiers.None, () => _ = Vm.ReconcileAsync());
-        AddAccelerator(VirtualKey.E, VirtualKeyModifiers.Control, () => SearchBox.Focus(FocusState.Programmatic));
+        // Windows shortcut table (docs/native/DESIGN_SPEC.md section 9)
+        Accel(VirtualKey.F5, VirtualKeyModifiers.None, () => _ = Vm.ReconcileAsync(), allowInText: true);
+        Accel(VirtualKey.N, VirtualKeyModifiers.Control, () => OpenCompose(ComposeSeeds.Blank()), allowInText: true);
+        Accel(VirtualKey.R, VirtualKeyModifiers.Control, () => ReplyTo(ComposeMode.Reply), allowInText: true);
+        Accel(VirtualKey.R, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => ReplyTo(ComposeMode.ReplyAll), allowInText: true);
+        Accel(VirtualKey.F, VirtualKeyModifiers.Control, () => ReplyTo(ComposeMode.Forward), allowInText: false);
+        Accel(VirtualKey.E, VirtualKeyModifiers.None, () => _ = Vm.ArchiveAsync(Targets()), allowInText: false);
+        Accel(VirtualKey.Delete, VirtualKeyModifiers.None, () => _ = Vm.DeleteAsync(Targets()), allowInText: false);
+        Accel(VirtualKey.J, VirtualKeyModifiers.Control, () => _ = Vm.JunkAsync(Targets()), allowInText: true);
+        Accel(VirtualKey.G, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => _ = Vm.ToggleFlagAsync(Targets()), allowInText: true);
+        Accel(VirtualKey.U, VirtualKeyModifiers.Control, () => _ = Vm.SetReadAsync(Targets(), read: false), allowInText: true);
+        Accel(VirtualKey.Q, VirtualKeyModifiers.Control, () => _ = Vm.SetReadAsync(Targets(), read: true), allowInText: true);
+        Accel(VirtualKey.E, VirtualKeyModifiers.Control, () => FocusSearch(all: false), allowInText: true);
+        Accel(VirtualKey.F, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => FocusSearch(all: true), allowInText: true);
+        Accel(VirtualKey.Z, VirtualKeyModifiers.Control, () => { if (_lastUndo is { } u) { _lastUndo = null; _ = u(); HideToast(); } }, allowInText: false);
+        Accel((VirtualKey)188, VirtualKeyModifiers.Control, OpenSettings, allowInText: true);
+
         Loaded += async (_, _) =>
         {
             UpdateListState();
@@ -75,11 +99,36 @@ public sealed partial class ShellPage : Page, IChromePage
         Unloaded += async (_, _) => await StopRealtimeAsync();
     }
 
-    private void AddAccelerator(VirtualKey key, VirtualKeyModifiers mods, Action action)
+    // ---- accelerators ----
+
+    private void Accel(VirtualKey key, VirtualKeyModifiers mods, Action action, bool allowInText)
     {
         var a = new KeyboardAccelerator { Key = key, Modifiers = mods };
-        a.Invoked += (_, e) => { action(); e.Handled = true; };
+        a.Invoked += (_, e) =>
+        {
+            if (!allowInText && TextIsFocused()) return;
+            action();
+            e.Handled = true;
+        };
         KeyboardAccelerators.Add(a);
+    }
+
+    private bool TextIsFocused() => FocusManager.GetFocusedElement(XamlRoot) is TextBox or PasswordBox or RichEditBox or AutoSuggestBox;
+
+    private void FocusSearch(bool all)
+    {
+        Vm.SearchAllFolders = all;
+        SearchBox.PlaceholderText = all ? "Search all folders" : "Search in this folder";
+        SearchBox.Focus(FocusState.Programmatic);
+        SearchBox.SelectAll();
+    }
+
+    /// <summary>The rows an action applies to: the multi selection, else the open conversation.</summary>
+    private IReadOnlyList<ThreadRow> Targets()
+    {
+        var sel = ThreadList.SelectedItems.OfType<ThreadRow>().ToList();
+        if (sel.Count > 0) return sel;
+        return Vm.SelectedThread is { } r ? new[] { r } : Array.Empty<ThreadRow>();
     }
 
     // ---- state ----
@@ -94,28 +143,51 @@ public sealed partial class ShellPage : Page, IChromePage
                 case nameof(MailShellViewModel.IsEmpty):
                 case nameof(MailShellViewModel.Searching):
                 case nameof(MailShellViewModel.SelectedFolder):
+                case nameof(MailShellViewModel.Error):
+                case nameof(MailShellViewModel.Total):
                     UpdateListState();
                     break;
                 case nameof(MailShellViewModel.TotalUnread):
                     UpdateBadge();
                     break;
+                case nameof(MailShellViewModel.Quota):
+                    UpdateQuota();
+                    break;
                 case nameof(MailShellViewModel.OpenLoading):
                 case nameof(MailShellViewModel.OpenError):
                 case nameof(MailShellViewModel.SelectedThread):
+                case nameof(MailShellViewModel.HasMoreOlder):
+                case nameof(MailShellViewModel.OpenUnavailableOffline):
                     UpdateReaderState();
                     break;
             }
         });
     }
 
+    private void UpdateQuota()
+    {
+        if (Vm.Quota is not { } q) { QuotaPanel.Visibility = Visibility.Collapsed; return; }
+        QuotaPanel.Visibility = Visibility.Visible;
+        QuotaBar.Value = q.Percent ?? (q.LimitBytes is > 0 ? 100.0 * q.UsedBytes / q.LimitBytes.Value : 0);
+        QuotaText.Text = q.LimitBytes is { } lim ? $"{ApiAttachmentExt.Human(q.UsedBytes)} of {ApiAttachmentExt.Human(lim)} used" : $"{ApiAttachmentExt.Human(q.UsedBytes)} used";
+    }
+
     private void UpdateListState()
     {
-        ListTitle.Text = Vm.Searching ? $"Search: {Vm.SearchText}" : (Vm.SelectedFolder?.Name ?? "");
-        var loadingEmpty = Vm.Loading && Vm.Threads.Count == 0;
-        Skeleton.Visibility = loadingEmpty ? Visibility.Visible : Visibility.Collapsed;
-        var empty = !Vm.Loading && Vm.Threads.Count == 0 && Vm.SelectedFolder is not null;
+        var folder = Vm.SelectedFolder;
+        ListTitle.Text = Vm.Searching ? $"Search: {Vm.SearchText}" : (folder?.Name ?? "");
+        ListCounts.Text = Vm.Searching ? $"{Vm.Threads.Count:N0} results" : Fmt.Unreadline(Vm.Total, folder?.Unseen ?? 0);
+        var noRows = Vm.Threads.Count == 0;
+        var failed = noRows && !Vm.Loading && !string.IsNullOrEmpty(Vm.Error);
+        Skeleton.Visibility = noRows && Vm.Loading ? Visibility.Visible : Visibility.Collapsed;
+        ErrorState.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
+        ErrorTitle.Text = $"Couldn't load {folder?.Name ?? "this folder"}";
+        ErrorMessage.Text = Vm.Error ?? "";
+        ErrorBar.IsOpen = !noRows && !string.IsNullOrEmpty(Vm.Error);
+        var empty = noRows && !Vm.Loading && !failed && folder is not null;
         EmptyState.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
-        EmptyHint.Text = Vm.Searching ? "No messages match your search." : "This folder has no messages.";
+        EmptyLogo.Visibility = empty && folder?.Path == "INBOX" && !Vm.Searching ? Visibility.Visible : Visibility.Collapsed;
+        EmptyHint.Text = "No messages match this view.";
     }
 
     private void UpdateReaderState()
@@ -123,92 +195,19 @@ public sealed partial class ShellPage : Page, IChromePage
         var hasCards = Vm.OpenMessages.Count > 0;
         var loading = Vm.SelectedThread is not null && Vm.OpenLoading && !hasCards;
         var failed = Vm.SelectedThread is not null && !Vm.OpenLoading && !hasCards && !string.IsNullOrEmpty(Vm.OpenError);
-        ReaderScroll.Visibility = hasCards ? Visibility.Visible : Visibility.Collapsed;
+        ReaderGrid.Visibility = hasCards ? Visibility.Visible : Visibility.Collapsed;
         ReaderSkeleton.Visibility = loading ? Visibility.Visible : Visibility.Collapsed;
         ReaderError.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
-        ReaderEmpty.Visibility = Vm.SelectedThread is null || (!hasCards && !loading && !failed) ? Visibility.Visible : Visibility.Collapsed;
-        ReaderErrorText.Text = Vm.OpenError ?? "";
-        if (hasCards) ReaderSubject.Text = Vm.OpenMessages[^1].Subject;
+        var multi = ThreadList.SelectedItems.Count > 1;
+        ReaderEmpty.Visibility = !hasCards && !loading && !failed ? Visibility.Visible : Visibility.Collapsed;
+        ReaderEmptyTitle.Text = multi ? $"{ThreadList.SelectedItems.Count} conversations selected" : "Select a conversation";
+        ReaderEmptyHint.Text = multi ? "Use the toolbar above the list to act on all of them." : "Choose a message from the list to read it here.";
+        ReaderErrorTitle.Text = Vm.OpenUnavailableOffline ? "Not available offline" : "Couldn't load this message";
+        ReaderErrorText.Text = Vm.OpenUnavailableOffline ? "This message has not been opened on this computer yet." : Vm.OpenError ?? "";
+        ReadBar.IsOpen = hasCards && !string.IsNullOrEmpty(Vm.OpenError);
+        EarlierPill.Visibility = hasCards && Vm.HasMoreOlder ? Visibility.Visible : Visibility.Collapsed;
+        if (hasCards) { ReaderSubject.Text = Vm.OpenMessages[^1].Subject; PositionText.Text = Vm.OpenPosition; }
     }
-
-    // ---- realtime, toasts, badge ----
-
-    private void StartRealtime()
-    {
-        if (_ctx.Api is null || _realtime is not null) return;
-        _ctx.Notifications?.Register(DispatcherQueue);
-        if (_ctx.Notifications is { } n) n.ThreadRequested += OnToastActivated;
-        _realtime = new RealtimeClient(_ctx.Api);
-        _realtime.EventReceived += e =>
-        {
-            if (!e.IsFor(_ctx.Mail.MailboxId) || e.Kind is RealtimeKind.Connected or RealtimeKind.Pong) return;
-            ScheduleReconcile();
-        };
-        _realtime.ConnectionChanged += up => { _connected = up; DispatcherQueue.TryEnqueue(() => { if (up) Vm.Offline = false; }); };
-        _realtime.Reconnected += () => ScheduleReconcile();
-        _realtime.Start();
-        // While the socket is down, a 60 second REST poll keeps the list and the badge honest (contract section 8).
-        _poll = new System.Threading.Timer(_ => { if (!_connected) ScheduleReconcile(); }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
-    }
-
-    private async Task StopRealtimeAsync()
-    {
-        _poll?.Dispose();
-        if (_ctx.Notifications is { } n) n.ThreadRequested -= OnToastActivated;
-        if (_realtime is { } rt) { _realtime = null; await rt.StopAsync(); }
-    }
-
-    private void ScheduleReconcile()
-    {
-        _reconcileDelay?.Cancel();
-        var cts = _reconcileDelay = new CancellationTokenSource();
-        _ = Task.Run(async () =>
-        {
-            try { await Task.Delay(500, cts.Token); } catch (OperationCanceledException) { return; }
-            DispatcherQueue.TryEnqueue(async () =>
-            {
-                if (cts.IsCancellationRequested || Vm.Searching) return;
-                await Vm.ReconcileAsync();
-                await CheckNewMailAsync();
-            });
-        });
-    }
-
-    private async Task CheckNewMailAsync()
-    {
-        try
-        {
-            var page = await _ctx.Mail.ConversationsAsync("INBOX", 20, 0);
-            var latest = page.Items.Select(i => i.Latest).ToList();
-            var decision = NotifyPolicy.Decide(latest, _highWater, _ctx.Me.Address, _ctx.Settings.NewMailAlerts);
-            _highWater = decision.HighWater;
-            if (!_ctx.IsPreview)
-                foreach (var t in NotifyPolicy.Collapse(decision.Toasts)) _ctx.Notifications?.Show(t);
-        }
-        catch (Exception e) when (e is ApiRequestError or ApiTransportError) { }
-        UpdateBadge();
-    }
-
-    private void UpdateBadge()
-    {
-        if (_ctx.Notifications is null || _ctx.IsPreview || App.MainWindow is null) return;
-        var label = NotifyPolicy.BadgeLabel(Vm.TotalUnread, _ctx.Settings.TaskbarBadge);
-        _ctx.Notifications.SetBadge(WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow), label);
-    }
-
-    private async void OnToastActivated(string folder, long uid)
-    {
-        var inbox = Vm.Folders.FirstOrDefault(f => f.Path == folder) ?? Vm.Folders.FirstOrDefault(f => f.Path == "INBOX");
-        if (inbox is null) return;
-        if (Vm.SelectedFolder?.Path != inbox.Path || Vm.Searching) { SearchBox.Text = ""; await Vm.LoadFolderAsync(inbox); }
-        else await Vm.ReconcileAsync();
-        var row = Vm.Threads.FirstOrDefault(t => t.Uids.Contains(uid));
-        if (row is null) return;
-        ThreadList.SelectedItem = row;
-        if (!ReferenceEquals(Vm.SelectedThread, row)) await Vm.OpenAsync(row);
-    }
-
-    private void OnOpenMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e) => DispatcherQueue.TryEnqueue(UpdateReaderState);
 
     // ---- sidebar ----
 
@@ -222,8 +221,7 @@ public sealed partial class ShellPage : Page, IChromePage
             NavigationViewItem? selected = null;
             foreach (var f in Vm.Folders)
             {
-                var special = Fmt.IconFor(f) != "folder";
-                if (!special && !addedHeader)
+                if (Fmt.IconFor(f) == "folder" && !addedHeader)
                 {
                     addedHeader = true;
                     Nav.MenuItems.Add(new NavigationViewItemHeader { Content = "Folders" });
@@ -237,24 +235,22 @@ public sealed partial class ShellPage : Page, IChromePage
         finally { _buildingNav = false; }
     }
 
+    private static string Esc(string s) => System.Security.SecurityElement.Escape(s) ?? "";
+
     private NavigationViewItem BuildFolderItem(ApiFolder f)
     {
-        var grid = new Grid { ColumnSpacing = 8, Height = 24 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var icon = new IconView { IconName = Fmt.IconFor(f), Size = 16, VerticalAlignment = VerticalAlignment.Center };
-        icon.SetValue(Grid.ColumnProperty, 0);
-        var label = new TextBlock { Text = f.Name, Style = (Style)Application.Current.Resources["TmBody"], VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-        label.SetValue(Grid.ColumnProperty, 1);
-        var badgeText = Fmt.FolderBadge(f);
-        var badge = new TextBlock { Text = badgeText, Style = (Style)Application.Current.Resources["TmCaption"], VerticalAlignment = VerticalAlignment.Center, Visibility = badgeText.Length > 0 ? Visibility.Visible : Visibility.Collapsed };
-        badge.SetValue(Grid.ColumnProperty, 2);
-        grid.Children.Add(icon);
-        grid.Children.Add(label);
-        grid.Children.Add(badge);
-        var item = new NavigationViewItem { Content = grid, Tag = f, MinHeight = 32, Height = 32 };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, badgeText.Length > 0 ? $"{f.Name}, {badgeText}" : f.Name);
+        var badge = Fmt.FolderBadge(f);
+        var unreadCount = f.SpecialUse is { } su && su.Contains("draft", StringComparison.OrdinalIgnoreCase) ? 0 : f.Unseen;
+        var countBrush = unreadCount > 0 ? "{ThemeResource TmAccentInkBrush}" : "{ThemeResource TmText3Brush}";
+        var countFont = unreadCount > 0 ? "{StaticResource TmMonoSemi}" : "{StaticResource TmMonoMedium}";
+        var xaml = $@"<Grid xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:ctl='using:TaifaMail.App.Controls' ColumnSpacing='12' Height='36'>
+  <Grid.ColumnDefinitions><ColumnDefinition Width='Auto'/><ColumnDefinition Width='*'/><ColumnDefinition Width='Auto'/></Grid.ColumnDefinitions>
+  <ctl:IconView IconName='{Fmt.IconFor(f)}' Size='16' VerticalAlignment='Center'/>
+  <TextBlock Grid.Column='1' Text='{Esc(f.Name)}' FontFamily='{{StaticResource TmFontMedium}}' FontSize='13' VerticalAlignment='Center' TextTrimming='CharacterEllipsis'/>
+  <TextBlock Grid.Column='2' Text='{Esc(badge)}' FontFamily='{countFont}' FontSize='11' Foreground='{countBrush}' VerticalAlignment='Center'/>
+</Grid>";
+        var item = new NavigationViewItem { Content = (UIElement)XamlReader.Load(xaml), Tag = f, MinHeight = 36, Height = 36, CornerRadius = new CornerRadius(8), Margin = new Thickness(8, 1, 8, 1) };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, badge.Length > 0 ? $"{f.Name}, {badge}" : f.Name);
         return item;
     }
 
@@ -278,16 +274,23 @@ public sealed partial class ShellPage : Page, IChromePage
             IdentityFlyout.Items.Add(item);
         }
         if (_siblings.Count > 0) IdentityFlyout.Items.Add(new MenuFlyoutSeparator());
-        var alerts = new ToggleMenuFlyoutItem { Text = "New mail notifications", IsChecked = _ctx.Settings.NewMailAlerts };
-        alerts.Click += (_, _) => { _ctx.Settings.NewMailAlerts = alerts.IsChecked; _ctx.SaveSettings(); };
-        var badge = new ToggleMenuFlyoutItem { Text = "Taskbar badge", IsChecked = _ctx.Settings.TaskbarBadge };
-        badge.Click += (_, _) => { _ctx.Settings.TaskbarBadge = badge.IsChecked; _ctx.SaveSettings(); UpdateBadge(); };
-        IdentityFlyout.Items.Add(alerts);
-        IdentityFlyout.Items.Add(badge);
+        var settings = new MenuFlyoutItem { Text = "Settings", KeyboardAcceleratorTextOverride = "Ctrl+," };
+        settings.Click += (_, _) => OpenSettings();
+        IdentityFlyout.Items.Add(settings);
         IdentityFlyout.Items.Add(new MenuFlyoutSeparator());
-        var signOut = new MenuFlyoutItem { Text = "Sign out" };
+        var signOut = (MenuFlyoutItem)XamlReader.Load("<MenuFlyoutItem xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Text='Sign out' Foreground='{ThemeResource TmDangerFgBrush}'/>");
         signOut.Click += async (_, _) => await _ctx.SignOut();
         IdentityFlyout.Items.Add(signOut);
+    }
+
+    private void OnOpenSettings(object sender, RoutedEventArgs e) => OpenSettings();
+
+    private void OpenSettings()
+    {
+        if (_settings is not null) { _settings.Activate(); return; }
+        _settings = new SettingsWindow(_ctx, density => { Vm.Compact = density == "compact"; }, UpdateBadge);
+        _settings.Closed += (_, _) => _settings = null;
+        _settings.Activate();
     }
 
     // ---- thread list ----
@@ -304,13 +307,152 @@ public sealed partial class ShellPage : Page, IChromePage
     private void OnThreadSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var count = ThreadList.SelectedItems.Count;
-        SelectedCount.Visibility = count > 1 ? Visibility.Visible : Visibility.Collapsed;
-        SelectedCount.Text = $"{count} selected";
+        BulkBar.Visibility = count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        ListHeader.Visibility = count > 1 ? Visibility.Collapsed : Visibility.Visible;
+        BulkCount.Text = $"{count} selected";
         if (count == 1 && ThreadList.SelectedItem is ThreadRow row && !ReferenceEquals(Vm.SelectedThread, row)) _ = Vm.OpenAsync(row);
+        UpdateReaderState();
     }
 
     private void OnRefresh(object sender, RoutedEventArgs e) => _ = Vm.ReconcileAsync();
     private void OnRetryOpen(object sender, RoutedEventArgs e) { if (Vm.SelectedThread is { } r) _ = Vm.OpenAsync(r); }
+    private void OnShowEarlier(object sender, TappedRoutedEventArgs e) => _ = Vm.LoadOlderAsync();
+
+    private void OnBulkArchive(object sender, RoutedEventArgs e) => _ = Vm.ArchiveAsync(Targets());
+    private void OnBulkDelete(object sender, RoutedEventArgs e) => _ = Vm.DeleteAsync(Targets());
+    private void OnBulkRead(object sender, RoutedEventArgs e) => _ = Vm.SetReadAsync(Targets(), read: true);
+    private void OnBulkStar(object sender, RoutedEventArgs e) => _ = Vm.ToggleFlagAsync(Targets());
+
+    // hover actions and context menu
+    private static ThreadRow? RowOf(object sender) => (sender as FrameworkElement)?.DataContext as ThreadRow;
+    private void OnRowPointerEntered(object sender, PointerRoutedEventArgs e) => SetActions(sender, Visibility.Visible);
+    private void OnRowPointerExited(object sender, PointerRoutedEventArgs e) => SetActions(sender, Visibility.Collapsed);
+    private static void SetActions(object sender, Visibility v)
+    {
+        if (sender is Grid g && g.Children.OfType<Border>().FirstOrDefault(b => b.Name == "RowActions") is { } b) b.Visibility = v;
+    }
+    private void OnRowArchive(object sender, RoutedEventArgs e) { if (RowOf(sender) is { } r) _ = Vm.ArchiveAsync(new[] { r }); }
+    private void OnRowDelete(object sender, RoutedEventArgs e) { if (RowOf(sender) is { } r) _ = Vm.DeleteAsync(new[] { r }); }
+    private void OnRowToggleRead(object sender, RoutedEventArgs e) { if (RowOf(sender) is { } r) _ = Vm.SetReadAsync(new[] { r }, read: r.Unread); }
+    private void OnRowStar(object sender, RoutedEventArgs e) { if (RowOf(sender) is { } r) _ = Vm.ToggleFlagAsync(new[] { r }); }
+
+    private void OnRowContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    {
+        if (RowOf(sender) is not { } row) return;
+        var rows = ThreadList.SelectedItems.OfType<ThreadRow>().Contains(row) ? ThreadList.SelectedItems.OfType<ThreadRow>().ToList() : new List<ThreadRow> { row };
+        var menu = new MenuFlyout();
+        void Add(string text, Action act, string? accel = null)
+        {
+            var mi = new MenuFlyoutItem { Text = text };
+            if (accel is not null) mi.KeyboardAcceleratorTextOverride = accel;
+            mi.Click += (_, _) => act();
+            menu.Items.Add(mi);
+        }
+        if (rows.Count == 1) { Add("Reply", () => { _ = Vm.OpenAsync(row); ReplyTo(ComposeMode.Reply); }, "Ctrl+R"); menu.Items.Add(new MenuFlyoutSeparator()); }
+        Add("Archive", () => _ = Vm.ArchiveAsync(rows), "E");
+        Add("Delete", () => _ = Vm.DeleteAsync(rows), "Del");
+        Add("Mark as junk", () => _ = Vm.JunkAsync(rows), "Ctrl+J");
+        menu.Items.Add(new MenuFlyoutSeparator());
+        Add(rows.Any(r => r.Unread) ? "Mark as read" : "Mark as unread", () => _ = Vm.SetReadAsync(rows, read: rows.Any(r => r.Unread)), rows.Any(r => r.Unread) ? "Ctrl+Q" : "Ctrl+U");
+        Add(rows.All(r => r.Flagged) ? "Remove star" : "Star", () => _ = Vm.ToggleFlagAsync(rows), "Ctrl+Shift+G");
+        var move = new MenuFlyoutSubItem { Text = "Move to" };
+        foreach (var f in Vm.Folders.Where(f => f.Path != Vm.SelectedFolder?.Path))
+        {
+            var mi = new MenuFlyoutItem { Text = f.Name };
+            var path = f.Path;
+            mi.Click += (_, _) => _ = Vm.MoveToAsync(rows, path);
+            move.Items.Add(mi);
+        }
+        menu.Items.Add(move);
+        if (args.TryGetPosition(sender, out var pos)) menu.ShowAt(sender, new FlyoutShowOptions { Position = pos });
+        else menu.ShowAt(sender);
+        args.Handled = true;
+    }
+
+    // ---- reader toolbar ----
+
+    private IReadOnlyList<ThreadRow> Open() => Vm.SelectedThread is { } r ? new[] { r } : Array.Empty<ThreadRow>();
+    private void OnReaderArchive(object sender, RoutedEventArgs e) => _ = Vm.ArchiveAsync(Open());
+    private void OnReaderJunk(object sender, RoutedEventArgs e) => _ = Vm.JunkAsync(Open());
+    private void OnReaderDelete(object sender, RoutedEventArgs e) => _ = Vm.DeleteAsync(Open());
+    private void OnReaderUnread(object sender, RoutedEventArgs e) => _ = Vm.SetReadAsync(Open(), read: false);
+    private void OnReaderStar(object sender, RoutedEventArgs e) => _ = Vm.ToggleFlagAsync(Open());
+
+    private void OnMoveOpening(object? sender, object e)
+    {
+        MoveFlyout.Items.Clear();
+        foreach (var f in Vm.Folders.Where(f => f.Path != Vm.SelectedFolder?.Path))
+        {
+            var mi = new MenuFlyoutItem { Text = f.Name };
+            var path = f.Path;
+            mi.Click += (_, _) => _ = Vm.MoveToAsync(Open(), path);
+            MoveFlyout.Items.Add(mi);
+        }
+    }
+
+    private void OnNewer(object sender, RoutedEventArgs e) => GoTo(Vm.Neighbour(-1));
+    private void OnOlder(object sender, RoutedEventArgs e) => GoTo(Vm.Neighbour(+1));
+    private void GoTo(ThreadRow? row) { if (row is not null) { ThreadList.SelectedItem = row; ThreadList.ScrollIntoView(row); } }
+
+    // ---- compose, reply, forward ----
+
+    private void OnCompose(object sender, RoutedEventArgs e) => OpenCompose(ComposeSeeds.Blank());
+    private void OnReply(object sender, RoutedEventArgs e) => ReplyTo(ComposeMode.Reply);
+    private void OnReplyAll(object sender, RoutedEventArgs e) => ReplyTo(ComposeMode.ReplyAll);
+    private void OnForward(object sender, RoutedEventArgs e) => ReplyTo(ComposeMode.Forward);
+
+    private void ReplyTo(ComposeMode mode)
+    {
+        if (Vm.OpenMessages.Count == 0) return;
+        OpenCompose(ComposeSeeds.For(mode, Vm.OpenMessages[^1].Detail, _ctx.Me.Address));
+    }
+
+    private async void OpenCompose(ComposeSeed seed)
+    {
+        if (_ctx.RealMail is null) { ShowToast("Compose is not available in preview mode.", null); return; }
+        if (Vm.Offline) { ShowToast(MailShellViewModel.OfflineTip, null); return; }
+        var cvm = new TaifaMail.Core.Compose.ComposeViewModel(new ComposeApi(_ctx.RealMail), _ctx.Me.Address, seed);
+        var threadAddresses = Vm.OpenMessages.SelectMany(c => new[] { c.AvatarAddress }.Concat(c.Detail.To ?? new()).Concat(c.Detail.Cc ?? new())).ToList();
+        var win = new ComposeWindow(cvm, _ctx, threadAddresses, sent => DispatcherQueue.TryEnqueue(() => ShowToast(sent, null)));
+        win.Activate();
+        await cvm.StageForwardAttachmentsAsync();
+    }
+
+    // ---- toast ----
+
+    private void ShowToast(string message, Func<Task>? undo)
+    {
+        _toastUndo = undo;
+        _lastUndo = undo;
+        ToastText.Text = message;
+        ToastUndo.Visibility = undo is null ? Visibility.Collapsed : Visibility.Visible;
+        ToastPill.Visibility = Visibility.Visible;
+        ToastPill.Opacity = 1;
+        ToastPill.Translation = new System.Numerics.Vector3(0, 0, 0);
+        _toastTimer?.Stop();
+        _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(8) };
+        _toastTimer.Tick += (_, _) => HideToast();
+        _toastTimer.Start();
+    }
+
+    private async void HideToast()
+    {
+        _toastTimer?.Stop();
+        ToastPill.Opacity = 0;
+        ToastPill.Translation = new System.Numerics.Vector3(0, 12, 0);
+        await Task.Delay(180);
+        if (ToastPill.Opacity == 0) ToastPill.Visibility = Visibility.Collapsed;
+        _lastUndo = null;
+    }
+
+    private async void OnToastUndo(object sender, RoutedEventArgs e)
+    {
+        var undo = _toastUndo;
+        HideToast();
+        if (undo is not null) await undo();
+    }
+
+    private void OnToastClose(object sender, RoutedEventArgs e) => HideToast();
 
     // ---- search ----
 
@@ -328,7 +470,14 @@ public sealed partial class ShellPage : Page, IChromePage
 
     private void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key == VirtualKey.Escape) { SearchBox.Text = ""; ThreadList.Focus(FocusState.Programmatic); e.Handled = true; }
+        if (e.Key == VirtualKey.Escape)
+        {
+            SearchBox.Text = "";
+            Vm.SearchAllFolders = false;
+            SearchBox.PlaceholderText = "Search in this folder";
+            ThreadList.Focus(FocusState.Programmatic);
+            e.Handled = true;
+        }
     }
 
     // ---- splitter ----
@@ -354,7 +503,7 @@ public sealed partial class ShellPage : Page, IChromePage
         ((UIElement)sender).ReleasePointerCapture(e.Pointer);
     }
 
-    // ---- reader cards ----
+    // ---- reader messages ----
 
     private void OnCardHeaderTapped(object sender, TappedRoutedEventArgs e)
     {
@@ -488,6 +637,82 @@ public sealed partial class ShellPage : Page, IChromePage
 
     private async Task Notify(string message) =>
         await new ContentDialog { XamlRoot = XamlRoot, Title = "Taifa Mail", Content = message, CloseButtonText = "Close", RequestedTheme = ActualTheme }.ShowAsync();
+
+    // ---- realtime, toasts, badge ----
+
+    private void StartRealtime()
+    {
+        if (_ctx.Api is null || _realtime is not null) return;
+        _ctx.Notifications?.Register(DispatcherQueue);
+        if (_ctx.Notifications is { } n) n.ThreadRequested += OnToastActivated;
+        _realtime = new RealtimeClient(_ctx.Api);
+        _realtime.EventReceived += e =>
+        {
+            if (!e.IsFor(_ctx.Mail.MailboxId) || e.Kind is RealtimeKind.Connected or RealtimeKind.Pong) return;
+            ScheduleReconcile();
+        };
+        _realtime.ConnectionChanged += up => { _connected = up; DispatcherQueue.TryEnqueue(() => { if (up) Vm.Offline = false; }); };
+        _realtime.Reconnected += () => ScheduleReconcile();
+        _realtime.Start();
+        _poll = new System.Threading.Timer(_ => { if (!_connected) ScheduleReconcile(); }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+    }
+
+    private async Task StopRealtimeAsync()
+    {
+        _poll?.Dispose();
+        if (_ctx.Notifications is { } n) n.ThreadRequested -= OnToastActivated;
+        if (_realtime is { } rt) { _realtime = null; await rt.StopAsync(); }
+    }
+
+    private void ScheduleReconcile()
+    {
+        _reconcileDelay?.Cancel();
+        var cts = _reconcileDelay = new CancellationTokenSource();
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(500, cts.Token); } catch (OperationCanceledException) { return; }
+            DispatcherQueue.TryEnqueue(async () =>
+            {
+                if (cts.IsCancellationRequested || Vm.Searching) return;
+                await Vm.ReconcileAsync();
+                await CheckNewMailAsync();
+            });
+        });
+    }
+
+    private async Task CheckNewMailAsync()
+    {
+        try
+        {
+            var page = await _ctx.Mail.ConversationsAsync("INBOX", 20, 0);
+            var latest = page.Items.Select(i => i.Latest).ToList();
+            var decision = NotifyPolicy.Decide(latest, _highWater, _ctx.Me.Address, _ctx.Settings.NewMailAlerts);
+            _highWater = decision.HighWater;
+            if (!_ctx.IsPreview)
+                foreach (var t in NotifyPolicy.Collapse(decision.Toasts)) _ctx.Notifications?.Show(t);
+        }
+        catch (Exception e) when (e is ApiRequestError or ApiTransportError) { }
+        UpdateBadge();
+    }
+
+    private void UpdateBadge()
+    {
+        if (_ctx.Notifications is null || _ctx.IsPreview || App.MainWindow is null) return;
+        var label = NotifyPolicy.BadgeLabel(Vm.TotalUnread, _ctx.Settings.TaskbarBadge);
+        _ctx.Notifications.SetBadge(WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow), label);
+    }
+
+    private async void OnToastActivated(string folder, long uid)
+    {
+        var inbox = Vm.Folders.FirstOrDefault(f => f.Path == folder) ?? Vm.Folders.FirstOrDefault(f => f.Path == "INBOX");
+        if (inbox is null) return;
+        if (Vm.SelectedFolder?.Path != inbox.Path || Vm.Searching) { SearchBox.Text = ""; await Vm.LoadFolderAsync(inbox); }
+        else await Vm.ReconcileAsync();
+        var row = Vm.Threads.FirstOrDefault(t => t.Uids.Contains(uid));
+        if (row is null) return;
+        ThreadList.SelectedItem = row;
+        if (!ReferenceEquals(Vm.SelectedThread, row)) await Vm.OpenAsync(row);
+    }
 
     // ---- helpers ----
 

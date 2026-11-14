@@ -34,6 +34,7 @@ public sealed partial class ThreadRow : ObservableObject
     public string ThreadKey => Model.ThreadKey;
     public IReadOnlyList<long> Uids => Model.Uids is { Count: > 0 } u ? u : new[] { Model.Latest.Uid };
 
+    [ObservableProperty] private bool _compact;
     [ObservableProperty] private bool _unread;
     [ObservableProperty] private bool _flagged;
     [ObservableProperty] private AvatarDecision? _avatar;

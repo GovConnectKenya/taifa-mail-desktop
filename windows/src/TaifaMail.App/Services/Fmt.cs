@@ -8,6 +8,21 @@ namespace TaifaMail.App.Services;
 /// <summary>Small pure helpers used from x:Bind function bindings.</summary>
 public static class Fmt
 {
+    private static readonly Microsoft.UI.Xaml.Media.FontFamily Medium = new("ms-appx:///Assets/Fonts/GoogleSans-Medium.ttf#Google Sans Medium");
+    private static readonly Microsoft.UI.Xaml.Media.FontFamily Semi = new("ms-appx:///Assets/Fonts/GoogleSans-SemiBold.ttf#Google Sans SemiBold");
+    private static readonly Microsoft.UI.Xaml.Media.FontFamily Regular = new("ms-appx:///Assets/Fonts/GoogleSans-Regular.ttf#Google Sans");
+
+    /// <summary>Sender: 500 when read, 700 (the SemiBold file, the heaviest Google Sans ships) when unread.</summary>
+    public static Microsoft.UI.Xaml.Media.FontFamily SenderFont(bool unread) => unread ? Semi : Medium;
+    /// <summary>Subject: 400 when read, 600 when unread.</summary>
+    public static Microsoft.UI.Xaml.Media.FontFamily SubjectFont(bool unread) => unread ? Semi : Regular;
+    public static Thickness RowPad(bool compact) => new(20, compact ? 8 : 12, 20, compact ? 8 : 12);
+    public static double AvatarSize(bool compact) => compact ? 32 : 36;
+    public static Visibility ShowAndNot(bool a, bool b) => a && !b ? Visibility.Visible : Visibility.Collapsed;
+    public static string Unreadline(int total, int unread) => unread > 0 ? $"{total:N0} \u00b7 {unread:N0} unread" : $"{total:N0}";
+    public static string AttachmentLine(string size, TaifaMail.Core.Compose.AttachmentState state) => state switch { TaifaMail.Core.Compose.AttachmentState.Uploading => size + " \u00b7 Uploading", TaifaMail.Core.Compose.AttachmentState.Failed => size + " \u00b7 Failed", _ => size };
+    public static string CountBadge(int n) => n > 99 ? "99+" : n.ToString();
+
     public static FontWeight Weight(bool unread) => unread ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal;
     public static FontWeight Bold(bool unread) => unread ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.Normal;
     public static Visibility Show(bool value) => value ? Visibility.Visible : Visibility.Collapsed;

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using TaifaMail.Core.Models;
 
 namespace TaifaMail.Core.Net;
 
@@ -172,6 +173,24 @@ public sealed class TaifaApiClient : IDisposable
             if (!res.IsSuccessStatusCode) throw ToError(res.StatusCode, await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
             await res.Content.CopyToAsync(destination, ct).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>Uploads to an object storage presigned URL with exactly the headers it named: no CSRF header, no extra headers.</summary>
+    public async Task PutPresignedAsync(ApiUploadTarget target, Stream content, CancellationToken ct = default)
+    {
+        using var req = new HttpRequestMessage(new HttpMethod(string.IsNullOrEmpty(target.Method) ? "PUT" : target.Method), target.Url);
+        req.Content = new StreamContent(content);
+        if (target.Headers is not null)
+            foreach (var (k, v) in target.Headers)
+                if (!req.Content.Headers.TryAddWithoutValidation(k, v)) req.Headers.TryAddWithoutValidation(k, v);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromMinutes(10));
+        try
+        {
+            using var res = await _http.SendAsync(req, cts.Token).ConfigureAwait(false);
+            if (!res.IsSuccessStatusCode) throw new ApiRequestError("The attachment could not be uploaded.", (int)res.StatusCode);
+        }
+        catch (HttpRequestException e) { throw new ApiTransportError("Taifa Mail could not reach the server.", e); }
     }
 
     /// <summary>Fetches an image or other small resource (avatars) as bytes. Returns null on any non-success.</summary>

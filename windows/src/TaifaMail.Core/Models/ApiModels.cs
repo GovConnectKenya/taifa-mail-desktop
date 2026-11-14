@@ -77,6 +77,28 @@ public sealed record ApiMarkReadResult(int Marked, bool Complete = true);
 
 public sealed record ApiOk(bool Ok);
 
+public sealed record ApiQuota(long UsedBytes, long? LimitBytes, double? Percent);
+
+public sealed record ApiResolved(string Folder, long Uid);
+
+public sealed record ApiContact(string Id, string DisplayName, List<ApiContactEmail>? Emails);
+
+public sealed record ApiContactEmail(string Type, string Value, bool Primary);
+
+public sealed record ApiContactList(List<ApiContact> Items);
+
+public sealed record ApiFileInfo(string Id, string Filename, string Mime, long SizeBytes, string Status);
+
+public sealed record ApiUploadTarget(string Url, string Method, Dictionary<string, string>? Headers);
+
+public sealed record ApiFileTicket(ApiFileInfo File, ApiUploadTarget Upload);
+
+public sealed record ApiFileEnvelope(ApiFileInfo File);
+
+public sealed record ApiStagedFile(string FileId, string Filename, string ContentType, long Size);
+
+public sealed record ApiStaged(List<ApiStagedFile> Files);
+
 public sealed record SendMailPayload
 {
     public List<string> To { get; init; } = new();
@@ -96,7 +118,7 @@ public sealed record SendMailPayload
 
 public sealed record ApiSendResult(bool Ok, string MessageId, List<string>? Suppressed, List<string>? Refused);
 
-public sealed record ApiDraftResult(long Uid, string Folder);
+public sealed record ApiDraftResult(long? Uid, string Folder);
 
 public sealed record AvatarBatchEntry(string? Url, string? Name, string? UrlScope, AvatarInstitution? Institution);
 
@@ -122,3 +144,13 @@ public sealed record LoginResult(MailboxSession? Session, bool RequiresSecondFac
 }
 
 internal sealed record RawLogin(string? MailboxId, string? Address, string? OrgId, [property: JsonPropertyName("requires_2fa")] bool? Requires2Fa);
+
+public static class ApiAttachmentExt
+{
+    public static string Human(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / 1024.0 / 1024.0:0.#} MB",
+    };
+}

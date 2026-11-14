@@ -23,6 +23,7 @@ public sealed class OfflineCache : IDisposable
         Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         Exec(@"CREATE TABLE IF NOT EXISTS folders(mailbox TEXT NOT NULL, json TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY(mailbox));
                CREATE TABLE IF NOT EXISTS threads(mailbox TEXT NOT NULL, folder TEXT NOT NULL, pos INTEGER NOT NULL, json TEXT NOT NULL, PRIMARY KEY(mailbox, folder, pos));
+               CREATE TABLE IF NOT EXISTS bodies(mailbox TEXT NOT NULL, folder TEXT NOT NULL, uid INTEGER NOT NULL, json TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY(mailbox, folder, uid));
                CREATE TABLE IF NOT EXISTS meta(mailbox TEXT NOT NULL, folder TEXT NOT NULL, total INTEGER NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY(mailbox, folder));");
     }
 
@@ -120,10 +121,46 @@ public sealed class OfflineCache : IDisposable
         }
     }
 
+    /// <summary>Stores an opened conversation so it can be read offline. Keeps the newest few hundred.</summary>
+    public void SaveConversation(string mailbox, string folder, long uid, ApiConversationWindow window, int keep = 300)
+    {
+        lock (_gate)
+        {
+            using (var c = _db.CreateCommand())
+            {
+                c.CommandText = "INSERT OR REPLACE INTO bodies(mailbox,folder,uid,json,saved_at) VALUES($m,$f,$u,$j,$t)";
+                c.Parameters.AddWithValue("$m", mailbox);
+                c.Parameters.AddWithValue("$f", folder);
+                c.Parameters.AddWithValue("$u", uid);
+                c.Parameters.AddWithValue("$j", JsonSerializer.Serialize(window, TaifaJson.Options));
+                c.Parameters.AddWithValue("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                c.ExecuteNonQuery();
+            }
+            using var prune = _db.CreateCommand();
+            prune.CommandText = "DELETE FROM bodies WHERE mailbox=$m AND rowid NOT IN (SELECT rowid FROM bodies WHERE mailbox=$m ORDER BY saved_at DESC LIMIT $k)";
+            prune.Parameters.AddWithValue("$m", mailbox);
+            prune.Parameters.AddWithValue("$k", keep);
+            prune.ExecuteNonQuery();
+        }
+    }
+
+    public ApiConversationWindow? LoadConversation(string mailbox, string folder, long uid)
+    {
+        lock (_gate)
+        {
+            using var c = _db.CreateCommand();
+            c.CommandText = "SELECT json FROM bodies WHERE mailbox=$m AND folder=$f AND uid=$u";
+            c.Parameters.AddWithValue("$m", mailbox);
+            c.Parameters.AddWithValue("$f", folder);
+            c.Parameters.AddWithValue("$u", uid);
+            return c.ExecuteScalar() is string s ? JsonSerializer.Deserialize<ApiConversationWindow>(s, TaifaJson.Options) : null;
+        }
+    }
+
     /// <summary>Drops everything. Called on sign out so no mail outlives the session.</summary>
     public void Clear()
     {
-        lock (_gate) Exec("DELETE FROM folders; DELETE FROM threads; DELETE FROM meta;");
+        lock (_gate) Exec("DELETE FROM folders; DELETE FROM threads; DELETE FROM meta; DELETE FROM bodies;");
     }
 
     public void Dispose() => _db.Dispose();

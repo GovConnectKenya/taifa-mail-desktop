@@ -25,4 +25,14 @@ public interface IMailApi
     Task<ApiMarkReadResult> MarkThreadReadAsync(long uid, string folder, CancellationToken ct = default);
     Task SetFlagsAsync(long uid, string folder, bool? seen = null, bool? flagged = null, CancellationToken ct = default);
     Task<AvatarBatchResponse> AvatarsAsync(IReadOnlyCollection<string> emails, CancellationToken ct = default);
+
+    // Members below have default bodies so read-only fakes stay small.
+    Task<ApiQuota?> QuotaAsync(CancellationToken ct = default) => Task.FromResult<ApiQuota?>(null);
+    Task<ApiBatchResult> BatchFlagsAsync(string folder, IReadOnlyCollection<long> uids, bool? seen = null, bool? flagged = null, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiBatchResult> BatchMoveAsync(string folder, IReadOnlyCollection<long> uids, string toFolder, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiBatchResult> BatchArchiveAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiBatchResult> BatchDeleteAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiBatchResult> BatchSpamAsync(string folder, IReadOnlyCollection<long> uids, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiResolved> ResolveAsync(string messageId, string folder, CancellationToken ct = default) => throw new NotSupportedException();
+    Task<ApiConversationWindow> OlderAsync(long uid, string folder, long before, CancellationToken ct = default) => throw new NotSupportedException();
 }

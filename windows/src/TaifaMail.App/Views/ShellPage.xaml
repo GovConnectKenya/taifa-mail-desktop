@@ -8,93 +8,93 @@
     xmlns:m="using:TaifaMail.Core.Models">
 
   <Page.Resources>
+    <!-- Thread row: flat ruled list, content height, webmail anatomy (spec 8.5). -->
     <DataTemplate x:Key="ThreadRowTemplate" x:DataType="vm:ThreadRow">
-      <Grid Height="76" Padding="4,12,12,12" ColumnSpacing="8" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource TmBorderSoftBrush}" AutomationProperties.Name="{x:Bind SpokenName}">
+      <Grid Padding="{x:Bind svc:Fmt.RowPad(Compact), Mode=OneWay}" ColumnSpacing="12" Background="Transparent"
+            BorderThickness="0,0,0,1" BorderBrush="{ThemeResource TmBorderSoftBrush}"
+            PointerEntered="OnRowPointerEntered" PointerExited="OnRowPointerExited" ContextRequested="OnRowContextRequested"
+            AutomationProperties.Name="{x:Bind SpokenName}">
         <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="12"/>
-          <ColumnDefinition Width="36"/>
+          <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
-        <Ellipse Width="8" Height="8" Fill="{ThemeResource TmAccentFgBrush}" VerticalAlignment="Center" HorizontalAlignment="Center"
-                 Visibility="{x:Bind svc:Fmt.Show(Unread), Mode=OneWay}"/>
-        <ctl:AvatarView Grid.Column="1" Size="36" VerticalAlignment="Top" Decision="{x:Bind Avatar, Mode=OneWay}" Initials="{x:Bind Initials}" FillColor="{x:Bind PlaceholderColor}"/>
-        <Grid Grid.Column="2" RowSpacing="0">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="18"/>
-            <RowDefinition Height="18"/>
-            <RowDefinition Height="16"/>
-          </Grid.RowDefinitions>
+        <ctl:AvatarView Size="{x:Bind svc:Fmt.AvatarSize(Compact), Mode=OneWay}" VerticalAlignment="Top" Decision="{x:Bind Avatar, Mode=OneWay}" Initials="{x:Bind Initials}" FillColor="{x:Bind PlaceholderColor}"/>
+        <StackPanel Grid.Column="1" Spacing="2">
           <Grid ColumnSpacing="8">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource TmBody}" FontWeight="{x:Bind svc:Fmt.Bold(Unread), Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
-            <Border Grid.Column="1" CornerRadius="4" Padding="4,0" Background="{ThemeResource TmPanel3Brush}" VerticalAlignment="Center" Visibility="{x:Bind svc:Fmt.ShowIf(Count, 2)}">
-              <TextBlock Text="{x:Bind Count}" Style="{StaticResource TmCaption}"/>
-            </Border>
-            <TextBlock Grid.Column="2" Text="{x:Bind svc:Fmt.Time(When)}" Style="{StaticResource TmCaption}" FontWeight="{x:Bind svc:Fmt.Bold(Unread), Mode=OneWay}"/>
-            <TextBlock Grid.Column="2" Text="{x:Bind svc:Fmt.Time(When)}" Style="{StaticResource TmCaption}" FontWeight="Bold" Foreground="{ThemeResource TmAccentInkBrush}" Visibility="{x:Bind svc:Fmt.Show(Unread), Mode=OneWay}"/>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource TmBody}" FontFamily="{x:Bind svc:Fmt.SenderFont(Unread), Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
+            <TextBlock Grid.Column="1" Text="{x:Bind svc:Fmt.Time(When)}" Style="{StaticResource TmCaption}" FontFamily="{x:Bind svc:Fmt.SenderFont(Unread), Mode=OneWay}"
+                       Foreground="{ThemeResource TmAccentInkBrush}" Visibility="{x:Bind svc:Fmt.Show(Unread), Mode=OneWay}"/>
+            <TextBlock Grid.Column="1" Text="{x:Bind svc:Fmt.Time(When)}" Style="{StaticResource TmCaption}" Visibility="{x:Bind svc:Fmt.Hide(Unread), Mode=OneWay}"/>
           </Grid>
-          <Grid Grid.Row="1" ColumnSpacing="4">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Text="{x:Bind Subject}" Style="{StaticResource TmBody}" FontWeight="{x:Bind svc:Fmt.Weight(Unread), Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
-            <ctl:IconView Grid.Column="1" IconName="flag" Size="16" Foreground="{ThemeResource TmFlagBrush}" Visibility="{x:Bind svc:Fmt.Show(Flagged), Mode=OneWay}"/>
-            <ctl:IconView Grid.Column="2" IconName="attach" Size="16" Foreground="{ThemeResource TmText3Brush}" Visibility="{x:Bind svc:Fmt.Show(HasAttachment)}"/>
+          <Grid ColumnSpacing="6">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Ellipse Width="8" Height="8" Fill="{ThemeResource TmAccentFgBrush}" VerticalAlignment="Center" Visibility="{x:Bind svc:Fmt.Show(Unread), Mode=OneWay}"/>
+            <TextBlock Grid.Column="1" Text="{x:Bind Subject}" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{ThemeResource TmTextBrush}"
+                       FontFamily="{x:Bind svc:Fmt.SubjectFont(Unread), Mode=OneWay}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
+            <TextBlock Grid.Column="2" Text="{x:Bind Count}" FontFamily="{StaticResource TmMono}" FontSize="10" Foreground="{ThemeResource TmText3Brush}" VerticalAlignment="Center" Visibility="{x:Bind svc:Fmt.ShowIf(Count, 2)}"/>
           </Grid>
-          <TextBlock Grid.Row="2" Text="{x:Bind Snippet}" Style="{StaticResource TmMeta}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
-        </Grid>
+          <Grid ColumnSpacing="6">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{x:Bind Snippet}" Style="{StaticResource TmMeta}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
+            <ctl:IconView Grid.Column="1" IconName="attach" Size="13" Foreground="{ThemeResource TmText3Brush}" Visibility="{x:Bind svc:Fmt.Show(HasAttachment)}"/>
+            <ctl:IconView Grid.Column="2" IconName="star" Size="12" Foreground="{ThemeResource TmFlagBrush}" Visibility="{x:Bind svc:Fmt.Show(Flagged), Mode=OneWay}"/>
+          </Grid>
+        </StackPanel>
+        <!-- hover row actions -->
+        <Border x:Name="RowActions" Grid.Column="1" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-6,-8,0" CornerRadius="16" Padding="2"
+                Background="{ThemeResource TmPanelBrush}" BorderBrush="{ThemeResource TmBorderBrush}" BorderThickness="1">
+          <StackPanel Orientation="Horizontal">
+            <Button Style="{StaticResource TmToolButton}" Click="OnRowArchive" ToolTipService.ToolTip="Archive" AutomationProperties.Name="Archive"><ctl:IconView IconName="archive" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+            <Button Style="{StaticResource TmToolButton}" Click="OnRowDelete" ToolTipService.ToolTip="Delete" AutomationProperties.Name="Delete"><ctl:IconView IconName="trash" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+            <Button Style="{StaticResource TmToolButton}" Click="OnRowToggleRead" ToolTipService.ToolTip="Mark read or unread" AutomationProperties.Name="Mark read or unread"><ctl:IconView IconName="mail" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+            <Button Style="{StaticResource TmToolButton}" Click="OnRowStar" ToolTipService.ToolTip="Star" AutomationProperties.Name="Star"><ctl:IconView IconName="star" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+          </StackPanel>
+        </Border>
       </Grid>
     </DataTemplate>
 
-    <DataTemplate x:Key="MessageCardTemplate" x:DataType="vm:MessageCardVm">
-      <Border Margin="0,0,0,8" CornerRadius="12" BorderThickness="1" Background="{ThemeResource TmPanelBrush}" BorderBrush="{ThemeResource TmBorderBrush}">
-        <StackPanel>
-          <!-- header: collapsed 56, expanded 72 or more -->
-          <Grid Padding="16,8" MinHeight="56" Background="Transparent" Tapped="OnCardHeaderTapped" ColumnSpacing="12" AutomationProperties.Name="{x:Bind DisplayName}">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="40"/>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <ctl:AvatarView Size="40" VerticalAlignment="Center" Decision="{x:Bind Avatar, Mode=OneWay}" Initials="{x:Bind Initials}" FillColor="{x:Bind PlaceholderColor}"/>
+    <!-- Flat message in the reader: hairline above, 40 px avatar, body indented 52 (spec 8.6). -->
+    <DataTemplate x:Key="MessageTemplate" x:DataType="vm:MessageCardVm">
+      <StackPanel BorderThickness="0,1,0,0" BorderBrush="{ThemeResource TmBorderSoftBrush}">
+        <!-- collapsed -->
+        <Grid Padding="28,8" MinHeight="56" ColumnSpacing="12" Background="Transparent" Tapped="OnCardHeaderTapped" Visibility="{x:Bind svc:Fmt.Hide(Expanded), Mode=OneWay}" AutomationProperties.Name="{x:Bind DisplayName}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <ctl:AvatarView Size="32" VerticalAlignment="Center" Decision="{x:Bind Avatar, Mode=OneWay}" Initials="{x:Bind Initials}" FillColor="{x:Bind PlaceholderColor}"/>
+          <StackPanel Grid.Column="1" VerticalAlignment="Center">
+            <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource TmBodyStrong}" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="{x:Bind FirstLine}" Style="{StaticResource TmMeta}" TextTrimming="CharacterEllipsis" MaxLines="1"/>
+          </StackPanel>
+          <TextBlock Grid.Column="2" Text="{x:Bind svc:Fmt.Long(When)}" Style="{StaticResource TmMeta}" VerticalAlignment="Center"/>
+        </Grid>
+        <!-- expanded -->
+        <StackPanel Visibility="{x:Bind svc:Fmt.Show(Expanded), Mode=OneWay}">
+          <Grid Padding="28,16,28,8" MinHeight="72" ColumnSpacing="12" Background="Transparent" Tapped="OnCardHeaderTapped">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <ctl:AvatarView Size="40" VerticalAlignment="Top" Decision="{x:Bind Avatar, Mode=OneWay}" Initials="{x:Bind Initials}" FillColor="{x:Bind PlaceholderColor}"/>
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource TmBodyStrong}" TextTrimming="CharacterEllipsis"/>
-                <TextBlock Text="{x:Bind AvatarAddress}" Style="{StaticResource TmMonoText}" TextWrapping="WrapWholeWords" Visibility="{x:Bind svc:Fmt.Show(Expanded), Mode=OneWay}" IsTextSelectionEnabled="True"/>
-              </StackPanel>
-              <TextBlock Text="{x:Bind ToLine}" Style="{StaticResource TmMeta}" TextTrimming="CharacterEllipsis" Visibility="{x:Bind svc:Fmt.Show(Expanded), Mode=OneWay}"/>
-              <TextBlock Text="{x:Bind FirstLine}" Style="{StaticResource TmMeta}" TextTrimming="CharacterEllipsis" MaxLines="1" Visibility="{x:Bind svc:Fmt.Hide(Expanded), Mode=OneWay}"/>
+              <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource TmBodyStrong}" TextTrimming="CharacterEllipsis"/>
+              <TextBlock Text="{x:Bind AvatarAddress}" Style="{StaticResource TmMonoText}" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
+              <TextBlock Text="{x:Bind ToLine}" Style="{StaticResource TmMeta}" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top">
               <ctl:IconView IconName="attach" Size="16" Foreground="{ThemeResource TmText3Brush}" Visibility="{x:Bind svc:Fmt.Show(HasAttachments)}"/>
-              <ctl:IconView IconName="flag" Size="16" Foreground="{ThemeResource TmFlagBrush}" Visibility="{x:Bind svc:Fmt.Show(Flagged)}"/>
+              <ctl:IconView IconName="star" Size="16" Foreground="{ThemeResource TmFlagBrush}" Visibility="{x:Bind svc:Fmt.Show(Flagged)}"/>
               <TextBlock Text="{x:Bind svc:Fmt.Long(When)}" Style="{StaticResource TmMeta}"/>
             </StackPanel>
           </Grid>
-          <StackPanel Visibility="{x:Bind svc:Fmt.Show(Expanded), Mode=OneWay}" Padding="16,0,16,16" Spacing="12">
+          <StackPanel Margin="80,0,28,16" Spacing="12">
             <InfoBar IsOpen="{x:Bind HasAuthBanner}" IsClosable="False" Severity="{x:Bind svc:Fmt.AuthSeverity(AuthLevel)}" Title="{x:Bind Detail.AuthWarning.Title}" Message="{x:Bind Detail.AuthWarning.Message}"/>
             <InfoBar IsOpen="{x:Bind ShowImagesPrompt, Mode=OneWay}" IsClosable="False" Severity="Informational" Message="Remote images are blocked.">
-              <InfoBar.ActionButton>
-                <Button Content="Show images" Click="OnShowImages" Style="{StaticResource TmTextButton}"/>
-              </InfoBar.ActionButton>
+              <InfoBar.ActionButton><Button Content="Show images" Click="OnShowImages" Style="{StaticResource TmTextButton}"/></InfoBar.ActionButton>
             </InfoBar>
             <ContentControl Loaded="OnBodyHostLoaded" HorizontalContentAlignment="Stretch"/>
             <ItemsRepeater ItemsSource="{x:Bind Attachments}" Visibility="{x:Bind svc:Fmt.Show(HasAttachments)}">
-              <ItemsRepeater.Layout>
-                <UniformGridLayout MinItemWidth="240" MinItemHeight="40" MinRowSpacing="8" MinColumnSpacing="8" ItemsStretch="None"/>
-              </ItemsRepeater.Layout>
+              <ItemsRepeater.Layout><UniformGridLayout MinItemWidth="240" MinItemHeight="40" MinRowSpacing="8" MinColumnSpacing="8" ItemsStretch="None"/></ItemsRepeater.Layout>
               <ItemsRepeater.ItemTemplate>
                 <DataTemplate x:DataType="m:ApiAttachment">
                   <Grid Height="40" Width="240" CornerRadius="8" Background="{ThemeResource TmPanel2Brush}" ColumnSpacing="8" Padding="12,0,4,0">
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <ctl:IconView IconName="attach" Size="16" VerticalAlignment="Center" Foreground="{ThemeResource TmText2Brush}"/>
                     <Button Grid.Column="1" Style="{StaticResource TmTextButton}" Padding="0" HorizontalContentAlignment="Left" Click="OnAttachmentOpen" Tag="{x:Bind}" AutomationProperties.Name="{x:Bind Filename}">
                       <StackPanel>
@@ -102,7 +102,7 @@
                         <TextBlock Text="{x:Bind svc:Fmt.Size(Size)}" Style="{StaticResource TmCaption}"/>
                       </StackPanel>
                     </Button>
-                    <Button Grid.Column="2" Style="{StaticResource TmTextButton}" Width="32" Padding="0" Click="OnAttachmentSave" Tag="{x:Bind}" ToolTipService.ToolTip="Save" AutomationProperties.Name="Save attachment">
+                    <Button Grid.Column="2" Style="{StaticResource TmToolButton}" Click="OnAttachmentSave" Tag="{x:Bind}" ToolTipService.ToolTip="Save" AutomationProperties.Name="Save attachment">
                       <ctl:IconView IconName="save" Size="16" Foreground="{ThemeResource TmText2Brush}"/>
                     </Button>
                   </Grid>
@@ -111,152 +111,213 @@
             </ItemsRepeater>
           </StackPanel>
         </StackPanel>
-      </Border>
+      </StackPanel>
     </DataTemplate>
   </Page.Resources>
 
-  <Grid>
-    <Grid.RowDefinitions>
-      <RowDefinition Height="48"/>
-      <RowDefinition Height="*"/>
-    </Grid.RowDefinitions>
-
-    <!-- Title bar row: brand, search, commands. Empty space drags the window; the controls are pass through regions. -->
-    <Grid x:Name="TitleRow" Background="Transparent" ColumnSpacing="8">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="240"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition x:Name="CaptionInsetColumn" Width="138"/>
-      </Grid.ColumnDefinitions>
-      <StackPanel Orientation="Horizontal" Spacing="8" Margin="16,0,0,0" VerticalAlignment="Center">
-        <ctl:LogoView HeightPx="24"/>
-        <TextBlock Text="Taifa Mail" Style="{StaticResource TmBodyStrong}" VerticalAlignment="Center"/>
-      </StackPanel>
-      <Grid x:Name="SearchHost" Grid.Column="1" Width="360" Height="32" CornerRadius="8" Background="{ThemeResource TmPanel2Brush}" VerticalAlignment="Center">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <ctl:IconView IconName="search" Size="16" Foreground="{ThemeResource TmText3Brush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-        <TextBox x:Name="SearchBox" Grid.Column="1" PlaceholderText="Search in this folder" BorderThickness="0" Background="Transparent"
-                 AutomationProperties.Name="Search" VerticalAlignment="Center" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" FontFamily="{StaticResource TmFont}"/>
-      </Grid>
-      <StackPanel x:Name="CommandHost" Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-        <Button x:Name="RefreshButton" Style="{StaticResource TmTextButton}" Width="32" Padding="0" Click="OnRefresh" ToolTipService.ToolTip="Refresh (F5)" AutomationProperties.Name="Refresh">
-          <ctl:IconView IconName="refresh" Size="18" Foreground="{ThemeResource TmText2Brush}"/>
-        </Button>
-      </StackPanel>
-    </Grid>
-
-    <NavigationView x:Name="Nav" Grid.Row="1" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed" IsSettingsVisible="False"
-                    IsPaneToggleButtonVisible="False" OpenPaneLength="240" IsPaneOpen="True" CompactModeThresholdWidth="0" ExpandedModeThresholdWidth="0"
+  <Grid x:Name="Root" Background="{ThemeResource TmBgBrush}">
+    <NavigationView x:Name="Nav" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed" IsSettingsVisible="False"
+                    IsPaneToggleButtonVisible="False" OpenPaneLength="256" IsPaneOpen="True" CompactModeThresholdWidth="0" ExpandedModeThresholdWidth="0"
                     Background="Transparent" SelectionChanged="OnFolderSelected" AlwaysShowHeader="False">
       <NavigationView.PaneHeader>
-        <Button x:Name="IdentityButton" Style="{StaticResource TmTextButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="8,4,8,8" Padding="8,6" Height="Auto" AutomationProperties.Name="Mailbox and account">
-          <Grid ColumnSpacing="8">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <ctl:AvatarView x:Name="IdentityAvatar" Size="28" VerticalAlignment="Center"/>
-            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-              <TextBlock x:Name="IdentityName" Style="{StaticResource TmBodyStrong}" TextTrimming="CharacterEllipsis"/>
-              <TextBlock x:Name="IdentityAddress" Style="{StaticResource TmMeta}" TextTrimming="CharacterEllipsis"/>
-            </StackPanel>
-            <ctl:IconView Grid.Column="2" IconName="chevron-down" Size="16" Foreground="{ThemeResource TmText3Brush}" VerticalAlignment="Center"/>
-          </Grid>
-          <Button.Flyout>
-            <MenuFlyout x:Name="IdentityFlyout" Opening="OnIdentityOpening"/>
-          </Button.Flyout>
-        </Button>
-      </NavigationView.PaneHeader>
-
-      <Grid x:Name="Panes">
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition x:Name="ListColumn" Width="360" MinWidth="300" MaxWidth="480"/>
-          <ColumnDefinition Width="Auto"/>
-          <ColumnDefinition Width="*" MinWidth="420"/>
-        </Grid.ColumnDefinitions>
-
-        <!-- Thread list -->
-        <Grid Background="{ThemeResource TmPanelBrush}" BorderBrush="{ThemeResource TmBorderBrush}" BorderThickness="1" CornerRadius="12,0,0,0">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-          <Grid Padding="16,12,16,8" ColumnSpacing="8">
-            <TextBlock x:Name="ListTitle" Style="{StaticResource TmTitle}" TextTrimming="CharacterEllipsis"/>
-            <TextBlock x:Name="SelectedCount" HorizontalAlignment="Right" Style="{StaticResource TmMeta}" Visibility="Collapsed"/>
-          </Grid>
-          <StackPanel Grid.Row="1">
-            <InfoBar x:Name="OfflineBar" IsClosable="False" Severity="Warning" Message="Offline. Showing the last synced mail." IsOpen="{x:Bind Vm.Offline, Mode=OneWay}"/>
-            <InfoBar x:Name="ErrorBar" IsClosable="False" Severity="Error" IsOpen="{x:Bind svc:Fmt.HasText(Vm.Error), Mode=OneWay}" Message="{x:Bind Vm.Error, Mode=OneWay}">
-              <InfoBar.ActionButton>
-                <Button Content="Retry" Click="OnRefresh" Style="{StaticResource TmTextButton}"/>
-              </InfoBar.ActionButton>
-            </InfoBar>
+        <StackPanel Spacing="12" Padding="12,0,12,0">
+          <StackPanel Orientation="Horizontal" Spacing="8" Height="48" Margin="4,0,0,0">
+            <ctl:LogoView HeightPx="32" VerticalAlignment="Center"/>
+            <TextBlock Text="Taifa Mail" Style="{StaticResource TmTitle}" VerticalAlignment="Center"/>
           </StackPanel>
-          <Grid Grid.Row="2">
-            <ListView x:Name="ThreadList" ItemsSource="{x:Bind Vm.Threads}" ItemTemplate="{StaticResource ThreadRowTemplate}" ItemContainerStyle="{StaticResource TmRowContainer}"
-                      SelectionMode="Extended" SelectionChanged="OnThreadSelectionChanged" IsItemClickEnabled="False" ShowsScrollingPlaceholders="False" Loaded="OnThreadListLoaded"
-                      AutomationProperties.Name="Messages"/>
-            <!-- loading skeleton -->
-            <ItemsControl x:Name="Skeleton" IsHitTestVisible="False" Visibility="Collapsed">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Grid Height="76" Padding="16,12" ColumnSpacing="12">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                    <Ellipse Width="36" Height="36" Fill="{ThemeResource TmTrackBrush}" VerticalAlignment="Top"/>
-                    <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
-                      <Border Height="10" Width="160" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-                      <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-                    </StackPanel>
-                  </Grid>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <!-- empty -->
-            <StackPanel x:Name="EmptyState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
-              <ctl:LogoView HeightPx="40" HorizontalAlignment="Center"/>
-              <TextBlock Text="Nothing here" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center"/>
-              <TextBlock x:Name="EmptyHint" Text="This folder has no messages." Style="{StaticResource TmMeta}" HorizontalAlignment="Center"/>
+          <Button x:Name="ComposeButton" Style="{StaticResource TmComposeButton}" Click="OnCompose" AutomationProperties.Name="Compose" ToolTipService.ToolTip="New message (Ctrl+N)">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <ctl:IconView IconName="compose" Size="18" Foreground="White"/>
+              <TextBlock Text="Compose" FontFamily="{StaticResource TmFontSemi}" FontSize="13" Foreground="White"/>
             </StackPanel>
-            <ProgressRing x:Name="MoreRing" Width="20" Height="20" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,8" IsActive="{x:Bind Vm.LoadingMore, Mode=OneWay}"/>
+          </Button>
+        </StackPanel>
+      </NavigationView.PaneHeader>
+      <NavigationView.PaneFooter>
+        <StackPanel Spacing="8" Padding="16,8,16,8">
+          <StackPanel x:Name="QuotaPanel" Spacing="4" Visibility="Collapsed">
+            <ProgressBar x:Name="QuotaBar" Minimum="0" Maximum="100" Height="4" CornerRadius="2" Foreground="{ThemeResource TmAccentFgBrush}" Background="{ThemeResource TmPanel3Brush}"/>
+            <TextBlock x:Name="QuotaText" Style="{StaticResource TmCaption}"/>
+          </StackPanel>
+          <Button x:Name="IdentityButton" Style="{StaticResource TmTextButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Padding="4,6" Height="Auto" AutomationProperties.Name="Account and mailboxes">
+            <Grid ColumnSpacing="8">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <ctl:AvatarView x:Name="IdentityAvatar" Size="28" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock x:Name="IdentityName" Style="{StaticResource TmBodyStrong}" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="IdentityAddress" Style="{StaticResource TmMonoText}" TextTrimming="CharacterEllipsis"/>
+              </StackPanel>
+              <ctl:IconView Grid.Column="2" IconName="chevron-up" Size="16" Foreground="{ThemeResource TmText3Brush}" VerticalAlignment="Center"/>
+            </Grid>
+            <Button.Flyout><MenuFlyout x:Name="IdentityFlyout" Opening="OnIdentityOpening"/></Button.Flyout>
+          </Button>
+        </StackPanel>
+      </NavigationView.PaneFooter>
+
+      <Grid x:Name="ContentGrid" Background="{ThemeResource TmBgBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+
+        <!-- toolbar row: search and refresh; empty space drags the window -->
+        <Grid x:Name="TitleRow" Background="Transparent" ColumnSpacing="8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+            <ColumnDefinition x:Name="CaptionInsetColumn" Width="138"/>
+          </Grid.ColumnDefinitions>
+          <Grid x:Name="SearchHost" Width="360" Height="32" Margin="16,0,0,0" CornerRadius="8" Background="{ThemeResource TmPanel2Brush}" VerticalAlignment="Center">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <ctl:IconView IconName="search" Size="16" Foreground="{ThemeResource TmText3Brush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <TextBox x:Name="SearchBox" Grid.Column="1" PlaceholderText="Search in this folder" BorderThickness="0" Background="Transparent" MinHeight="32"
+                     AutomationProperties.Name="Search" VerticalAlignment="Center" TextChanged="OnSearchTextChanged" KeyDown="OnSearchKeyDown" FontFamily="{StaticResource TmFont}"/>
           </Grid>
+          <StackPanel x:Name="CommandHost" Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+            <Button Style="{StaticResource TmToolButton}" Click="OnRefresh" ToolTipService.ToolTip="Refresh (F5)" AutomationProperties.Name="Refresh"><ctl:IconView IconName="refresh" Size="18" Foreground="{ThemeResource TmText2Brush}"/></Button>
+            <Button Style="{StaticResource TmToolButton}" Click="OnOpenSettings" ToolTipService.ToolTip="Settings (Ctrl+,)" AutomationProperties.Name="Settings"><ctl:IconView IconName="settings" Size="18" Foreground="{ThemeResource TmText2Brush}"/></Button>
+          </StackPanel>
         </Grid>
 
-        <Border x:Name="Splitter" Grid.Column="1" Width="8" Background="Transparent" PointerPressed="OnSplitterPressed" PointerMoved="OnSplitterMoved" PointerReleased="OnSplitterReleased" PointerCaptureLost="OnSplitterReleased">
-          <Border Width="1" HorizontalAlignment="Center" Background="{ThemeResource TmBorderBrush}"/>
-        </Border>
+        <Grid x:Name="Panes" Grid.Row="1">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="ListColumn" Width="392" MinWidth="300" MaxWidth="480"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*" MinWidth="420"/>
+          </Grid.ColumnDefinitions>
 
-        <!-- Reader -->
-        <Grid Grid.Column="2" Background="{ThemeResource TmBgBrush}">
-          <ScrollViewer x:Name="ReaderScroll" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
-            <StackPanel Padding="24">
-              <TextBlock x:Name="ReaderSubject" Style="{StaticResource TmTitle}" TextWrapping="Wrap" IsTextSelectionEnabled="True" Margin="0,0,0,16"/>
-              <InfoBar x:Name="ReadBar" IsClosable="True" Severity="Warning" Margin="0,0,0,12" Message="Could not mark as read" IsOpen="{x:Bind svc:Fmt.HasText(Vm.OpenError), Mode=OneWay}"/>
-              <ItemsControl x:Name="Cards" ItemsSource="{x:Bind Vm.OpenMessages}" ItemTemplate="{StaticResource MessageCardTemplate}"/>
+          <!-- Thread list: same ground as the reader -->
+          <Grid Background="{ThemeResource TmBgBrush}">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Grid Padding="20,8,20,8" MinHeight="48" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource TmBorderSoftBrush}">
+              <StackPanel x:Name="ListHeader" VerticalAlignment="Center">
+                <TextBlock x:Name="ListTitle" Style="{StaticResource TmTitle}" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="ListCounts" FontFamily="{StaticResource TmMono}" FontSize="11" Foreground="{ThemeResource TmText3Brush}"/>
+              </StackPanel>
+              <StackPanel x:Name="BulkBar" Orientation="Horizontal" Spacing="4" Visibility="Collapsed" VerticalAlignment="Center">
+                <TextBlock x:Name="BulkCount" Style="{StaticResource TmBodyStrong}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <Button Style="{StaticResource TmToolButton}" Click="OnBulkArchive" ToolTipService.ToolTip="Archive" AutomationProperties.Name="Archive"><ctl:IconView IconName="archive" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                <Button Style="{StaticResource TmToolButton}" Click="OnBulkDelete" ToolTipService.ToolTip="Delete" AutomationProperties.Name="Delete"><ctl:IconView IconName="trash" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                <Button Style="{StaticResource TmToolButton}" Click="OnBulkRead" ToolTipService.ToolTip="Mark read" AutomationProperties.Name="Mark read"><ctl:IconView IconName="mail" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                <Button Style="{StaticResource TmToolButton}" Click="OnBulkStar" ToolTipService.ToolTip="Star" AutomationProperties.Name="Star"><ctl:IconView IconName="star" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+              </StackPanel>
+            </Grid>
+            <StackPanel Grid.Row="1">
+              <InfoBar x:Name="OfflineBar" IsClosable="False" Severity="Warning" Message="Offline. Showing the last synced mail." IsOpen="{x:Bind Vm.Offline, Mode=OneWay}"/>
+              <InfoBar x:Name="ErrorBar" IsClosable="False" Severity="Error" IsOpen="False" Message="{x:Bind Vm.Error, Mode=OneWay}">
+                <InfoBar.ActionButton><Button Content="Try again" Click="OnRefresh" Style="{StaticResource TmTextButton}"/></InfoBar.ActionButton>
+              </InfoBar>
             </StackPanel>
-          </ScrollViewer>
-          <StackPanel x:Name="ReaderEmpty" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-            <ctl:LogoView HeightPx="40" HorizontalAlignment="Center"/>
-            <TextBlock Text="Select a message" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center"/>
-          </StackPanel>
-          <StackPanel x:Name="ReaderSkeleton" Visibility="Collapsed" Padding="24" Spacing="12" VerticalAlignment="Top">
-            <Border Height="16" Width="280" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-            <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-            <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-            <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-            <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-            <Border Height="10" Width="200" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
-          </StackPanel>
-          <Border x:Name="ReaderError" Visibility="Collapsed" Width="360" Padding="24" CornerRadius="12" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center"
-                  Background="{ThemeResource TmPanelBrush}" BorderBrush="{ThemeResource TmBorderBrush}">
-            <StackPanel Spacing="12">
-              <TextBlock Text="Could not load this message" Style="{StaticResource TmTitle}"/>
-              <TextBlock x:Name="ReaderErrorText" Style="{StaticResource TmMeta}" TextWrapping="Wrap"/>
-              <Button Content="Retry" Click="OnRetryOpen" Style="{StaticResource TmPrimaryButton}" HorizontalAlignment="Left"/>
-            </StackPanel>
+            <Grid Grid.Row="2">
+              <ListView x:Name="ThreadList" ItemsSource="{x:Bind Vm.Threads}" ItemTemplate="{StaticResource ThreadRowTemplate}" ItemContainerStyle="{StaticResource TmRowContainer}"
+                        SelectionMode="Extended" SelectionChanged="OnThreadSelectionChanged" IsItemClickEnabled="False" ShowsScrollingPlaceholders="False" Loaded="OnThreadListLoaded"
+                        AutomationProperties.Name="Messages"/>
+              <ItemsControl x:Name="Skeleton" IsHitTestVisible="False" Visibility="Collapsed">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Padding="20,12" ColumnSpacing="12" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource TmBorderSoftBrush}">
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Ellipse Width="36" Height="36" Fill="{ThemeResource TmTrackBrush}" VerticalAlignment="Top"/>
+                      <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
+                        <Border Height="10" Width="160" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+                        <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+                        <Border Height="10" Width="220" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+                      </StackPanel>
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <StackPanel x:Name="EmptyState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Padding="24">
+                <ctl:LogoView x:Name="EmptyLogo" HeightPx="40" HorizontalAlignment="Center" Visibility="Collapsed"/>
+                <TextBlock Text="Nothing here" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="EmptyHint" Text="No messages match this view." Style="{StaticResource TmMeta}" HorizontalAlignment="Center"/>
+              </StackPanel>
+              <StackPanel x:Name="ErrorState" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Padding="24" MaxWidth="320">
+                <TextBlock x:Name="ErrorTitle" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+                <TextBlock x:Name="ErrorMessage" Style="{StaticResource TmMeta}" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+                <Button Content="Try again" Style="{StaticResource TmPillButton}" HorizontalAlignment="Center" Click="OnRefresh" Margin="0,8,0,0"/>
+              </StackPanel>
+              <ProgressBar x:Name="MoreBar" IsIndeterminate="True" Height="2" VerticalAlignment="Bottom" Visibility="{x:Bind svc:Fmt.Show(Vm.LoadingMore), Mode=OneWay}"/>
+            </Grid>
+          </Grid>
+
+          <Border x:Name="Splitter" Grid.Column="1" Width="9" Background="Transparent" PointerPressed="OnSplitterPressed" PointerMoved="OnSplitterMoved" PointerReleased="OnSplitterReleased" PointerCaptureLost="OnSplitterReleased">
+            <Border Width="1" HorizontalAlignment="Center" Background="{ThemeResource TmBorderBrush}"/>
           </Border>
+
+          <!-- Reader: flat thread on the page ground -->
+          <Grid Grid.Column="2" Background="{ThemeResource TmBgBrush}">
+            <Grid x:Name="ReaderGrid" Visibility="Collapsed">
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <Grid Padding="20,8" BorderThickness="0,0,0,1" BorderBrush="{ThemeResource TmBorderSoftBrush}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Spacing="2">
+                  <Button Style="{StaticResource TmToolButton}" Click="OnReaderArchive" ToolTipService.ToolTip="Archive (E)" AutomationProperties.Name="Archive"><ctl:IconView IconName="archive" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                  <Button Style="{StaticResource TmToolButton}" Click="OnReaderJunk" ToolTipService.ToolTip="Spam (Ctrl+J)" AutomationProperties.Name="Spam"><ctl:IconView IconName="junk" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                  <Button Style="{StaticResource TmToolButton}" Click="OnReaderDelete" ToolTipService.ToolTip="Delete" AutomationProperties.Name="Delete"><ctl:IconView IconName="trash" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                  <Border Width="1" Height="16" Margin="6,0" Background="{ThemeResource TmBorderBrush}"/>
+                  <Button Style="{StaticResource TmToolButton}" Click="OnReaderUnread" ToolTipService.ToolTip="Mark unread (Ctrl+U)" AutomationProperties.Name="Mark unread"><ctl:IconView IconName="mail" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                  <Button Style="{StaticResource TmToolButton}" Click="OnReaderStar" ToolTipService.ToolTip="Star (Ctrl+Shift+G)" AutomationProperties.Name="Star"><ctl:IconView IconName="star" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                  <Button x:Name="MoveButton" Style="{StaticResource TmToolButton}" ToolTipService.ToolTip="Move to folder" AutomationProperties.Name="Move"><ctl:IconView IconName="folder" Size="16" Foreground="{ThemeResource TmText2Brush}"/>
+                    <Button.Flyout><MenuFlyout x:Name="MoveFlyout" Opening="OnMoveOpening"/></Button.Flyout>
+                  </Button>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2">
+                  <TextBlock x:Name="PositionText" Style="{StaticResource TmCaption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <Button Style="{StaticResource TmToolButton}" Click="OnNewer" ToolTipService.ToolTip="Newer" AutomationProperties.Name="Newer"><ctl:IconView IconName="chevron-left" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                  <Button Style="{StaticResource TmToolButton}" Click="OnOlder" ToolTipService.ToolTip="Older" AutomationProperties.Name="Older"><ctl:IconView IconName="chevron-right" Size="16" Foreground="{ThemeResource TmText2Brush}"/></Button>
+                </StackPanel>
+              </Grid>
+              <ScrollViewer x:Name="ReaderScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                  <TextBlock x:Name="ReaderSubject" FontFamily="{StaticResource TmFontSemi}" FontSize="20" LineHeight="28" LineStackingStrategy="BlockLineHeight" CharacterSpacing="-10"
+                             Foreground="{ThemeResource TmTextBrush}" TextWrapping="Wrap" IsTextSelectionEnabled="True" Margin="28,28,28,16"/>
+                  <InfoBar x:Name="ReadBar" IsClosable="True" Severity="Warning" Margin="28,0,28,12" Message="Could not mark as read"/>
+                  <Grid x:Name="EarlierPill" Visibility="Collapsed" Height="32" Margin="28,0,28,12" HorizontalAlignment="Left" Background="Transparent" Tapped="OnShowEarlier">
+                    <Rectangle RadiusX="16" RadiusY="16" Stroke="{ThemeResource TmBorder2Brush}" StrokeDashArray="3 3" StrokeThickness="1"/>
+                    <TextBlock Text="Show earlier messages" Style="{StaticResource TmBody}" VerticalAlignment="Center" Margin="16,0"/>
+                  </Grid>
+                  <ItemsControl x:Name="Cards" ItemsSource="{x:Bind Vm.OpenMessages}" ItemTemplate="{StaticResource MessageTemplate}"/>
+                </StackPanel>
+              </ScrollViewer>
+              <Grid Grid.Row="2" Padding="28,12" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource TmBorderSoftBrush}" Background="{ThemeResource TmBgBrush}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Style="{StaticResource TmPillButton}" Click="OnReply" AutomationProperties.Name="Reply"><StackPanel Orientation="Horizontal" Spacing="8"><ctl:IconView IconName="reply" Size="16" Foreground="{ThemeResource TmTextBrush}"/><TextBlock Text="Reply" Style="{StaticResource TmBody}"/></StackPanel></Button>
+                  <Button Style="{StaticResource TmPillButton}" Click="OnReplyAll" AutomationProperties.Name="Reply all"><StackPanel Orientation="Horizontal" Spacing="8"><ctl:IconView IconName="replyall" Size="16" Foreground="{ThemeResource TmTextBrush}"/><TextBlock Text="Reply all" Style="{StaticResource TmBody}"/></StackPanel></Button>
+                  <Button Style="{StaticResource TmPillButton}" Click="OnForward" AutomationProperties.Name="Forward"><StackPanel Orientation="Horizontal" Spacing="8"><ctl:IconView IconName="forward" Size="16" Foreground="{ThemeResource TmTextBrush}"/><TextBlock Text="Forward" Style="{StaticResource TmBody}"/></StackPanel></Button>
+                </StackPanel>
+              </Grid>
+            </Grid>
+            <StackPanel x:Name="ReaderEmpty" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+              <Grid Width="64" Height="64" HorizontalAlignment="Center" Margin="0,0,0,8">
+                <Ellipse Fill="{ThemeResource TmAccentSoftBrush}"/>
+                <ctl:IconView IconName="mail" Size="28" Foreground="{ThemeResource TmAccentInkBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Grid>
+              <TextBlock x:Name="ReaderEmptyTitle" Text="Select a conversation" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center"/>
+              <TextBlock x:Name="ReaderEmptyHint" Text="Choose a message from the list to read it here." Style="{StaticResource TmMeta}" HorizontalAlignment="Center" TextAlignment="Center"/>
+            </StackPanel>
+            <StackPanel x:Name="ReaderSkeleton" Visibility="Collapsed" Padding="28" Spacing="12" VerticalAlignment="Top">
+              <Border Height="20" Width="320" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+              <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+              <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+              <Border Height="10" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+              <Border Height="10" Width="220" HorizontalAlignment="Left" CornerRadius="4" Background="{ThemeResource TmTrackBrush}"/>
+            </StackPanel>
+            <StackPanel x:Name="ReaderError" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" MaxWidth="360">
+              <TextBlock x:Name="ReaderErrorTitle" Text="Couldn't load this message" Style="{StaticResource TmDisplay}" HorizontalAlignment="Center" TextAlignment="Center"/>
+              <TextBlock x:Name="ReaderErrorText" Style="{StaticResource TmMeta}" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+              <Button x:Name="ReaderRetry" Content="Try again" Style="{StaticResource TmPillButton}" HorizontalAlignment="Center" Click="OnRetryOpen" Margin="0,8,0,0"/>
+            </StackPanel>
+          </Grid>
         </Grid>
       </Grid>
     </NavigationView>
+
+    <!-- In-app toast (ToastPill, spec 16) -->
+    <Border x:Name="ToastPill" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,24" MinHeight="44" MaxWidth="420" Padding="20,12,12,12" CornerRadius="8"
+            BorderThickness="1" BorderBrush="{ThemeResource TmBorderBrush}" Background="{ThemeResource TmPanelBrush}" Opacity="0" Visibility="Collapsed" Translation="0,12,0">
+      <Grid ColumnSpacing="12">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <TextBlock x:Name="ToastText" FontFamily="{StaticResource TmFontMedium}" FontSize="13" Foreground="{ThemeResource TmTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+        <Button x:Name="ToastUndo" Grid.Column="1" Content="Undo" Style="{StaticResource TmTextButton}" Foreground="{ThemeResource TmAccentInkBrush}" FontFamily="{StaticResource TmFontSemi}" Click="OnToastUndo"/>
+        <Button Grid.Column="2" Style="{StaticResource TmToolButton}" Click="OnToastClose" AutomationProperties.Name="Close"><ctl:IconView IconName="close" Size="16" Foreground="{ThemeResource TmText3Brush}"/></Button>
+      </Grid>
+    </Border>
   </Grid>
 </Page>

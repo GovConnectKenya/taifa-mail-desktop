@@ -62,6 +62,7 @@ public sealed partial class MailShellViewModel : ObservableObject
         await RefreshFoldersAsync(ct);
         SelectedFolder ??= Folders.FirstOrDefault(f => f.Path == "INBOX") ?? Folders.FirstOrDefault();
         if (SelectedFolder is not null) await LoadFolderAsync(SelectedFolder, ct);
+        try { Quota = await _api.QuotaAsync(ct); } catch (Exception e) when (e is ApiRequestError or ApiTransportError) { }
     }
 
     public async Task RefreshFoldersAsync(CancellationToken ct = default)
@@ -90,12 +91,13 @@ public sealed partial class MailShellViewModel : ObservableObject
     {
         var key = (f.SpecialUse ?? f.Path).ToLowerInvariant();
         if (f.Path == "INBOX" || key.Contains("inbox")) return 0;
-        if (key.Contains("draft")) return 1;
-        if (key.Contains("sent")) return 2;
+        if (key.Contains("sent")) return 1;
+        if (key.Contains("draft")) return 2;
         if (key.Contains("archive")) return 3;
         if (key.Contains("junk") || key.Contains("spam")) return 4;
-        if (key.Contains("trash") || key.Contains("deleted")) return 5;
-        return 6;
+        if (key.Contains("quarantine")) return 5;
+        if (key.Contains("trash") || key.Contains("deleted")) return 6;
+        return 7;
     }
 
     public async Task LoadFolderAsync(ApiFolder folder, CancellationToken ct = default)
@@ -133,7 +135,7 @@ public sealed partial class MailShellViewModel : ObservableObject
             var outgoing = AvatarRule.IsOutgoingFolder(folder.Path, Folders);
             var added = new List<ThreadRow>();
             var seen = Threads.Select(t => t.ThreadKey).ToHashSet();
-            foreach (var item in page.Items.Where(i => seen.Add(i.ThreadKey))) { var r = new ThreadRow(item, outgoing); Threads.Add(r); added.Add(r); }
+            foreach (var item in page.Items.Where(i => seen.Add(i.ThreadKey))) { var r = Row(item, outgoing); Threads.Add(r); added.Add(r); }
             Total = page.Total;
             OnPropertyChanged(nameof(HasMore));
             await ResolveAvatarsAsync(added, ct);
@@ -148,7 +150,7 @@ public sealed partial class MailShellViewModel : ObservableObject
     {
         var outgoing = AvatarRule.IsOutgoingFolder(folderPath, Folders);
         Threads.Clear();
-        foreach (var it in items) Threads.Add(new ThreadRow(it, outgoing));
+        foreach (var it in items) Threads.Add(Row(it, outgoing));
         Total = total;
         IsEmpty = Threads.Count == 0;
         OnPropertyChanged(nameof(HasMore));
@@ -183,8 +185,16 @@ public sealed partial class MailShellViewModel : ObservableObject
     }
 
     /// <summary>Opens a thread and marks it read optimistically: the row clears at once, and is restored if the server refuses.</summary>
+    private ThreadRow? _openRow;
+    private long _nextBefore;
+    [ObservableProperty] private bool _hasMoreOlder;
+    [ObservableProperty] private bool _openUnavailableOffline;
+
     public async Task OpenAsync(ThreadRow row, CancellationToken ct = default)
     {
+        _openRow = row;
+        OpenUnavailableOffline = false;
+        HasMoreOlder = false;
         _openCts?.Cancel();
         var cts = _openCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         SelectedThread = row;
@@ -199,13 +209,8 @@ public sealed partial class MailShellViewModel : ObservableObject
         {
             var window = await _api.ConversationAsync(row.Uid, row.Folder, 20, null, cts.Token);
             if (cts.IsCancellationRequested) return;
-            var ordered = window.Messages.OrderBy(m => DateTimeOffset.TryParse(m.Date, out var d) ? d : DateTimeOffset.MinValue).ToList();
-            for (var i = 0; i < ordered.Count; i++)
-            {
-                var card = new MessageCardVm(ordered[i], OwnAddress, isLatest: i == ordered.Count - 1);
-                card.AllowImages = TrustedImageSenders.Contains(card.AvatarAddress);
-                OpenMessages.Add(card);
-            }
+            _cache?.SaveConversation(_api.MailboxId, row.Folder, row.Uid, window);
+            ShowWindow(window);
             await ResolveCardAvatarsAsync(OpenMessages.ToList(), cts.Token);
             if (wasUnread)
             {
@@ -226,11 +231,54 @@ public sealed partial class MailShellViewModel : ObservableObject
         catch (Exception e) when (e is ApiRequestError or ApiTransportError)
         {
             if (wasUnread) { row.Unread = true; AdjustUnseen(+1); }
-            OpenError = e is ApiTransportError ? "You are offline. This conversation is not cached yet." : e.Message;
-            if (e is ApiTransportError) Offline = true;
+            if (e is ApiTransportError)
+            {
+                Offline = true;
+                var cached = _cache?.LoadConversation(_api.MailboxId, row.Folder, row.Uid);
+                if (cached is not null) { ShowWindow(cached); OpenError = null; }
+                else { OpenUnavailableOffline = true; OpenError = "Not available offline"; }
+            }
+            else OpenError = e.Message;
         }
         finally { if (_openCts == cts) OpenLoading = false; }
         _ = previousUnseen;
+    }
+
+    [ObservableProperty] private ApiQuota? _quota;
+    [ObservableProperty] private bool _compact;
+    [ObservableProperty] private bool _searchAllFolders;
+    partial void OnCompactChanged(bool value) { foreach (var r in Threads) r.Compact = value; }
+    private ThreadRow Row(ApiConversationSummary item, bool outgoing) => new(item, outgoing) { Compact = Compact };
+
+    private void ShowWindow(ApiConversationWindow window)
+    {
+        HasMoreOlder = window.HasMoreOlder;
+        _nextBefore = window.NextBefore;
+        OpenMessages.Clear();
+        var ordered = window.Messages.OrderBy(m => DateTimeOffset.TryParse(m.Date, out var d) ? d : DateTimeOffset.MinValue).ToList();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var card = new MessageCardVm(ordered[i], OwnAddress, isLatest: i == ordered.Count - 1);
+            card.AllowImages = TrustedImageSenders.Contains(card.AvatarAddress);
+            OpenMessages.Add(card);
+        }
+    }
+
+    /// <summary>"Show earlier messages": fetches the next older window and puts it above the open messages.</summary>
+    public async Task LoadOlderAsync(CancellationToken ct = default)
+    {
+        if (_openRow is null || !HasMoreOlder) return;
+        try
+        {
+            var w = await _api.OlderAsync(_openRow.Uid, _openRow.Folder, _nextBefore, ct);
+            HasMoreOlder = w.HasMoreOlder;
+            _nextBefore = w.NextBefore;
+            var older = w.Messages.OrderBy(m => DateTimeOffset.TryParse(m.Date, out var d) ? d : DateTimeOffset.MinValue).ToList();
+            var cards = older.Select(m => new MessageCardVm(m, OwnAddress, false)).ToList();
+            for (var i = cards.Count - 1; i >= 0; i--) OpenMessages.Insert(0, cards[i]);
+            await ResolveCardAvatarsAsync(cards, ct);
+        }
+        catch (Exception e) when (e is ApiRequestError or ApiTransportError) { Notice?.Invoke("Could not load earlier messages", null); }
     }
 
     private async Task ResolveCardAvatarsAsync(IReadOnlyList<MessageCardVm> cards, CancellationToken ct)
@@ -285,12 +333,25 @@ public sealed partial class MailShellViewModel : ObservableObject
         Error = null;
         try
         {
-            var res = await _api.SearchAsync(text, SelectedFolder.Path, PageSize, 0, cts.Token);
+            ApiMailList res;
+            if (SearchAllFolders)
+            {
+                // The API searches one folder per call, so fan out client side and merge newest first (contract 5.2).
+                var targets = Folders.Where(f => FolderOrder(f) < 6 || FolderOrder(f) == 7).Take(12).ToList();
+                var pages = await Task.WhenAll(targets.Select(async f =>
+                {
+                    try { return await _api.SearchAsync(text, f.Path, 25, 0, cts.Token); }
+                    catch (ApiRequestError) { return new ApiMailList(f.Path, 0, 25, 0, new()); }
+                }));
+                var merged = pages.SelectMany(p => p.Items).OrderByDescending(m => DateTimeOffset.TryParse(m.Date, out var d) ? d : DateTimeOffset.MinValue).Take(PageSize).ToList();
+                res = new ApiMailList("*", merged.Count, PageSize, 0, merged);
+            }
+            else res = await _api.SearchAsync(text, SelectedFolder.Path, PageSize, 0, cts.Token);
             if (cts.IsCancellationRequested) return;
             var outgoing = AvatarRule.IsOutgoingFolder(SelectedFolder.Path, Folders);
             Threads.Clear();
             foreach (var m in res.Items)
-                Threads.Add(new ThreadRow(new ApiConversationSummary($"{m.Folder}:{m.Uid}", m, 1, !m.Seen, new List<long> { m.Uid }), outgoing));
+                Threads.Add(Row(new ApiConversationSummary($"{m.Folder}:{m.Uid}", m, 1, !m.Seen, new List<long> { m.Uid }), outgoing));
             Total = res.Total;
             IsEmpty = Threads.Count == 0;
             OnPropertyChanged(nameof(HasMore));
