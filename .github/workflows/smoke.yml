@@ -1,0 +1,282 @@
+name: Release smoke test
+
+# Installs the latest published release on a real Windows runner and a real
+# macOS runner, launches it, and checks that it shows the sign-in page. It never
+# signs in and needs no secrets. It tests whatever "latest" points at, so it
+# measures the release, not the commit it runs from.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/windows-smoke
+
+permissions:
+  contents: read
+
+env:
+  BASE: https://github.com/GovConnectKenya/taifa-mail-desktop/releases/latest/download
+  EXPECT_VERSION: '0.2.0'
+
+jobs:
+  windows:
+    name: Windows x64 installer
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download the installer and verify its sha512
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\dl" | Out-Null
+          $exe = "$env:RUNNER_TEMP\dl\TaifaMail-Setup-windows-x64.exe"
+          Invoke-WebRequest "$env:BASE/TaifaMail-Setup-windows-x64.exe" -OutFile $exe
+          Invoke-WebRequest "$env:BASE/latest.yml" -OutFile "$env:RUNNER_TEMP\dl\latest.yml"
+          $yml = Get-Content "$env:RUNNER_TEMP\dl\latest.yml" -Raw
+          if ($yml -notmatch "(?m)^version:\s*$([regex]::Escape($env:EXPECT_VERSION))\s*$") { throw "latest.yml is not version $env:EXPECT_VERSION" }
+          # The alias carries the same bytes as the versioned file named in latest.yml.
+          if ($yml -notmatch '(?m)^sha512:\s*(\S+)\s*$') { throw 'no sha512 in latest.yml' }
+          $want = $Matches[1]
+          $sha = [System.Security.Cryptography.SHA512]::Create()
+          $bytes = $sha.ComputeHash([System.IO.File]::ReadAllBytes($exe))
+          $got = [Convert]::ToBase64String($bytes)
+          "want $want"
+          "got  $got"
+          if ($got -ne $want) { throw 'CHECK FAIL sha512 mismatch' }
+          "CHECK PASS sha512 matches latest.yml ($((Get-Item $exe).Length) bytes)"
+
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = "$env:RUNNER_TEMP\dl\TaifaMail-Setup-windows-x64.exe"
+          $p = Start-Process $exe -ArgumentList '/S' -PassThru -Wait
+          "installer exit code $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "CHECK FAIL installer exit code $($p.ExitCode)" }
+          "CHECK PASS silent install exit code 0"
+          # The installer may start the app itself after a silent install. Stop it so the launch below is ours.
+          Start-Sleep -Seconds 5
+          Get-Process -Name 'Taifa Mail' -ErrorAction SilentlyContinue | ForEach-Object { "installer left a running process: $($_.Id)"; Stop-Process -Id $_.Id -Force }
+          Start-Sleep -Seconds 3
+
+      - name: Check install location, shortcut and version info
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Taifa Mail'
+          $app = Join-Path $dir 'Taifa Mail.exe'
+          if (-not (Test-Path $app)) { Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue | Out-String; throw "CHECK FAIL no exe at $app" }
+          "CHECK PASS installed at $app"
+          $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Taifa Mail.lnk'
+          if (-not (Test-Path $lnk)) { Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" | Out-String; throw "CHECK FAIL no Start menu shortcut $lnk" }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+          "shortcut target: $target"
+          if ($target -ne $app) { throw "CHECK FAIL shortcut points at $target" }
+          "CHECK PASS Start menu shortcut 'Taifa Mail' points at the exe"
+          $vi = (Get-Item $app).VersionInfo
+          "ProductName=$($vi.ProductName) FileVersion=$($vi.FileVersion) ProductVersion=$($vi.ProductVersion) CompanyName=$($vi.CompanyName) FileDescription=$($vi.FileDescription)"
+          if ($vi.ProductName -ne 'Taifa Mail') { throw "CHECK FAIL ProductName '$($vi.ProductName)'" }
+          if ($vi.FileVersion -ne $env:EXPECT_VERSION) { throw "CHECK FAIL FileVersion '$($vi.FileVersion)'" }
+          if ([string]::IsNullOrWhiteSpace($vi.CompanyName)) { throw 'CHECK FAIL CompanyName is empty' }
+          "CHECK PASS version info (ProductName Taifa Mail, FileVersion $($vi.FileVersion), CompanyName $($vi.CompanyName))"
+          $sig = Get-AuthenticodeSignature $app
+          "authenticode status: $($sig.Status) (unsigned is expected on Windows)"
+
+      - name: Launch and wait for the sign-in window
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\Taifa Mail\Taifa Mail.exe'
+          $start = Get-Date
+          Start-Process $app
+          $title = ''
+          $expected = "Sign in $([char]0xB7) Taifa Mail"
+          $sawName = $false
+          while (((Get-Date) - $start).TotalSeconds -lt 60) {
+            $procs = Get-Process -Name 'Taifa Mail' -ErrorAction SilentlyContinue
+            $t = ($procs | Where-Object { $_.MainWindowTitle } | Select-Object -First 1).MainWindowTitle
+            if ($t) { $title = $t; if ($t -like '*Taifa Mail*') { $sawName = $true }; if ($t -eq $expected) { break } }
+            Start-Sleep -Milliseconds 500
+          }
+          $secs = [int]((Get-Date) - $start).TotalSeconds
+          "final window title after ${secs}s: [$title]"
+          if (-not $sawName) { throw 'CHECK FAIL no window titled Taifa Mail within 60 s' }
+          "CHECK PASS a top-level window with 'Taifa Mail' in its title appeared"
+          if ($title -ne $expected) { throw "CHECK FAIL final title is [$title], expected [$expected]" }
+          "CHECK PASS final title is 'Sign in $([char]0xB7) Taifa Mail'"
+          # let the page finish painting before the screenshot
+          Start-Sleep -Seconds 5
+
+      - name: Screenshot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          "screen $($b.Width)x$($b.Height)"
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+          New-Item -ItemType Directory -Force -Path shots | Out-Null
+          $bmp.Save("$PWD\shots\windows-signin.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $g.Dispose(); $bmp.Dispose()
+          "CHECK PASS screenshot saved ($((Get-Item shots\windows-signin.png).Length) bytes)"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-screenshot
+          path: shots/*.png
+          if-no-files-found: warn
+
+      - name: Stay alive for 30 s, no crash dialog, no WER report
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $before = (Get-Process -Name 'Taifa Mail' -ErrorAction SilentlyContinue).Id | Sort-Object
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 1
+            if (-not (Get-Process -Name 'Taifa Mail' -ErrorAction SilentlyContinue)) { throw "CHECK FAIL the app exited after $i s" }
+            if (Get-Process -Name 'WerFault', 'WerFaultSecure' -ErrorAction SilentlyContinue) { throw 'CHECK FAIL WerFault is running (crash dialog)' }
+          }
+          $n = @(Get-Process -Name 'Taifa Mail').Count
+          "CHECK PASS alive after 30 s ($n processes)"
+          $title = (Get-Process -Name 'Taifa Mail' | Where-Object { $_.MainWindowTitle } | Select-Object -First 1).MainWindowTitle
+          "title after 30 s: [$title]"
+          $wer = @()
+          foreach ($d in "$env:LOCALAPPDATA\Microsoft\Windows\WER\ReportArchive", "$env:LOCALAPPDATA\Microsoft\Windows\WER\ReportQueue", "$env:ProgramData\Microsoft\Windows\WER\ReportArchive", "$env:ProgramData\Microsoft\Windows\WER\ReportQueue") {
+            if (Test-Path $d) { $wer += Get-ChildItem $d -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*Taifa*' -or $_.Name -like '*electron*' } }
+          }
+          $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000, 1001 } -ErrorAction SilentlyContinue | Where-Object { $_.Message -like '*Taifa Mail*' })
+          if ($wer.Count -gt 0) { $wer | Out-String; throw 'CHECK FAIL WER report found' }
+          if ($ev.Count -gt 0) { $ev | Format-List TimeCreated, Message | Out-String; throw 'CHECK FAIL Application Error event for Taifa Mail' }
+          "CHECK PASS no WER report and no Application Error event"
+
+      - name: Check the profile folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $p = Join-Path $env:APPDATA 'Taifa Mail'
+          if (-not (Test-Path $p)) { Get-ChildItem $env:APPDATA | Out-String; throw "CHECK FAIL no profile at $p" }
+          $items = Get-ChildItem $p -Force
+          $items | Select-Object Name | Out-String
+          if ($items.Count -eq 0) { throw 'CHECK FAIL profile folder is empty' }
+          "CHECK PASS profile written at $p ($($items.Count) entries)"
+
+      - name: Close the app and uninstall silently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-Process -Name 'Taifa Mail' | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }
+          Start-Sleep -Seconds 3
+          # closing the window hides to the tray by design, so end what is left
+          Get-Process -Name 'Taifa Mail' -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Taifa Mail'
+          $un = Join-Path $dir 'Uninstall Taifa Mail.exe'
+          if (-not (Test-Path $un)) { throw "CHECK FAIL no uninstaller at $un" }
+          Start-Process $un -ArgumentList '/S' -Wait
+          # the NSIS uninstaller re-launches itself from temp, so poll for the result
+          $gone = $false
+          for ($i = 0; $i -lt 60; $i++) { if (-not (Test-Path (Join-Path $dir 'Taifa Mail.exe'))) { $gone = $true; break }; Start-Sleep -Seconds 1 }
+          if (-not $gone) { throw 'CHECK FAIL exe still present after uninstall' }
+          $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Taifa Mail.lnk'
+          if (Test-Path $lnk) { throw 'CHECK FAIL Start menu shortcut still present after uninstall' }
+          "CHECK PASS uninstalled silently, exe and shortcut removed"
+
+  macos:
+    name: macOS arm64 DMG
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download the DMG and verify its sha512
+        run: |
+          set -euo pipefail
+          uname -m
+          mkdir -p "$RUNNER_TEMP/dl"
+          curl -fsSL -o "$RUNNER_TEMP/dl/app.dmg" "$BASE/TaifaMail-mac-arm64.dmg"
+          curl -fsSL -o "$RUNNER_TEMP/dl/latest-mac.yml" "$BASE/latest-mac.yml"
+          grep -q "^version: $EXPECT_VERSION\$" "$RUNNER_TEMP/dl/latest-mac.yml" || { echo "latest-mac.yml is not version $EXPECT_VERSION"; exit 1; }
+          # The alias carries the same bytes as TaifaMail-<version>-arm64.dmg in latest-mac.yml.
+          want=$(awk -v u="TaifaMail-$EXPECT_VERSION-arm64.dmg" '$1=="-" && $2=="url:" {hit=($3==u)} hit && $1=="sha512:" {print $2; exit}' "$RUNNER_TEMP/dl/latest-mac.yml")
+          got=$(openssl dgst -sha512 -binary "$RUNNER_TEMP/dl/app.dmg" | base64)
+          echo "want $want"; echo "got  $got"
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "CHECK FAIL sha512 mismatch"; exit 1; }
+          echo "CHECK PASS sha512 matches latest-mac.yml ($(stat -f%z "$RUNNER_TEMP/dl/app.dmg") bytes)"
+
+      - name: Mount, assess, staple-check, copy
+        run: |
+          set -euo pipefail
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/mnt" "$RUNNER_TEMP/dl/app.dmg"
+          ls "$RUNNER_TEMP/mnt"
+          mkdir -p "$RUNNER_TEMP/app"
+          cp -R "$RUNNER_TEMP/mnt/Taifa Mail.app" "$RUNNER_TEMP/app/"
+          hdiutil detach "$RUNNER_TEMP/mnt"
+          APP="$RUNNER_TEMP/app/Taifa Mail.app"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist"
+          v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
+          [ "$v" = "$EXPECT_VERSION" ] || { echo "CHECK FAIL bundle version $v"; exit 1; }
+          echo "CHECK PASS bundle version $v"
+          # a download is quarantined; assess it the way Gatekeeper would
+          xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" "$APP" || true
+          spctl -a -vv "$APP" 2>&1 | tee "$RUNNER_TEMP/spctl.txt"
+          grep -q 'accepted' "$RUNNER_TEMP/spctl.txt" || { echo "CHECK FAIL spctl did not accept the app"; exit 1; }
+          grep -q 'Notarized Developer ID' "$RUNNER_TEMP/spctl.txt" && echo "source is Notarized Developer ID"
+          echo "CHECK PASS spctl accepts the app"
+          # The release staples the DMG, not the app inside it, so the DMG is the stapler check.
+          xcrun stapler validate "$RUNNER_TEMP/dl/app.dmg"
+          echo "CHECK PASS stapler validate (dmg)"
+          if xcrun stapler validate "$APP"; then echo "app inside the dmg is stapled too"; else echo "NOTE the app inside the dmg has no stapled ticket (spctl still accepts it as notarized, online)"; fi
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "CHECK PASS codesign verify"
+
+      - name: Launch and wait for the process
+        timeout-minutes: 3
+        run: |
+          set -uo pipefail
+          APP="$RUNNER_TEMP/app/Taifa Mail.app"
+          # the quarantine flag was only there for the Gatekeeper assessment; a runner cannot click the first-open dialog
+          xattr -dr com.apple.quarantine "$APP" || true
+          # open returns once LaunchServices has the app; run it in the background so a stall is visible
+          open -n "$APP" > "$RUNNER_TEMP/open.log" 2>&1 &
+          OPENPID=$!
+          for i in $(seq 1 60); do
+            if pgrep -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' >/dev/null; then echo "process up after ${i}s"; break; fi
+            sleep 1
+          done
+          echo "open still running: $(kill -0 $OPENPID 2>/dev/null && echo yes || echo no)"
+          cat "$RUNNER_TEMP/open.log"
+          ps -axo pid,etime,command | grep -i 'taifa' | grep -v grep | cut -c1-200 || true
+          if ! pgrep -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' >/dev/null; then echo "CHECK FAIL process never started"; exit 1; fi
+          echo "CHECK PASS process started"
+          sleep 15
+
+      - name: Screenshot
+        run: |
+          mkdir -p shots
+          screencapture -x shots/macos-signin.png
+          ls -l shots
+          [ -s shots/macos-signin.png ] || { echo "CHECK FAIL empty screenshot"; exit 1; }
+          echo "CHECK PASS screenshot saved"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-screenshot
+          path: shots/*.png
+          if-no-files-found: warn
+
+      - name: Stay alive for 30 s, then quit
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            sleep 1
+            pgrep -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' >/dev/null || { echo "CHECK FAIL the app exited after ${i}s"; exit 1; }
+          done
+          echo "CHECK PASS alive after 30 s"
+          if ls ~/Library/Logs/DiagnosticReports 2>/dev/null | grep -i 'taifa'; then echo "CHECK FAIL crash report found"; exit 1; fi
+          echo "CHECK PASS no crash report"
+          osascript -e 'tell application "Taifa Mail" to quit' || true
+          sleep 3
+          pkill -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' || true
+          echo "quit"
