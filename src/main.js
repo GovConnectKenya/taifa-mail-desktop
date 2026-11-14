@@ -79,10 +79,17 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 // Appending rather than replacing keeps the real Chrome UA intact, so backend
-// UA parsing and security logs keep working. This suffix is how the web app can
-// tell it is running inside the shell without us exposing any preload bridge:
-// navigator.userAgent.includes('TaifaMailDesktop').
-app.userAgentFallback = `${app.userAgentFallback} TaifaMailDesktop/${app.getVersion()}`;
+// UA parsing and security logs keep working, and the suffix still tells them
+// the request came from the desktop app.
+//
+// Deliberately NOT the 0.1.x token `TaifaMailDesktop`. The webmail checks for
+// that token (isDesktopShell) and then takes thin-shell code paths written for
+// 0.1.x's Electron 31: it hides the passkey button and the "or" divider, hides
+// the workspace-account link, and changes the notification defaults. This app
+// runs the webmail on its real origin with a current Chromium, so it must get
+// exactly the pages a browser gets. A distinct token keeps the webmail on its
+// browser paths, while installed 0.1.x apps keep theirs.
+app.userAgentFallback = `${app.userAgentFallback} TaifaMailApp/${app.getVersion()}`;
 
 // Required on Windows for notifications to be attributed to the app rather than
 // to electron.exe, and for correct taskbar grouping. Must match build.appId.
