@@ -223,8 +223,10 @@ jobs:
           grep -q 'accepted' "$RUNNER_TEMP/spctl.txt" || { echo "CHECK FAIL spctl did not accept the app"; exit 1; }
           grep -q 'Notarized Developer ID' "$RUNNER_TEMP/spctl.txt" && echo "source is Notarized Developer ID"
           echo "CHECK PASS spctl accepts the app"
-          xcrun stapler validate "$APP"
-          echo "CHECK PASS stapler validate"
+          # The release staples the DMG, not the app inside it, so the DMG is the stapler check.
+          xcrun stapler validate "$RUNNER_TEMP/dl/app.dmg"
+          echo "CHECK PASS stapler validate (dmg)"
+          if xcrun stapler validate "$APP"; then echo "app inside the dmg is stapled too"; else echo "NOTE the app inside the dmg has no stapled ticket (spctl still accepts it as notarized, online)"; fi
           codesign --verify --deep --strict --verbose=2 "$APP"
           echo "CHECK PASS codesign verify"
 
