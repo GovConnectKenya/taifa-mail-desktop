@@ -11,7 +11,9 @@ struct RootView: View {
             case .launching:
                 LaunchSkeleton()
             case .signedOut:
-                SignInView(model: app.signIn, app: app, offline: false, banner: app.sessionBanner)
+                SignInView(model: app.signIn, app: app, offline: !app.networkOnline, banner: app.sessionBanner)
+            case .setupRequired:
+                SetupRequiredView(app: app)
             case .signedIn:
                 if let store = app.store { MainView(app: app, store: store) }
             }
@@ -22,7 +24,7 @@ struct RootView: View {
         .task {
             ComposeLauncher.shared.opener = { openWindow(id: "compose", value: $0) }
             app.openMainWindow = { openWindow(id: "main") }
-            await app.launch()
+            await app.launchIfNeeded()
         }
         .onChange(of: app.session?.address) { _, a in ComposeLauncher.shared.ownAddress = a ?? "" }
     }
@@ -75,6 +77,10 @@ struct MainView: View {
             await store.runSearch()
         }
         .toolbar { MailToolbar(store: store) }
+        .confirmationDialog("Delete forever?", isPresented: Binding(get: { store.pendingForever != nil }, set: { if !$0 { store.cancelForever() } }), titleVisibility: .visible) {
+            Button("Delete forever", role: .destructive) { store.confirmForever() }
+            Button("Cancel", role: .cancel) { store.cancelForever() }
+        } message: { Text("This permanently removes \(store.pendingForever?.count ?? 0) conversation(s). It cannot be undone.") }
         .overlay(alignment: .bottom) { NoticeToast(store: store).padding(.bottom, Space.s6).padding(.horizontal, Space.s4) }
         .onReceive(NotificationCenter.default.publisher(for: .focusSearch)) { _ in searchPresented = true }
         .accessibilityIdentifier("main-window")
@@ -119,5 +125,27 @@ struct NoticeToast: View {
             }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: store.notice)
+    }
+}
+
+
+/// Shown when /auth/mailbox/me says first login setup is outstanding (password change or recovery email).
+struct SetupRequiredView: View {
+    var app: AppModel
+    var body: some View {
+        ZStack {
+            Theme.bg.ignoresSafeArea()
+            VStack(spacing: Space.s4) {
+                BrandLogo(height: 56)
+                Text("Finish setting up your mailbox").taifaHeading(.display).foregroundStyle(Theme.text)
+                Text(app.setupDetail).taifa(.body).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
+                Button("Open Taifa Mail on the web") { NSWorkspace.shared.open(URL(string: "https://mail.govconnect.ke")!) }
+                    .buttonStyle(PrimaryButtonStyle(full: true)).accessibilityIdentifier("setup-open-web")
+                Button("Sign out") { Task { await app.signOut() } }.buttonStyle(QuietButtonStyle())
+            }
+            .padding(Space.s6).frame(width: 400)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous).strokeBorder(Theme.border))
+        }
     }
 }

@@ -22,7 +22,7 @@ struct TaifaMailApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Taifa Mail", id: "main") {
+        Window("Taifa Mail", id: "main") {
             RootView(app: app)
         }
         .defaultSize(width: 1280, height: 800)
@@ -71,7 +71,7 @@ struct MailCommands: Commands {
             Button("New Message") { ComposeLauncher.shared.openNew() }.keyboardShortcut("n")
         }
         CommandGroup(after: .textEditing) {
-            Button("Find") { NotificationCenter.default.post(name: .focusSearch, object: nil) }.keyboardShortcut("f")
+            Button("Find") { store?.searchAllFolders = false; NotificationCenter.default.post(name: .focusSearch, object: nil) }.keyboardShortcut("f")
             Button("Search All Folders") {
                 store?.searchAllFolders = true
                 NotificationCenter.default.post(name: .focusSearch, object: nil)
@@ -102,7 +102,7 @@ struct MailCommands: Commands {
             }
             Divider()
             Button("Flag") { if let s = store { s.perform(.flag(!(s.selectedRows.first?.latest.flagged ?? false))) } }.keyboardShortcut("l", modifiers: [.command, .shift]).disabled(!hasSelection)
-            Button("Mark as Unread") { if let s = store { s.perform(.read(s.selectedRows.first?.unread ?? false)) } }.keyboardShortcut("u", modifiers: [.command, .shift]).disabled(!hasSelection)
+            Button(store?.selectedRows.first?.unread == true ? "Mark as Read" : "Mark as Unread") { if let s = store { s.perform(.read(s.selectedRows.first?.unread ?? false)) } }.keyboardShortcut("u", modifiers: [.command, .shift]).disabled(!hasSelection)
             Divider()
             Button("Undo Last Action") { store?.performUndo() }.keyboardShortcut("z", modifiers: [.command, .option]).disabled(!(store?.canUndo ?? false))
         }

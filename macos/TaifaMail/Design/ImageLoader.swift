@@ -27,6 +27,9 @@ final class ImageLoader: @unchecked Sendable {
         cache.countLimit = 600
     }
 
+    /// Wipes decoded images and the on-disk URLCache (sign out).
+    func clearCache() { cache.removeAllObjects(); session.configuration.urlCache?.removeAllCachedResponses() }
+
     func cached(_ urlString: String, maxPixel: Int) -> NSImage? { cache.object(forKey: key(urlString, maxPixel)) }
     private func key(_ u: String, _ m: Int) -> NSString { "\(m)|\(u)" as NSString }
 
@@ -71,12 +74,13 @@ final class ImageLoader: @unchecked Sendable {
 @MainActor @Observable
 final class AvatarStore {
     private(set) var entries: [String: AvatarEntry] = [:]
+    @ObservationIgnored private var generation = 0
     @ObservationIgnored private var requested: Set<String> = []
     @ObservationIgnored private var queue: [String] = []
     @ObservationIgnored private var flushTask: Task<Void, Never>?
     @ObservationIgnored var service: MailService?
 
-    func reset() { entries = [:]; requested = []; queue = []; flushTask?.cancel() }
+    func reset() { generation += 1; entries = [:]; requested = []; queue = []; flushTask?.cancel(); flushTask = nil }
 
     func request(_ address: String) {
         let key = address.lowercased()
@@ -96,8 +100,10 @@ final class AvatarStore {
         let batch = Array(queue.prefix(100))
         queue.removeFirst(batch.count)
         guard !batch.isEmpty, let service else { return }
+        let gen = generation
         do {
             let result = try await service.avatars(emails: batch)
+            guard gen == generation else { return }
             for e in batch { entries[e] = result[e] ?? AvatarEntry(url: nil, name: nil, urlScope: nil, institution: nil) }
         } catch {
             // Leave unresolved: the placeholder stays, and a later request may retry.

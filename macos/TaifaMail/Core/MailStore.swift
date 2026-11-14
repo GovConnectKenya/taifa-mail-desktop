@@ -88,7 +88,14 @@ final class MailStore {
     var isOutgoingFolder: Bool { [.sent, .drafts].contains(currentFolder?.role ?? .other) }
     var composeFolders: [Folder] { folders }
 
+    /// Bumped on every mailbox switch: results of requests started under an older generation are dropped.
+    private(set) var generation = 0
+    var pendingForever: [ConversationSummary]?
+
     func swapService(_ s: MailService) {
+        generation += 1
+        listTask?.cancel(); readerTask?.cancel(); reconcileTask?.cancel(); noticeTask?.cancel(); undo = nil; notice = nil
+        isLoadingMore = false; pendingForever = nil
         service = s; avatars.service = s; avatars.reset()
         folders = []; rows = []; reader = nil; selection = []; knownInbox = nil; total = 0
         listState = .idle; foldersState = .idle; searchText = ""
@@ -98,18 +105,20 @@ final class MailStore {
 
     /// Cached folders and inbox first (instant), then the network.
     func bootstrap() async {
-        if let cached = await cache.folders(mailbox: mailboxId), folders.isEmpty {
+        let gen = generation, mb = mailboxId
+        if let cached = await cache.folders(mailbox: mb), folders.isEmpty, gen == generation {
             folders = sorted(cached); foldersState = .loaded; servedFromCache = true
             publishBadge()
         }
-        if rows.isEmpty, let l = await cache.list(mailbox: mailboxId, folder: selectedFolder) {
+        if rows.isEmpty, gen == generation, let l = await cache.list(mailbox: mb, folder: selectedFolder), gen == generation {
             rows = l.items; total = l.total; listState = .loaded; servedFromCache = true
             for r in l.items.prefix(30) { avatars.request(r.latest.fromAddr) }
         }
         async let f: Void = loadFolders()
         async let l: Void = loadFirstPage()
         _ = await (f, l)
-        Task { trustedImageSenders = Set((try? await service.trustedImageSenders()) ?? []) }
+        let svc = service
+        Task { let t = Set((try? await svc.trustedImageSenders()) ?? []); if gen == generation { trustedImageSenders = t } }
     }
 
     private func sorted(_ f: [Folder]) -> [Folder] {
@@ -121,18 +130,21 @@ final class MailStore {
     }
 
     func loadFolders() async {
+        let gen = generation, mb = mailboxId, svc = service
         if folders.isEmpty { foldersState = .loading }
         do {
-            let f = try await service.folders()
+            let f = try await svc.folders()
+            guard gen == generation else { return }
             folders = sorted(f); foldersState = .loaded; markOnline()
-            await cache.saveFolders(f, mailbox: mailboxId)
+            await cache.saveFolders(f, mailbox: mb)
             publishBadge()
-            if let q = try? await service.quota() { quota = q }
-        } catch { handleListError(error, forFolders: true) }
+            if let q = try? await svc.quota(), gen == generation { quota = q }
+        } catch { if gen == generation { handleListError(error, forFolders: true) } }
     }
 
     func refreshCounts() async {
-        guard let counts = try? await service.folderCounts() else { return }
+        let gen = generation
+        guard let counts = try? await service.folderCounts(), gen == generation else { return }
         markOnline()
         let map = Dictionary(uniqueKeysWithValues: counts.map { ($0.path, $0) })
         for i in folders.indices { if let c = map[folders[i].path] { folders[i].unseen = c.unseen; folders[i].total = c.total } }
@@ -158,26 +170,26 @@ final class MailStore {
     }
 
     func loadFirstPage(useCache: Bool = false, keepRows: Bool = false) async {
-        let folder = selectedFolder
-        if useCache, let l = await cache.list(mailbox: mailboxId, folder: folder), selectedFolder == folder {
+        let folder = selectedFolder, gen = generation, mb = mailboxId, svc = service
+        if useCache, let l = await cache.list(mailbox: mb, folder: folder), selectedFolder == folder, gen == generation {
             rows = l.items; total = l.total; listState = .loaded; servedFromCache = true
         }
         if rows.isEmpty { listState = .loading }
         do {
             let list: ConversationList
             if isOutgoingFolder {
-                let m = try await service.messages(folder: folder, offset: 0, limit: Self.pageSize)
+                let m = try await svc.messages(folder: folder, offset: 0, limit: Self.pageSize)
                 list = ConversationList(folder: folder, total: m.total, limit: m.limit, offset: 0, items: m.items.map(Self.summary))
             } else {
-                list = try await service.conversations(folder: folder, offset: 0, limit: Self.pageSize)
+                list = try await svc.conversations(folder: folder, offset: 0, limit: Self.pageSize)
             }
-            guard folder == selectedFolder, !isSearching else { return }
+            guard folder == selectedFolder, !isSearching, gen == generation else { return }
             // Keep the optimistic read state of the open thread if the server has not caught up.
             rows = list.items; total = list.total; listState = .loaded; servedFromCache = false; markOnline()
             for r in list.items.prefix(40) { avatars.request(r.latest.fromAddr) }
-            await cache.saveList(CachedList(items: list.items, total: list.total, savedAt: Date()), mailbox: mailboxId, folder: folder)
+            await cache.saveList(CachedList(items: list.items, total: list.total, savedAt: Date()), mailbox: mb, folder: folder)
             trackInbox(list.items, folder: folder)
-        } catch { if !(error is CancellationError) { handleListError(error, forFolders: false) } }
+        } catch { if !(error is CancellationError), gen == generation { handleListError(error, forFolders: false) } }
     }
 
     static func summary(_ e: Envelope) -> ConversationSummary {
@@ -190,6 +202,7 @@ final class MailStore {
         isLoadingMore = true
         let folder = selectedFolder
         let offset = rows.count
+        let gen = generation
         Task {
             defer { isLoadingMore = false }
             do {
@@ -202,7 +215,7 @@ final class MailStore {
                 } else {
                     more = try await service.conversations(folder: folder, offset: offset, limit: Self.pageSize).items
                 }
-                guard folder == selectedFolder else { return }
+                guard folder == selectedFolder, gen == generation else { return }
                 let known = Set(rows.map(\.id))
                 rows.append(contentsOf: more.filter { !known.contains($0.id) })
                 for r in more.prefix(40) { avatars.request(r.latest.fromAddr) }
@@ -301,27 +314,28 @@ final class MailStore {
         let envelope = row.latest
         var state = ReaderState(rowId: row.id, subject: envelope.subject, folder: envelope.folder, uid: envelope.uid)
         reader = state
+        let gen = generation, mb = mailboxId, svc = service
         readerTask = Task { [weak self] in
             guard let self else { return }
             // Cached copy first: readable offline and instant when revisiting.
-            if let cached = await cache.conversation(mailbox: mailboxId, folder: envelope.folder, uid: envelope.uid) {
-                guard !Task.isCancelled, reader?.rowId == row.id else { return }
+            if let cached = await cache.conversation(mailbox: mb, folder: envelope.folder, uid: envelope.uid) {
+                guard !Task.isCancelled, reader?.rowId == row.id, gen == generation else { return }
                 apply(cached, to: &state, row: row)
                 reader = state
             }
             if row.unread { Task { await self.markRead(row) } }
             do {
-                let window = try await service.conversation(uid: envelope.uid, folder: envelope.folder, before: nil)
-                guard !Task.isCancelled, reader?.rowId == row.id else { return }
+                let window = try await svc.conversation(uid: envelope.uid, folder: envelope.folder, before: nil)
+                guard !Task.isCancelled, reader?.rowId == row.id, gen == generation else { return }
                 markOnline()
                 apply(window, to: &state, row: row)
                 state.status = .loaded
                 reader = state
-                await cache.saveConversation(window, mailbox: mailboxId, folder: envelope.folder, uid: envelope.uid)
+                await cache.saveConversation(window, mailbox: mb, folder: envelope.folder, uid: envelope.uid)
                 for m in window.messages { avatars.request(m.fromAddr) }
                 await ensureLatestBody(row.id)
             } catch {
-                guard !Task.isCancelled, reader?.rowId == row.id else { return }
+                guard !Task.isCancelled, reader?.rowId == row.id, gen == generation else { return }
                 if let api = error as? APIError, api.isTransport {
                     isOffline = true
                     reader?.status = reader?.messages.isEmpty == false ? .loaded : .unavailableOffline
@@ -416,8 +430,10 @@ final class MailStore {
         let folderPath = before.latest.folder
         let unseenBefore = folders.first(where: { $0.path == folderPath })?.unseen
         applyRead(rowId: row.id, folder: folderPath, read: true, unseenDelta: unseenBefore.map { _ in -max(1, before.uids.count) })
+        let gen = generation
         do {
             let result = try await service.markThreadRead(uid: before.latest.uid, folder: folderPath)
+            guard gen == generation else { return false }
             if !result.complete, result.failedFolders.contains(folderPath) {
                 restoreRead(before, unseenBefore: unseenBefore)
                 post("Could not mark as read", isError: true)
@@ -454,7 +470,7 @@ final class MailStore {
     // MARK: Actions
 
     enum Action: Equatable {
-        case archive, trash, junk, notJunk, move(String), flag(Bool), read(Bool)
+        case archive, trash, junk, notJunk, move(String), flag(Bool), read(Bool), deleteForever
         var batch: BatchAction {
             switch self {
             case .archive: .archive
@@ -464,11 +480,23 @@ final class MailStore {
             case let .move(t): .move(to: t)
             case let .flag(v): .flagged(v)
             case let .read(v): .seen(v)
+            case .deleteForever: .permanent
             }
         }
         var removesRow: Bool { switch self { case .flag, .read: false; default: true } }
+        var partialVerb: String {
+            switch self {
+            case .archive: "Archived"
+            case .trash, .deleteForever: "Deleted"
+            case .junk, .notJunk, .move: "Moved"
+            case .flag: "Updated"
+            case .read: "Updated"
+            }
+        }
         var done: String {
             switch self {
+            case .deleteForever: "Deleted forever"
+
             case .archive: "Archived"
             case .trash: "Moved to Trash"
             case .junk: "Moved to Junk"
@@ -482,13 +510,35 @@ final class MailStore {
         }
     }
 
+    /// The folder the row's UIDs belong to. In a conversation list `latest.folder` can be Sent or Archive while
+    /// `uids` are the listed folder's UIDs, so actions use the folder the list was loaded for. Search results
+    /// are single messages whose uid and folder pair correctly.
+    func actingFolder(for row: ConversationSummary) -> String { isSearching ? row.latest.folder : selectedFolder }
+
+    struct ActGroup { var folder: String; var rows: [ConversationSummary]; var uids: [Int] }
+
+    func actGroups(_ rows: [ConversationSummary]) -> [ActGroup] {
+        Dictionary(grouping: rows, by: { actingFolder(for: $0) }).map { folder, rs in
+            let uids = rs.flatMap { r -> [Int] in !r.uids.isEmpty ? r.uids : (r.latest.folder == folder ? [r.latest.uid] : []) }
+            return ActGroup(folder: folder, rows: rs, uids: Array(Set(uids)).sorted())
+        }
+    }
+
+    func confirmForever() { if let p = pendingForever { pendingForever = nil; perform(.deleteForever, on: p) } }
+    func cancelForever() { pendingForever = nil }
+
     func perform(_ action: Action, on targets: [ConversationSummary]? = nil) {
         let rowsToAct = targets ?? selectedRows
         guard !rowsToAct.isEmpty else { return }
         if isOffline { post("Not available offline", isError: true); return }
-        let snapshot = rows
-        let readerSnapshot = reader
-        let foldersSnapshot = folders
+        // Delete inside Trash or Junk is permanent and asks first.
+        if action == .trash, let r = rowsToAct.first,
+           [.trash, .junk].contains(folders.first(where: { $0.path == actingFolder(for: r) })?.role ?? .other) {
+            pendingForever = rowsToAct; return
+        }
+        let snapshot = rows, readerSnapshot = reader, foldersSnapshot = folders
+        let groups = actGroups(rowsToAct)
+        let gen = generation, svc = service
         // Optimistic local change.
         if action.removesRow {
             let ids = Set(rowsToAct.map(\.id))
@@ -497,7 +547,7 @@ final class MailStore {
             selection.subtract(ids)
             if let r = reader, ids.contains(r.rowId) { reader = nil }
             for r in rowsToAct where r.unread {
-                if let f = folders.firstIndex(where: { $0.path == r.latest.folder }) { folders[f].unseen = max(0, (folders[f].unseen ?? 0) - 1) }
+                if let f = folders.firstIndex(where: { $0.path == actingFolder(for: r) }) { folders[f].unseen = max(0, (folders[f].unseen ?? 0) - 1) }
             }
             publishBadge()
         } else {
@@ -507,7 +557,7 @@ final class MailStore {
                 case let .flag(v): rows[i].latest.flagged = v
                 case let .read(v):
                     rows[i].unread = !v; rows[i].latest.seen = v
-                    if let f = folders.firstIndex(where: { $0.path == r.latest.folder }), r.unread == v {
+                    if let f = folders.firstIndex(where: { $0.path == actingFolder(for: r) }), r.unread == v {
                         folders[f].unseen = max(0, (folders[f].unseen ?? 0) + (v ? -1 : 1))
                     }
                 default: break
@@ -515,37 +565,43 @@ final class MailStore {
             }
             publishBadge()
         }
-        let groups = Dictionary(grouping: rowsToAct, by: { $0.latest.folder })
         Task {
-            var failed = false
+            var ok = 0, requested = 0, hadSourceChange = false
             var undoPairs: [(messageId: String, dest: String, origin: String)] = []
-            for (folder, group) in groups {
-                let uids = Array(Set(group.flatMap { $0.uids.isEmpty ? [$0.latest.uid] : $0.uids }))
+            for g in groups where !g.uids.isEmpty {
+                requested += g.uids.count
                 do {
-                    let result = try await service.batch(action: action.batch, uids: uids, folder: folder)
-                    if !result.ok { failed = true }
-                    markOnline()
-                    if action.removesRow {
+                    let result = try await svc.batch(action: action.batch, uids: g.uids, folder: g.folder)
+                    ok += result.succeeded.count
+                    if gen == generation { markOnline() }
+                    if action.removesRow, result.ok, action != .deleteForever {
                         let dest = destination(for: action)
-                        for r in group where r.count == 1 && !r.latest.messageId.isEmpty { undoPairs.append((r.latest.messageId, dest, folder)) }
+                        for r in g.rows where r.count == 1 && !r.latest.messageId.isEmpty { undoPairs.append((r.latest.messageId, dest, g.folder)) }
                     }
                 } catch {
-                    failed = true
-                    if let a = error as? APIError, a.isTransport { isOffline = true }
-                    if let a = error as? APIError, a.code == "mail_source_changed" { Task { await self.refresh() } }
+                    if gen == generation, let a = error as? APIError, a.isTransport { isOffline = true }
+                    if let a = error as? APIError, a.code == "mail_source_changed" { hadSourceChange = true }
                 }
             }
-            if failed {
+            guard gen == generation else { return }
+            if requested > 0 && ok == 0 {
                 rows = snapshot; reader = readerSnapshot; folders = foldersSnapshot; publishBadge()
                 post("Could not complete the action. Nothing was changed.", isError: true)
+                if hadSourceChange { await refresh() }
+                return
+            }
+            if ok < requested || hadSourceChange {
+                // Something changed and something did not: take the server's truth and say how many.
+                await refresh()
+                post("\(action.partialVerb) \(ok) of \(requested)", isError: true)
                 return
             }
             await refreshCounts()
             switch action {
-            case .flag(let v): offerUndo(action.done) { await self.undoFlags(rowsToAct, flagged: !v) }
-            case .read(let v): offerUndo(action.done) { await self.undoRead(rowsToAct, read: !v) }
+            case .flag(let v): offerUndo(action.done) { await self.undoGroups(groups, .flagged(!v)) }
+            case .read(let v): offerUndo(action.done) { await self.undoGroups(groups, .seen(!v)) }
             default:
-                let allUndoable = undoPairs.count == rowsToAct.count
+                let allUndoable = undoPairs.count == rowsToAct.count && action != .deleteForever
                 if allUndoable { offerUndo(action.done) { await self.undoMove(undoPairs) } } else { post(action.done) }
             }
         }
@@ -570,17 +626,9 @@ final class MailStore {
         await refresh()
     }
 
-    private func undoFlags(_ targets: [ConversationSummary], flagged: Bool) async {
-        for (folder, group) in Dictionary(grouping: targets, by: { $0.latest.folder }) {
-            _ = try? await service.batch(action: .flagged(flagged), uids: group.flatMap { $0.uids.isEmpty ? [$0.latest.uid] : $0.uids }, folder: folder)
-        }
-        await refresh()
-    }
-
-    private func undoRead(_ targets: [ConversationSummary], read: Bool) async {
-        for (folder, group) in Dictionary(grouping: targets, by: { $0.latest.folder }) {
-            _ = try? await service.batch(action: .seen(read), uids: group.flatMap { $0.uids.isEmpty ? [$0.latest.uid] : $0.uids }, folder: folder)
-        }
+    /// Inverse flag or read change, on the folder each group was acted on (never `latest.folder`).
+    private func undoGroups(_ groups: [ActGroup], _ inverse: BatchAction) async {
+        for g in groups where !g.uids.isEmpty { _ = try? await service.batch(action: inverse, uids: g.uids, folder: g.folder) }
         await refresh()
     }
 

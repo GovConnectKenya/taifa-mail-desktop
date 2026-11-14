@@ -80,6 +80,7 @@ enum Endpoints {
         case .trash: name = "delete"
         case .junk: name = "spam"
         case .notJunk: name = "not-spam"
+        case .permanent: name = "permanent"
         case let .move(to): name = "move"; body.toFolder = to
         case let .seen(v): name = "flags"; body.seen = v
         case let .flagged(v): name = "flags"; body.flagged = v

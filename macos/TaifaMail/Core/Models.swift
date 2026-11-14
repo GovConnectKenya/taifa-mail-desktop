@@ -10,6 +10,11 @@ struct MailboxSession: Codable, Equatable, Sendable {
     var displayName: String?
     var institution: String?
     var avatarUrl: String?
+    var mustChangePassword: Bool?
+    var needsRecoveryEmail: Bool?
+
+    /// First login setup outstanding: the app cannot enter the mailbox until it is done on the web.
+    var needsWebSetup: Bool { mustChangePassword == true || needsRecoveryEmail == true }
 }
 
 /// Answer of the sign-in, sign-in code verify and second factor endpoints.
@@ -526,7 +531,7 @@ struct ResolvedMessage: Codable, Equatable, Sendable { var folder: String; var u
 
 /// A mutation applied to a set of UIDs of one folder (POST /messages/batch/...).
 enum BatchAction: Equatable, Sendable {
-    case archive, trash, junk, notJunk
+    case archive, trash, junk, notJunk, permanent
     case move(to: String)
     case seen(Bool)
     case flagged(Bool)

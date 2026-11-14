@@ -25,7 +25,7 @@ final class KeychainSecretStore: SecretStore, @unchecked Sendable {
     }
 
     func write(_ key: String, _ data: Data) -> Bool {
-        let attrs: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock]
+        let attrs: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
         if SecItemUpdate(query(key) as CFDictionary, attrs as CFDictionary) == errSecSuccess { return true }
         var add = query(key); add.merge(attrs) { $1 }
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess

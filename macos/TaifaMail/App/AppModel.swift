@@ -20,7 +20,7 @@ final class SignInModel {
 
 @MainActor @Observable
 final class AppModel {
-    enum Phase: Equatable { case launching, signedOut, signedIn }
+    enum Phase: Equatable { case launching, signedOut, signedIn, setupRequired }
 
     var phase: Phase = .launching
     var session: MailboxSession?
@@ -28,6 +28,10 @@ final class AppModel {
     var store: MailStore?
     private(set) var realtimeConnected = false
     var sessionBanner: String?
+    private(set) var networkOnline = true
+    private(set) var setupDetail = ""
+    @ObservationIgnored private var launched = false
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
     let signIn = SignInModel()
     let prefs: AppPreferences
     let notifications: NotificationManager
@@ -50,22 +54,31 @@ final class AppModel {
         self.secrets = secrets
         self.api = APIClient(baseURL: baseURL)
         self.auth = AuthService(api: api)
-        self.cache = OfflineCache(directory: cacheDirectory)
+        self.cache = OfflineCache(directory: cacheDirectory, key: CacheKey.loadOrCreate(secrets))
         self.cookies = CookiePersistence(store: secrets, storage: api.cookieStorage)
         self.prefs = AppPreferences(defaults: defaults)
         self.notifications = NotificationManager(prefs: prefs)
         ImageLoader.shared.baseURL = baseURL
         api.onCookiesChanged = { [cookies] in cookies.scheduleSave() }
         api.onSessionEnded = { [weak self] in Task { @MainActor in self?.sessionEnded() } }
-        connectivity.onChange = { [weak self] online in Task { @MainActor in self?.store?.setOffline(!online) } }
+        connectivity.onChange = { [weak self] online in Task { @MainActor in self?.networkOnline = online; self?.store?.setOffline(!online) } }
     }
 
     // MARK: Launch
 
-    func launch() async {
+    /// Runs the launch sequence once, however many windows ask for it.
+    func launchIfNeeded() async {
+        guard !launched else { return }
+        launched = true
+        await launch()
+    }
+
+    private func launch() async {
         #if DEBUG
         if isPreview { startPreview(); return }
         #endif
+        AttachmentFiles.purge()
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in AttachmentFiles.purge() }
         cookies.restore()
         connectivity.start()
         notifications.onOpen = { [weak self] folder, uid in self?.openFromNotification(folder: folder, uid: uid) }
@@ -77,14 +90,40 @@ final class AppModel {
         do {
             let me = try await auth.me()
             finishSignIn(me)
-        } catch let e as APIError where e.isTransport {
-            // Offline at launch: open the cached mailbox from the stored identity.
-            if let data = secrets.read("identity"), let s = try? JSONDecoder().decode(MailboxSession.self, from: data) {
-                finishSignIn(s, offline: true)
-            } else { phase = .signedOut }
         } catch {
-            await wipeLocalState()
-            phase = .signedOut
+            // Only a definite 401 or 403 (after the refresh already failed) ends the session. Anything else
+            // (offline, 5xx, a response the app cannot read) opens the cached mailbox and retries.
+            let api = error as? APIError
+            if api == .sessionEnded || api?.statusCode == 401 || api?.statusCode == 403 {
+                await wipeLocalState()
+                phase = .signedOut
+            } else if let data = secrets.read("identity"), let s = try? JSONDecoder().decode(MailboxSession.self, from: data) {
+                finishSignIn(s, offline: true)
+                scheduleSessionRetry()
+            } else {
+                sessionBanner = "Could not reach Taifa Mail. Check your connection and try again."
+                phase = .signedOut
+            }
+        }
+    }
+
+    /// After an offline or failed launch, keep trying to confirm the session.
+    private func scheduleSessionRetry() {
+        retryTask?.cancel()
+        retryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                guard let self, self.phase == .signedIn else { return }
+                do {
+                    let me = try await self.auth.me()
+                    self.session = me
+                    self.store?.setOffline(false)
+                    await self.store?.refresh()
+                    return
+                } catch let e as APIError where e == .sessionEnded || e.statusCode == 401 || e.statusCode == 403 {
+                    return   // onSessionEnded already handled it
+                } catch { continue }
+            }
         }
     }
 
@@ -144,6 +183,7 @@ final class AppModel {
             default: break
             }
             if api.code == "mfa_enrolment_required" { return "Set up two factor sign in on the web first." }
+            if api.code == "onboarding_required" { return "Finish setting up this mailbox on the web before signing in here." }
             return api.errorDescription ?? "Something went wrong."
         }
         return error.localizedDescription
@@ -153,12 +193,22 @@ final class AppModel {
 
     private func finishSignIn(_ s: MailboxSession, offline: Bool = false) {
         session = s
+        if s.needsWebSetup && !offline {
+            var steps: [String] = []
+            if s.mustChangePassword == true { steps.append("choose your own password") }
+            if s.needsRecoveryEmail == true { steps.append("add a recovery email address") }
+            setupDetail = "Before you can read mail here, " + steps.joined(separator: " and ") + " on the web."
+            phase = .setupRequired
+            return
+        }
         if let data = try? JSONEncoder().encode(s) { _ = secrets.write("identity", data) }
         cookies.saveNow()
+        Task { _ = secrets.write(CacheKey.name, await cache.keyData) }   // after a sign out the cache has a fresh key
         let svc = LiveMailService(api: api, mailboxId: s.mailboxId)
         let st = MailStore(service: svc, cache: cache)
         wire(st)
         st.ownAddress = s.address
+        retryTask?.cancel()
         // Ask for notification permission once the user is in their mailbox, not at launch.
         notifications.requestAuthorizationIfNeeded()
         if offline { st.setOffline(true) }
@@ -185,7 +235,9 @@ final class AppModel {
             session = me
             if let data = try? JSONEncoder().encode(me) { _ = secrets.write("identity", data) }
             let svc = LiveMailService(api: api, mailboxId: me.mailboxId)
+            AttachmentFiles.purge()
             store?.swapService(svc)
+            store?.ownAddress = me.address
             cookies.saveNow()
             Task { await store?.bootstrap() }
             Task { switchable = (try? await auth.switchable()) ?? [] }
@@ -217,6 +269,10 @@ final class AppModel {
         cookies.wipe()
         secrets.delete("identity")
         await cache.clearAll()
+        secrets.delete("cache-key")
+        AttachmentFiles.purge()
+        ImageLoader.shared.clearCache()
+        retryTask?.cancel()
         notifications.clearBadge()
         session = nil; store = nil; switchable = []
     }
