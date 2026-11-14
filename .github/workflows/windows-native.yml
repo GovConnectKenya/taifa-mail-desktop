@@ -60,7 +60,7 @@ jobs:
           Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter output.json | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Raw }
           $in = Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter input.json | Select-Object -First 1
           if ($in) {
-            $xc = Get-ChildItem "$env:USERPROFILE/.nuget/packages/microsoft.windowsappsdk/1.6.250108002/tools/net472" -Filter XamlCompiler.exe | Select-Object -First 1
+            $xc = Get-ChildItem "$env:USERPROFILE/.nuget/packages/microsoft.windowsappsdk/1.8.260921001/tools/net472" -Filter XamlCompiler.exe | Select-Object -First 1
             $json = Get-Content $in.FullName -Raw | ConvertFrom-Json
             "== input.json properties"
             $json.PSObject.Properties | ForEach-Object { $v = $_.Value; $t = if ($v -is [array]) { "array[$($v.Count)]" } else { "$v" }; "{0} = {1}" -f $_.Name, ($t.Substring(0, [Math]::Min(160, $t.Length))) }
