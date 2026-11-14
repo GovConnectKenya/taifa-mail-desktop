@@ -1,7 +1,0 @@
-[
-  {"name": "INBOX", "path": "INBOX", "special_use": null, "unseen": 3, "total": 120},
-  {"name": "Sent", "path": "Sent", "special_use": "sent", "unseen": 0, "total": 45},
-  {"name": "Junk", "path": "Junk", "special_use": "junk", "unseen": null, "total": null},
-  {"name": "Deleted Items", "path": "Deleted Items", "special_use": null, "unseen": 0, "total": 2},
-  {"name": "Budget", "path": "Projects/Budget", "special_use": null, "unseen": 1, "total": 9}
-]

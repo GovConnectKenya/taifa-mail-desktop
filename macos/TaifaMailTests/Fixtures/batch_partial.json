@@ -1,1 +1,0 @@
-{"ok": false, "requested": 3, "succeeded": [1, 2], "failed": [{"uid": 3, "reason": "move_failed"}]}

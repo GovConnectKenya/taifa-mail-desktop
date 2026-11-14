@@ -1,4 +1,0 @@
-
-Note: in rounded/linear the left chevron is arrow-left3 (arrow-left4 does not exist in this variant),
-so chevron-left uses arrow-left3-5544330a6ecd and nothing is mirrored in code.
-Compose bold and italic have no glyph in rounded/linear (the text-bold set exists only in other variants), so the editor uses the letters B and I.
