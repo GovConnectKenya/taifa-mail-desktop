@@ -34,9 +34,9 @@ jobs:
       - name: Restore
         run: dotnet restore src/TaifaMail.Core/TaifaMail.Core.csproj; dotnet restore tests/TaifaMail.Core.Tests/TaifaMail.Core.Tests.csproj
       - name: Test
-        run: dotnet test tests/TaifaMail.Core.Tests -c Release --logger "trx;LogFileName=core.trx" --results-directory ../artifacts/test-results
+        run: dotnet test tests/TaifaMail.Core.Tests -c Release --logger "trx;LogFileName=core.trx" --results-directory artifacts/test-results
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: core-test-results
-          path: windows/../artifacts/test-results
+          path: windows/artifacts/test-results
