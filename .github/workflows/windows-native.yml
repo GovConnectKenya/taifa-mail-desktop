@@ -95,6 +95,13 @@ jobs:
           foreach ($needle in 'TAIFA_PREVIEW_FIXTURE_ONLY_DEBUG', '--preview-data', '--screenshots') { if ($utf16.Contains($needle) -or $utf16b.Contains($needle)) { $hits += $needle } }
           if ($hits.Count -gt 0) { Write-Error "Preview data found in the Release build: $($hits -join ', ')"; exit 1 }
           Write-Host "Release assembly $($dll.Name) ($($dll.Length) bytes) contains none of the preview markers."
+      - name: Check fonts, logos and icon ship in the output
+        run: |
+          $dir = 'artifacts/publish-${{ matrix.rid }}'
+          $need = @('Assets/Fonts/GoogleSans-Regular.ttf','Assets/Fonts/GoogleSans-Medium.ttf','Assets/Fonts/GoogleSans-SemiBold.ttf','Assets/Fonts/JetBrainsMono-Regular.ttf','Assets/Fonts/JetBrainsMono-Medium.ttf','Assets/Fonts/JetBrainsMono-SemiBold.ttf','Assets/Fonts/OFL.txt','Assets/Logo/taifa_logo.svg','Assets/Logo/taifa_logo_white.svg','Assets/taifa.ico')
+          $missing = $need | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
+          if ($missing) { Write-Error "Missing from the output: $($missing -join ', ')"; exit 1 }
+          Write-Host "All $($need.Count) asset files are in $dir."
       - name: Zip
         run: Compress-Archive -Path artifacts/publish-${{ matrix.rid }}/* -DestinationPath artifacts/TaifaMail-windows-${{ matrix.rid }}-unsigned.zip
       - uses: actions/upload-artifact@v4
