@@ -2,6 +2,8 @@
 
 Status: v1, shared by the macOS app (Swift, SwiftUI, AppKit) and the Windows app (WinUI 3 or equivalent native stack). Everything here is platform neutral unless a section says otherwise. The API behaviour is in `API_CONTRACT.md`.
 
+Source of truth: the existing Taifa Mail design. The webmail (`webmail/src`, `frontend/src/lib/styles/tokens.css`, `frontend/src/lib/components`) is the primary reference and the native apps must be recognisably Taifa Mail. Spaci only informs the spacing rhythm and title bar detail where the webmail is silent. Tokens below are mapped one to one from `frontend/src/lib/styles/tokens.css` (names in the last column).
+
 Hard rules (from the owner):
 
 - Native controls only. No Electron, no Tauri, no webview showing the webmail, no HTML/CSS app UI.
@@ -43,51 +45,58 @@ Font: Google Sans for UI where bundled, otherwise the system font (SF Pro on mac
 
 Plain text bodies use `type.reader`; HTML bodies set a 14px base font through injected CSS so both look alike.
 
-## 3. Colour tokens
+## 3. Brand, logo and colour tokens
 
-Neutral surfaces follow spaci (warm neutrals, no grain on macOS), accent and semantic colours follow the Taifa brand. Black `#050100`, red `#860000`, green `#006900`. Fills on green always carry white ink. In dark the green used as a foreground (text, icon, unread dot, focus ring) is brightened to `#1ea94e`; the filled button stays `#006900` so white ink keeps contrast.
+Brand: the Kenyan flag colours as the Constitution specifies them: black `#000000`, green `#008C51` (brightened to `#1EA94E` on dark), red `#922529`. Ink on a green fill is always white, so solid green fills use `#00864E` (white ink at AA). Warnings are amber, never brand colours. Violet (`--color-ai`) is reserved for AI features and is not used in v1.
 
-| Token | Light | Dark |
-|---|---|---|
-| `bg` (window, reader backdrop) | `#F8F3F0` | `#0E0C0B` |
-| `panel` (list, reader card, compose) | `#FFFFFF` | `#161312` |
-| `panel2` (hover, inputs, sidebar tint) | `#F1EBE5` | `#1D1A18` |
-| `panel3` (pressed, chips) | `#E7DED5` | `#262321` |
-| `border` | `#E7DED4` | `#2B2725` |
-| `border2` (inputs, focus neighbours) | `#D6CBBF` | `#3A3532` |
-| `text` | `#050100` | `#F8F3F0` |
-| `text2` | `#5B5650` | `#B6B1AB` |
-| `text3` (meta, 4.5:1 on panel) | `#6A655E` | `#9D978F` |
-| `text4` (decorative only, never text) | `#8F8A83` | `#7A756E` |
-| `accent` (filled surfaces) | `#006900` | `#006900` |
-| `accentHover` | `#005A00` | `#007A00` |
-| `onAccent` | `#FFFFFF` | `#FFFFFF` |
-| `accentFg` (text, icons, unread dot) | `#006900` | `#1EA94E` |
-| `accentSoft` (selection tint) | `rgba(0,105,0,0.08)` | `rgba(30,169,78,0.14)` |
-| `accentSoft2` (selection, focused list) | `rgba(0,105,0,0.14)` | `rgba(30,169,78,0.22)` |
-| `danger` (filled) | `#860000` | `#A31212` |
-| `dangerFg` | `#860000` | `#E8836F` |
-| `dangerSoft` | `rgba(134,0,0,0.10)` | `rgba(232,131,111,0.16)` |
-| `warn` | `#B8862A` | `#D9A441` |
-| `warnFg` | `#86600F` | `#E6B85C` |
-| `warnSoft` | `rgba(184,134,42,0.13)` | `rgba(217,164,65,0.16)` |
-| `flag` (starred) | `#B8862A` | `#E6B85C` |
-| `track` (skeleton base) | `rgba(120,110,100,0.16)` | `rgba(140,140,140,0.16)` |
+Logo: the real Taifa Mail logo, `webmail/static/logos/taifa_logo.svg` (green and black) on light surfaces and `taifa_logo_white.svg` on dark surfaces. Used in the sidebar header (24 high next to the "Taifa Mail" wordmark), the sign-in card (56 high), empty states (40 high), About. On macOS both files sit in one image set with a dark appearance variant. Never redraw or recolour it.
 
-Warnings are amber, never brand colours. Red is for danger and the auth `danger` verdict only.
+App icon: `taifa-mail-desktop/assets/branding/icon.png` (1024, dark body icon: the black M brand mark vanishes on a dark Dock, so the shipped icon has a dark body). Build the platform icon set from it. Do not use the black-on-transparent `icon-512.png`. Menu bar or tray: `trayTemplate.png` and `@2x`.
+
+Colour tokens (light / dark, from `tokens.css`):
+
+| Token | Light | Dark | CSS token |
+|---|---|---|---|
+| `bg` | `#F5F8F6` | `#101010` | `--color-bg` |
+| `surface` (list, reader cards, compose) | `#FFFFFF` | `#161616` | `--color-surface` |
+| `sidebar` | `#FFFFFF` | `#141414` | `--color-sidebar` |
+| `surface2` (hover, inputs) | `#EDF3EF` | `#242424` | `--color-surface-2` |
+| `surfaceSelected` | `#E3F0E8` | `#1D2E24` | `--color-surface-selected` |
+| `border1` | `#DCE5DF` | `#2E2E2E` | `--color-border-1` |
+| `border2` | `#C3D0C8` | `#3D3D3D` | `--color-border-2` |
+| `borderSoft` (row separators) | `#E8EEEA` | `#222222` | `--color-border-soft` |
+| `skeletonBase` / `skeletonSheen` | `#E6ECE8` / `#F4F7F5` | `#1A1A1A` / `#262626` | `--skeleton-*` |
+| `text` | `#000000` | `#ECECEC` | `--color-text` |
+| `muted` | `#52665E` | `#A8A8A8` | `--color-muted` |
+| `mutedSoft` | `#5C6F67` | `#949494` | `--color-muted-soft` |
+| `neutralDot` (decorative only) | `#8DA096` | `#8A8A8A` | `--color-neutral-dot` |
+| `accent` (dot, ring) | `#008C51` | `#1EA94E` | `--color-accent` |
+| `accentFill` (buttons, white ink) | `#00864E` | `#16803C` | `--color-accent-fill` |
+| `accentFillHover` | `#007343` | `#1A8F44` | `--color-accent-fill-hover` |
+| `accentSoft` (selected row) | `#E6F4EE` | `rgba(30,169,78,.14)` | `--color-accent-soft` |
+| `accentInk` (accent text) | `#00643A` | `#8ADBAA` | `--color-accent-ink` |
+| `danger` / `dangerInk` / `dangerSoft` | `#922529` / `#741D20` / `#F8E4E2` | `#FF7A5E` / `#FFA892` / `rgba(214,63,40,.18)` | `--color-danger*` |
+| `warn` / `warnInk` / `warnSoft` | `#8A6400` / `#6B4E00` / `#FAF3D9` | `#E0B22E` / `#F0D27A` / `rgba(217,165,20,.14)` | `--color-warn*` |
+| `info` / `infoSoft` | `#254DA8` / `#E5ECFB` | `#8FB0F5` / `rgba(122,163,243,.14)` | `--color-info*` |
+| `shadowRaised` | `0 1 2 rgba(20,44,36,.08)` | `0 1 2 rgba(0,0,0,.4)` | `--shadow-raised` |
+| `shadowOverlay` | `0 16 40 rgba(20,44,36,.16)` | `0 16 40 rgba(0,0,0,.48)` | `--shadow-overlay` |
+| `ring` | `rgba(0,140,81,.16)` 4 | `rgba(30,169,78,.20)` 4 | `--ring` |
+
+The page canvas is a faint tint; content surfaces are white and flat, separated by hairlines rather than shadows. Only overlays float.
 
 ## 4. Radii
 
-`radius.xs` 4 (tags, badges), `radius.ctl` 8 (controls, inputs, list rows), `radius.card` 12 (cards, grouped blocks, message cards in the reader), `radius.panel` 16 (sheets, sign-in card), `radius.pill` (chips, avatars, token chips). Institution logo tiles use `radius.ctl` scaled to the tile (25 percent of the side, minimum 6).
+`radius.xs` 4 (tags, badges), `radius.ctl` 8 (controls, inputs), `radius.card` 12 (thread rows, cards, message cards in the reader), `radius.panel` 16 (sheets, modals, sign-in card), `radius.pill` (chips, avatars, token chips). Same values as `--radius-*`. Institution logo tiles use `radius.ctl` scaled to the tile (25 percent of the side, minimum 6).
 
 ## 5. Selection and focus
 
-- Selected row: `accentSoft` background, 1 hairline `border2` at 60 percent opacity, `radius.ctl`. Never a heavy outline, never a solid accent fill with inverted text.
-- Selected row in a focused list: `accentSoft2` background, same hairline.
-- Hover: `panel2`.
-- Keyboard focus ring on controls: 2 `accentFg` at 70 percent, offset 1. Lists use the selection style, not a ring.
-- Unread: 8 point dot in `accentFg` at the leading edge of the row, sender and subject at `type.bodyStrong`.
-- Pressed: `panel3`.
+Follows `webmail/src/mail/ThreadList.svelte`:
+
+- Selected row: `accentSoft` fill (`surfaceSelected` while the list has focus) plus a hairline `border1`, `radius.card`. Never a heavy outline, never an inverted solid fill.
+- Rows are separated by `borderSoft` hairlines in the flat list, `space.3` padding all round (`space.2` top and bottom in compact density).
+- Unread: a small accent dot at the leading edge, sender in bold (700), subject semibold (600), time bold in `accentInk`. Read rows use regular weight and `muted` for the time.
+- Hover: `surface2`. Pressed: `border1`.
+- Keyboard focus ring: `ring` (4 px halo of the accent) plus a 2 px `accent` outline offset 2, as `tokens.css` base rules.
 
 ## 6. Sizes
 
@@ -109,7 +118,7 @@ Row heights (points):
 | Text field | 32 |
 | Primary button | 32 (36 on sign-in) |
 
-Column widths (macOS split view): sidebar 200 min, 220 ideal, 280 max; thread list 300 min, 360 ideal, 480 max; reader 420 min. Minimum window 900 x 600, default 1280 x 800.
+Column widths (macOS split view): sidebar 200 min, 240 ideal (webmail `--sidebar-w` is 256), 280 max; thread list 300 min, 360 ideal, 480 max; reader 420 min. Minimum window 900 x 600, default 1280 x 800.
 
 ## 7. Avatars
 
@@ -124,7 +133,7 @@ One decision, one place (port of the webmail `senderPicture`, webmail/src/mail/s
 7. Otherwise placeholder.
 8. Entry not yet answered: placeholder, marked pending (no flash when it resolves).
 
-Shapes at the same size: a person photo is a circle; an institution logo is a contained rounded tile (aspect fit inside the tile, `panel2` background, never cropped to a face); the placeholder is a circle with the initial (first letter of name, else address) in white on a deterministic colour. Deterministic colour: FNV-1a 32 bit hash of the lowercased address modulo 8, into this palette (same in light and dark): `#006900 #7A4B00 #00555E #4A3B8F #8A2B55 #2F5D8A #5A6B00 #7B3F2A`. Image loads are cached on disk and in memory, decoded off the main thread, downsampled to 2x the display size.
+Shapes at the same size: a person photo is a circle; an institution logo is a contained rounded tile (aspect fit inside the tile, `panel2` background, never cropped to a face); the placeholder follows `frontend/src/lib/components/Avatar.svelte`: a person silhouette in white on a deterministic colour when an address is known (the silhouette is the honest signal that this stands for a person), the letter only for things that are not people. Deterministic colour: FNV-1a 32 bit hash of the lowercased address modulo 8, into this palette (same in light and dark): `#006900 #7A4B00 #00555E #4A3B8F #8A2B55 #2F5D8A #5A6B00 #7B3F2A`. Image loads are cached on disk and in memory, decoded off the main thread, downsampled to 2x the display size.
 
 ## 8. Screens and states
 
@@ -146,7 +155,7 @@ Every data screen has these states: loading (skeleton), loaded, empty, error, of
 - Shown when sign-in or code verify answers `requires_2fa`. One field "Verification code", "Verify", secondary "Email me a code" (calls the challenge endpoint; confirmation "A code was sent to your account email."). Accepts authenticator codes, emailed codes and recovery codes. Errors as 8.2.
 
 ### 8.4 Main window (three columns)
-- Sidebar, thread list, reader. Sidebar material on macOS (`.sidebar` list style); on Windows Mica with the sidebar as a NavigationView pane.
+- Sidebar, thread list, reader. The sidebar is the webmail `sidebar` surface (flat, hairline separated) with the logo and wordmark at the top, as in the webmail; window chrome (traffic lights, toolbar, menu bar) stays native. On Windows the same with Mica behind the title bar and the sidebar as a NavigationView pane.
 - Sidebar top: mailbox switcher (avatar 28, display name, address in `type.meta`, chevron down) when `GET /auth/mailbox/switchable` returns siblings, otherwise a static identity block. Then folders in fixed order Inbox, Drafts, Sent, Archive, Junk, Trash, then other folders under a "Folders" header. Counts: unseen only, `type.caption`, hidden at 0, `99+` cap. Drafts shows total instead of unseen.
 - Special use icons: Inbox, Drafts, Sent, Archive, Junk, Trash from the Iconsax mail set; other folders get the folder icon.
 - Loading: 6 skeleton sidebar rows, 8 skeleton thread rows (avatar disc, two bars), reader shows the empty "no selection" state.
@@ -218,7 +227,7 @@ macOS shortcuts and menu bar (File, Edit, View, Message, Mailbox, Window, Help):
 | Open selected thread | Return | Enter |
 | Settings | Cmd+, | Ctrl+, |
 | Close window | Cmd+W | Ctrl+W |
-| Undo (last action) | Cmd+Z | Ctrl+Z |
+| Undo (last action) | Option+Cmd+Z, or the Undo button of the toast (Cmd+Z stays text undo) | Ctrl+Z |
 
 Note: the macOS bindings follow Mail.app (Cmd+R reply, Shift+Cmd+R reply all, Shift+Cmd+F forward, Cmd+F search), so refresh is Shift+Cmd+K and all-mail search is Option+Cmd+F. The Windows app follows Outlook (Ctrl+R, Ctrl+Shift+R, Ctrl+F forward, Ctrl+E search).
 
@@ -226,7 +235,7 @@ Undo: archive, delete, junk, move and flag changes can be undone while the toast
 
 ## 10. Platform conventions
 
-macOS (14+): `NavigationSplitView` with three columns, unified toolbar (`.windowToolbarStyle(.unified)`), sidebar material, hidden inset title bar with traffic lights at x 18, y 22 (same as spaci), full menu bar, Settings scene (Cmd+,), `UserNotifications` for new mail, Dock badge for the Inbox unread count, Quick Look for attachments, drag and drop for attachments, system accent is not used (brand green is the accent).
+macOS (14+): `NavigationSplitView` with three columns, unified toolbar (`.windowToolbarStyle(.unified)`), native traffic lights (spaci's x 18, y 22 inset applies if the title bar is hidden), full menu bar, Settings scene (Cmd+,), `UserNotifications` for new mail, Dock badge for the Inbox unread count, Quick Look for attachments, drag and drop for attachments, system accent is not used (brand green is the accent).
 
 Windows (10 22H2 and 11): `NavigationView` for the folder pane, Mica backdrop, custom title bar integrated with the toolbar (extend content into the title bar, drag region over the empty toolbar area), Fluent controls, Settings as a page in a second window or a navigation destination, toast notifications, taskbar badge overlay for unread count, drag and drop for attachments. List virtualisation is mandatory (ItemsRepeater or ListView with fixed item size).
 
@@ -257,3 +266,7 @@ SF Symbols and Segoe Fluent icons are not used where the library has the glyph.
 ## 14. Accessibility
 
 Every control has a label; list rows read "sender, subject, time, unread or read, flagged, N attachments"; contrast at least 4.5:1 for text using `text`, `text2`, `text3`; full keyboard operation; Dynamic Type or text scaling does not break rows (rows grow, compact density is the only fixed height).
+
+## 15. Notifications and badge
+
+macOS `UserNotifications`, Windows toast. Permission is requested once the user is inside their mailbox, not at launch. A notification shows sender (title), subject, and a snippet, and activating it opens that thread. Decision rule (`NotificationPolicy`, unit tested): notify only for Inbox messages that are unread, were not sent by the owner, and were not already known to the app in this session; the first load of a session only records what exists. Settings has a toggle for notifications and one for the Dock (taskbar) badge, which shows the Inbox unread count. Notifications only arrive while the app runs (websocket plus 60 s REST reconcile).
