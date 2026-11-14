@@ -1,4 +1,3 @@
-using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using TaifaMail.Core.Models;
 using TaifaMail.Core.ViewModels;
@@ -9,8 +8,8 @@ namespace TaifaMail.App.Services;
 /// <summary>Small pure helpers used from x:Bind function bindings.</summary>
 public static class Fmt
 {
-    public static FontWeight Weight(bool unread) => unread ? FontWeights.SemiBold : FontWeights.Normal;
-    public static FontWeight Bold(bool unread) => unread ? FontWeights.Bold : FontWeights.Normal;
+    public static FontWeight Weight(bool unread) => unread ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal;
+    public static FontWeight Bold(bool unread) => unread ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.Normal;
     public static Visibility Show(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
     public static Microsoft.UI.Xaml.Controls.InfoBarSeverity AuthSeverity(string level) => level switch
     {
