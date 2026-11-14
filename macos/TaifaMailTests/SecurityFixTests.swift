@@ -48,10 +48,12 @@ final class SecurityFixTests: XCTestCase {
         let html = #"<img src="https://a.example/1.png"><img src='http://b.example/2.gif'><img src="data:image/png;base64,AA"><img src="https://a.example/1.png">"#
         XCTAssertEqual(ImageProxy.remoteSources(in: html), ["https://a.example/1.png", "http://b.example/2.gif"])
         let png = Data([0x89, 0x50, 0x4E, 0x47, 0, 0, 0, 0])
-        let out = await ImageProxy.rewrite(html: html) { $0.hasSuffix("1.png") ? png : Data("<svg/>".utf8) }
+        let r = await ImageProxy.rewrite(html: html) { $0.hasSuffix("1.png") ? .loaded(png) : .loaded(Data("<svg/>".utf8)) }
+        let out = r.html
         XCTAssertTrue(out.contains("data:image/png;base64,"))
         XCTAssertTrue(out.contains("http://b.example/2.gif"), "a non image answer (SVG) is refused and left to the block rule")
         XCTAssertFalse(out.contains("\"https://a.example/1.png\""))
+        XCTAssertEqual(r.blocked, 1)
         XCTAssertEqual(ImageProxy.base64URL("https://a.example/x?y=1"), "aHR0cHM6Ly9hLmV4YW1wbGUveD95PTE")
     }
 

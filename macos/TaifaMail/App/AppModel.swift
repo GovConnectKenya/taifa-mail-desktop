@@ -3,6 +3,19 @@ import Observation
 import SwiftUI
 import AppKit
 
+enum AuthMessages {
+    static let onboarding = "Finish setting up this mailbox on the web before signing in here."
+    static let mfaEnrolment = "Set up two factor sign in on the web first."
+}
+
+/// What to do with a failed launch check. Only a session the client itself declared over (the refresh was
+/// refused with 401 or 403) ends it; offline, timeouts, 5xx, a bare 401 or a response the app cannot read all
+/// open the cached mailbox and retry.
+enum LaunchDecision: Equatable {
+    case endSession, openOffline
+    static func classify(_ error: Error) -> LaunchDecision { (error as? APIError) == .sessionEnded ? .endSession : .openOffline }
+}
+
 enum SignInStep: Equatable { case password, codeAddress, codeEntry, secondFactor }
 
 @MainActor @Observable
@@ -31,6 +44,8 @@ final class AppModel {
     private(set) var networkOnline = true
     private(set) var setupDetail = ""
     @ObservationIgnored private var launched = false
+    private(set) var launchCount = 0
+    private(set) var storageNotice: String?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     let signIn = SignInModel()
     let prefs: AppPreferences
@@ -54,12 +69,18 @@ final class AppModel {
         self.secrets = secrets
         self.api = APIClient(baseURL: baseURL)
         self.auth = AuthService(api: api)
-        self.cache = OfflineCache(directory: cacheDirectory, key: CacheKey.loadOrCreate(secrets))
+        let loaded = CacheKey.load(secrets)
+        // A new key makes old files unreadable: delete them. A transient Keychain error must not touch them at all,
+        // so this run caches in a throwaway folder.
+        if loaded.created { try? FileManager.default.removeItem(at: cacheDirectory) }
+        let dir = (loaded.persisted || loaded.created) ? cacheDirectory : FileManager.default.temporaryDirectory.appendingPathComponent("TaifaMailCache-\(UUID().uuidString)")
+        self.cache = OfflineCache(directory: dir, key: loaded.key)
         self.cookies = CookiePersistence(store: secrets, storage: api.cookieStorage)
         self.prefs = AppPreferences(defaults: defaults)
         self.notifications = NotificationManager(prefs: prefs)
         ImageLoader.shared.baseURL = baseURL
         api.onCookiesChanged = { [cookies] in cookies.scheduleSave() }
+        cookies.onError = { [weak self] msg in Task { @MainActor in self?.storageNotice = msg } }
         api.onSessionEnded = { [weak self] in Task { @MainActor in self?.sessionEnded() } }
         connectivity.onChange = { [weak self] online in Task { @MainActor in self?.networkOnline = online; self?.store?.setOffline(!online) } }
     }
@@ -70,6 +91,7 @@ final class AppModel {
     func launchIfNeeded() async {
         guard !launched else { return }
         launched = true
+        launchCount += 1
         await launch()
     }
 
@@ -93,8 +115,7 @@ final class AppModel {
         } catch {
             // Only a definite 401 or 403 (after the refresh already failed) ends the session. Anything else
             // (offline, 5xx, a response the app cannot read) opens the cached mailbox and retries.
-            let api = error as? APIError
-            if api == .sessionEnded || api?.statusCode == 401 || api?.statusCode == 403 {
+            if LaunchDecision.classify(error) == .endSession {
                 await wipeLocalState()
                 phase = .signedOut
             } else if let data = secrets.read("identity"), let s = try? JSONDecoder().decode(MailboxSession.self, from: data) {
@@ -182,8 +203,8 @@ final class AppModel {
             case 429: return "Too many attempts. Wait a minute and try again."
             default: break
             }
-            if api.code == "mfa_enrolment_required" { return "Set up two factor sign in on the web first." }
-            if api.code == "onboarding_required" { return "Finish setting up this mailbox on the web before signing in here." }
+            if api.code == "mfa_enrolment_required" { return AuthMessages.mfaEnrolment }
+            if api.code == "onboarding_required" { return AuthMessages.onboarding }
             return api.errorDescription ?? "Something went wrong."
         }
         return error.localizedDescription
@@ -191,7 +212,7 @@ final class AppModel {
 
     // MARK: Session
 
-    private func finishSignIn(_ s: MailboxSession, offline: Bool = false) {
+    func finishSignIn(_ s: MailboxSession, offline: Bool = false) {
         session = s
         if s.needsWebSetup && !offline {
             var steps: [String] = []
@@ -218,6 +239,12 @@ final class AppModel {
         Task { await st.bootstrap() }
         Task { switchable = (try? await auth.switchable()) ?? [] }
         startRealtime()
+    }
+
+    /// "Check again" on the setup screen: proceeds as soon as the flags clear.
+    func recheckSetup() async {
+        do { let me = try await auth.me(); finishSignIn(me) }
+        catch { setupDetail = (error as? LocalizedError)?.errorDescription ?? setupDetail }
     }
 
     private func wire(_ st: MailStore) {

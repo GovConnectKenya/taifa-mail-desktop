@@ -36,6 +36,34 @@ enum RealtimeEvent: Equatable, Sendable {
     }
 }
 
+/// Ping every `interval`; if no pong arrives within `timeout` after a ping, `onTimeout` fires. The clock and the
+/// transport are injected so the timing is testable without a socket.
+final class KeepAlive: @unchecked Sendable {
+    private(set) var pongSeen = false
+    private let lock = NSLock()
+    let sleep: @Sendable (UInt64) async -> Void
+    let interval: UInt64, timeout: UInt64
+    init(interval: UInt64, timeout: UInt64, sleep: @escaping @Sendable (UInt64) async -> Void = { try? await Task.sleep(nanoseconds: $0) }) {
+        self.interval = interval; self.timeout = timeout; self.sleep = sleep
+    }
+    func pong() { lock.lock(); pongSeen = true; lock.unlock() }
+    private func reset() { lock.lock(); pongSeen = false; lock.unlock() }
+    /// Returns true when it ended because the pong did not come.
+    func run(send: @Sendable () async -> Void, onTimeout: @Sendable () -> Void) async -> Bool {
+        while !Task.isCancelled {
+            await sleep(interval)
+            if Task.isCancelled { return false }
+            reset()
+            await send()
+            await sleep(timeout)
+            if Task.isCancelled { return false }
+            lock.lock(); let seen = pongSeen; lock.unlock()
+            if !seen { onTimeout(); return true }
+        }
+        return false
+    }
+}
+
 /// Websocket client for /ws/mailbox: ping every 30 s, pong within 10 s, exponential backoff,
 /// close code 4001 asks the owner to refresh the session. Realtime is only a hint; the owner polls REST too.
 final class RealtimeClient: @unchecked Sendable {
@@ -93,17 +121,9 @@ final class RealtimeClient: @unchecked Sendable {
 
     /// Returns the close code (0 when unknown). A ping goes out every 30 s; no pong within 10 s closes the socket.
     private func run(_ socket: URLSessionWebSocketTask, onOpen: @escaping () -> Void) async -> Int {
-        let pong = SendableBox(false)
+        let keepAlive = KeepAlive(interval: Self.pingInterval, timeout: Self.pongTimeout)
         let pinger = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: Self.pingInterval)
-                if Task.isCancelled { return }
-                pong.value = false
-                try? await socket.send(.string("ping"))
-                try? await Task.sleep(nanoseconds: Self.pongTimeout)
-                if Task.isCancelled { return }
-                if !pong.value { socket.cancel(with: .goingAway, reason: nil); return }
-            }
+            _ = await keepAlive.run(send: { try? await socket.send(.string("ping")) }, onTimeout: { socket.cancel(with: .goingAway, reason: nil) })
         }
         defer { pinger.cancel(); socket.cancel(with: .goingAway, reason: nil) }
         while !Task.isCancelled {
@@ -112,7 +132,7 @@ final class RealtimeClient: @unchecked Sendable {
                 guard case let .string(text) = msg else { continue }
                 switch Self.frameType(text) {
                 case "connected": onConnection?(true); onOpen(); onEvent?(.reconcile)
-                case "pong": pong.value = true
+                case "pong": keepAlive.pong()
                 case nil: continue
                 default:
                     let event = RealtimeEvent.parse(text, activeMailbox: mailboxId())

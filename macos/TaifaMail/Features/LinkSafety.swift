@@ -17,8 +17,10 @@ enum Punycode {
         switch a { case 48...57: return Int(a) - 22; case 65...90: return Int(a) - 65; case 97...122: return Int(a) - 97; default: return nil }
     }
 
-    /// Decodes one label (without the `xn--` prefix). Returns nil when malformed.
+    /// Decodes one label (without the `xn--` prefix). Returns nil for malformed input or any overflow: this
+    /// runs on attacker controlled hosts, so no arithmetic here may trap.
     static func decode(_ input: String) -> String? {
+        guard input.unicodeScalars.allSatisfy(\.isASCII), input.utf8.count <= 256 else { return nil }
         var output: [UInt32] = []
         var rest = Substring(input)
         if let i = input.lastIndex(of: "-") {
@@ -26,24 +28,35 @@ enum Punycode {
             rest = input[input.index(after: i)...]
         }
         var n = initialN, i = 0, bias = initialBias
-        var chars = Array(rest)
+        let chars = Array(rest)
         var idx = 0
         while idx < chars.count {
             let oldI = i; var w = 1; var k = base
             while true {
                 guard idx < chars.count, let d = digit(chars[idx]) else { return nil }
                 idx += 1
-                i += d * w
+                let (dw, o1) = d.multipliedReportingOverflow(by: w)
+                if o1 { return nil }
+                let (ni, o2) = i.addingReportingOverflow(dw)
+                if o2 { return nil }
+                i = ni
                 let t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias)
                 if d < t { break }
-                w *= base - t; k += base
+                let (nw, o3) = w.multipliedReportingOverflow(by: base - t)
+                if o3 { return nil }
+                w = nw
+                let (nk, o4) = k.addingReportingOverflow(base)
+                if o4 { return nil }
+                k = nk
             }
-            bias = adapt(i - oldI, output.count + 1, oldI == 0)
-            n += i / (output.count + 1); i %= output.count + 1
-            guard let _ = Unicode.Scalar(UInt32(n)) else { return nil }
-            output.insert(UInt32(n), at: i); i += 1
+            let count = output.count + 1
+            bias = adapt(i - oldI, count, oldI == 0)
+            let (nn, o5) = n.addingReportingOverflow(i / count)
+            if o5 { return nil }
+            n = nn; i %= count
+            guard let scalarValue = UInt32(exactly: n), Unicode.Scalar(scalarValue) != nil else { return nil }
+            output.insert(scalarValue, at: i); i += 1
         }
-        chars.removeAll()
         return String(String.UnicodeScalarView(output.compactMap(Unicode.Scalar.init)))
     }
 
@@ -167,14 +180,34 @@ enum LinkSafety {
         return !(a == b || a.hasSuffix("." + b) || b.hasSuffix("." + a))
     }
 
+    /// Decodes the HTML entities that appear in attribute values (&amp; &quot; &#39; &#x27; &lt; &gt;).
+    static func unescapeHTML(_ s: String) -> String {
+        var out = s
+        for (k, v) in [("&quot;", "\""), ("&#39;", "'"), ("&#x27;", "'"), ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&")] { out = out.replacingOccurrences(of: k, with: v, options: .caseInsensitive) }
+        return out
+    }
+
+    /// Canonical form for comparing two URLs: lowercase scheme and host, empty path equals "/", entities decoded.
+    static func normalized(_ raw: String) -> String {
+        let decoded = unescapeHTML(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var c = URLComponents(string: decoded) else { return decoded }
+        c.scheme = c.scheme?.lowercased(); c.host = c.host?.lowercased()
+        if c.path.isEmpty && c.host != nil { c.path = "/" }
+        c.fragment = nil
+        return c.string ?? decoded
+    }
+
+    /// Whether a click is allowed to reach the prompt at all (links_disabled and the scheme allowlist).
+    static func shouldPrompt(_ url: URL, linksLocked: Bool) -> Bool { !linksLocked && isAllowed(url) }
+
     /// The visible text of the first anchor in `html` whose href equals `url` (the web view cannot tell us).
     static func visibleText(for url: URL, in html: String) -> String? {
         guard let re = try? NSRegularExpression(pattern: #"<a\b[^>]*?\bhref\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>"#, options: [.caseInsensitive, .dotMatchesLineSeparators]) else { return nil }
         let ns = html as NSString
+        let target = normalized(url.absoluteString)
         for m in re.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
-            let href = ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "&amp;", with: "&")
-            guard href == url.absoluteString else { continue }
-            let inner = ns.substring(with: m.range(at: 2)).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            guard normalized(ns.substring(with: m.range(at: 1))) == target else { continue }
+            let inner = unescapeHTML(ns.substring(with: m.range(at: 2)).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression))
             let t = inner.trimmingCharacters(in: .whitespacesAndNewlines)
             if !t.isEmpty { return t }
         }

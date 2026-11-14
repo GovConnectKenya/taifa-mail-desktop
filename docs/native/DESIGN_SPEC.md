@@ -34,10 +34,10 @@ Fonts: Google Sans (Regular, Medium, SemiBold; 700 maps to SemiBold) for the UI 
 
 | Token | Size / line | Weight | Use |
 |---|---|---|---|
-| `type.caption` | 11 / 14 | 500 | counts, timestamps in dense rows, badges |
+| `type.caption` | 11 / 16 | 500 | counts, timestamps in dense rows, badges |
 | `type.meta` | 12 / 16 | 400 | snippet, header meta lines, sidebar secondary |
-| `type.body` | 13 / 18 | 400 | list rows, sidebar rows, settings labels |
-| `type.bodyStrong` | 13 / 18 | 600 | unread sender and subject, selected row title |
+| `type.body` | 13 / 20 | 400 | list rows, sidebar rows, settings labels |
+| `type.bodyStrong` | 13 / 20 | 600 | unread sender and subject, selected row title |
 | `type.reader` | 14 / 22 | 400 | native plain text bodies |
 | `type.title` | 16 / 22 | 600 | reader subject, section titles |
 | `type.display` | 20 / 26 | 600 | sign-in title, empty state title |

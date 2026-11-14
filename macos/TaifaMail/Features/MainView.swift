@@ -141,6 +141,7 @@ struct SetupRequiredView: View {
                 Text(app.setupDetail).taifa(.body).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
                 Button("Open Taifa Mail on the web") { NSWorkspace.shared.open(URL(string: "https://mail.govconnect.ke")!) }
                     .buttonStyle(PrimaryButtonStyle(full: true)).accessibilityIdentifier("setup-open-web")
+                Button("Check again") { Task { await app.recheckSetup() } }.buttonStyle(OutlinePillStyle()).accessibilityIdentifier("setup-check-again")
                 Button("Sign out") { Task { await app.signOut() } }.buttonStyle(QuietButtonStyle())
             }
             .padding(Space.s6).frame(width: 400)

@@ -194,7 +194,7 @@ struct AutoReplyPane: View {
                                 Picker("From", selection: $value.startHour) { ForEach(0..<24, id: \.self) { Text(AutoReplyDates.hourLabel($0)).tag($0) } }
                                 Picker("Until", selection: $value.endHour) { ForEach(0..<24, id: \.self) { Text(AutoReplyDates.hourLabel($0)).tag($0) } }
                             }.disabled(!value.enabled)
-                            Text("Replies are sent on the selected days outside these hours, East Africa Time.").taifa(.meta).foregroundStyle(Theme.text3)
+                            Text("Working days and hours. Automatic replies are sent outside these.").taifa(.meta).foregroundStyle(Theme.text3)
                         }
                         if value.mode == "date_range" {
                             HStack {
@@ -216,6 +216,7 @@ struct AutoReplyPane: View {
                     }
                 }
                 .onChange(of: value) { _, _ in saved = false }
+                .onChange(of: value.mode) { _, m in if m == "outside_hours" && value.days.isEmpty { value.days = [0, 1, 2, 3, 4] } }
             }
         }
         .task { await load() }

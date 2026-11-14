@@ -65,7 +65,7 @@ final class StubService: MailService, @unchecked Sendable {
     func upload(filename: String, mime: String, data: Data) async throws -> StoredFile { StoredFile(id: "f", filename: filename, mime: mime, sizeBytes: data.count, status: "ready", scanVerdict: nil) }
     func contacts(matching: String) async throws -> [Contact] { [] }
     func stageAttachments(uid: Int, folder: String) async throws -> [StagedAttachment] { [] }
-    func proxiedImage(_ url: String) async -> Data? { nil }
+    func proxiedImage(_ url: String) async -> ImageProxy.Outcome { .failed }
     func fileStatus(_ id: String) async throws -> StoredFile {
         fileStatusCalls += 1
         return fileStatuses.isEmpty ? StoredFile(id: id, filename: "f", mime: nil, sizeBytes: 1, status: "ready", scanVerdict: nil) : fileStatuses.removeFirst()

@@ -1,43 +1,91 @@
 import Foundation
 import Security
 
-/// A place for the one secret the app keeps: the serialized session cookies.
+/// Result of a secret read: a missing item is not the same as a Keychain that failed.
+enum SecretRead: Equatable {
+    case found(Data)
+    case notFound
+    case failed(OSStatus)
+}
+
+/// A place for the secrets the app keeps: the serialized session cookies and the cache key.
 protocol SecretStore: Sendable {
-    func read(_ key: String) -> Data?
+    func readResult(_ key: String) -> SecretRead
     func write(_ key: String, _ data: Data) -> Bool
     func delete(_ key: String)
+    /// Human readable reason of the last failed operation, for the UI.
+    var lastError: String? { get }
+}
+
+extension SecretStore {
+    func read(_ key: String) -> Data? { if case let .found(d) = readResult(key) { return d }; return nil }
 }
 
 final class KeychainSecretStore: SecretStore, @unchecked Sendable {
     private let service: String
+    private let lock = NSLock()
+    private var _lastError: String?
+    /// The data protection keychain needs a signed app with a team; an ad hoc Debug build answers -34018, and then
+    /// the file keychain is used instead (never silently dropped).
+    private var useDataProtection = true
+
     init(service: String = "ke.govconnect.TaifaMail") { self.service = service }
 
-    private func query(_ key: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key]
+    var lastError: String? { lock.lock(); defer { lock.unlock() }; return _lastError }
+    private func fail(_ status: OSStatus, _ what: String) {
+        let msg = (SecCopyErrorMessageString(status, nil) as String?) ?? "error \(status)"
+        lock.lock(); _lastError = "Keychain \(what) failed: \(msg)"; lock.unlock()
     }
 
-    func read(_ key: String) -> Data? {
-        var q = query(key)
-        q[kSecReturnData as String] = true
-        q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var out: CFTypeRef?
-        return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess ? out as? Data : nil
+    private func query(_ key: String, dataProtection: Bool) -> [String: Any] {
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key]
+        if dataProtection { q[kSecUseDataProtectionKeychain as String] = true }
+        return q
+    }
+
+    func readResult(_ key: String) -> SecretRead {
+        for dp in useDataProtection ? [true, false] : [false] {
+            var q = query(key, dataProtection: dp)
+            q[kSecReturnData as String] = true
+            q[kSecMatchLimit as String] = kSecMatchLimitOne
+            var out: CFTypeRef?
+            let st = SecItemCopyMatching(q as CFDictionary, &out)
+            if st == errSecSuccess, let d = out as? Data { return .found(d) }
+            if st == errSecItemNotFound { continue }
+            if st == errSecMissingEntitlement { useDataProtection = false; continue }
+            fail(st, "read"); return .failed(st)
+        }
+        return .notFound
     }
 
     func write(_ key: String, _ data: Data) -> Bool {
         let attrs: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
-        if SecItemUpdate(query(key) as CFDictionary, attrs as CFDictionary) == errSecSuccess { return true }
-        var add = query(key); add.merge(attrs) { $1 }
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+        for dp in useDataProtection ? [true, false] : [false] {
+            var st = SecItemUpdate(query(key, dataProtection: dp) as CFDictionary, attrs as CFDictionary)
+            if st == errSecItemNotFound {
+                var add = query(key, dataProtection: dp); add.merge(attrs) { $1 }
+                st = SecItemAdd(add as CFDictionary, nil)
+            }
+            if st == errSecSuccess { return true }
+            if st == errSecMissingEntitlement && dp { useDataProtection = false; continue }
+            fail(st, "write"); return false
+        }
+        return false
     }
 
-    func delete(_ key: String) { SecItemDelete(query(key) as CFDictionary) }
+    func delete(_ key: String) {
+        for dp in [true, false] {
+            let st = SecItemDelete(query(key, dataProtection: dp) as CFDictionary)
+            if st != errSecSuccess && st != errSecItemNotFound && st != errSecMissingEntitlement { fail(st, "delete") }
+        }
+    }
 }
 
 final class MemorySecretStore: SecretStore, @unchecked Sendable {
     private var items: [String: Data] = [:]
     private let lock = NSLock()
-    func read(_ key: String) -> Data? { lock.lock(); defer { lock.unlock() }; return items[key] }
+    func readResult(_ key: String) -> SecretRead { lock.lock(); defer { lock.unlock() }; return items[key].map(SecretRead.found) ?? .notFound }
+    var lastError: String? { nil }
     func write(_ key: String, _ data: Data) -> Bool { lock.lock(); items[key] = data; lock.unlock(); return true }
     func delete(_ key: String) { lock.lock(); items[key] = nil; lock.unlock() }
 }
@@ -49,6 +97,8 @@ final class CookiePersistence: @unchecked Sendable {
     private let storage: HTTPCookieStorage
     private let queue = DispatchQueue(label: "ke.govconnect.TaifaMail.cookies")
     private var pending = false
+    /// Called when the Keychain refuses a write, so the app can say so instead of losing the session silently.
+    var onError: (@Sendable (String) -> Void)?
 
     init(store: SecretStore, storage: HTTPCookieStorage) { self.store = store; self.storage = storage }
 
@@ -75,7 +125,7 @@ final class CookiePersistence: @unchecked Sendable {
                    secure: $0.isSecure, httpOnly: $0.isHTTPOnly)
         }
         guard let data = try? JSONEncoder().encode(records) else { return }
-        _ = store.write(Self.key, data)
+        if !store.write(Self.key, data) { onError?(store.lastError ?? "The session could not be saved to the Keychain.") }
     }
 
     @discardableResult

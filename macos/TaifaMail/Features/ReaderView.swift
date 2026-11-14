@@ -148,13 +148,16 @@ struct MessageRow: View {
     var onLink: (LinkAssessment) -> Void
     @State private var bodyHeight: CGFloat = 40
     @State private var proxiedHTML: String?
+    @State private var imagesBlocked = 0
+    @State private var imagesRateLimited = false
+    @State private var retryToken = 0
 
     private var linksLocked: Bool { message.authWarning?.linksDisabled == true }
     private var anyWarning: Bool { message.authWarning != nil || message.authLevel != nil || message.authWarned }
 
     /// Every link goes through the scheme allowlist, then a visible host check. links_disabled makes links inert.
     private func openLink(_ url: URL) {
-        guard !linksLocked, LinkSafety.isAllowed(url) else { return }
+        guard LinkSafety.shouldPrompt(url, linksLocked: linksLocked) else { return }
         onLink(LinkSafety.assess(url, visibleText: message.html.flatMap { LinkSafety.visibleText(for: url, in: $0) }))
     }
 
@@ -221,13 +224,17 @@ struct MessageRow: View {
             if BodyLockdown.hasRemoteContent(html) && !allowImages {
                 Banner(kind: .info, icon: .imageOff, message: "Remote images are blocked.", actionTitle: "Show images") { store.allowImages(for: message.id) }
             }
+            if allowImages && imagesBlocked > 0 {
+                Banner(kind: .warn, icon: .imageOff, message: imagesRateLimited ? "The server is limiting image requests. \(imagesBlocked) image(s) stay blocked." : "\(imagesBlocked) image(s) could not be loaded and stay blocked.", actionTitle: "Retry") { retryToken += 1 }
+            }
             // The web view never loads a remote image: allowed ones are fetched through the server proxy and inlined.
             MessageBodyView(html: proxiedHTML ?? html, allowRemoteImages: false, linksLocked: linksLocked, height: $bodyHeight, onLink: openLink)
                 .frame(height: max(bodyHeight, 24))
-                .task(id: allowImages) {
-                    guard allowImages, BodyLockdown.hasRemoteContent(html) else { proxiedHTML = nil; return }
+                .task(id: "\(allowImages)-\(retryToken)") {
+                    guard allowImages, BodyLockdown.hasRemoteContent(html) else { proxiedHTML = nil; imagesBlocked = 0; return }
                     let svc = store.service
-                    proxiedHTML = await ImageProxy.rewrite(html: html) { await svc.proxiedImage($0) }
+                    let r = await ImageProxy.rewrite(html: html) { await svc.proxiedImage($0) }
+                    proxiedHTML = r.html; imagesBlocked = r.blocked; imagesRateLimited = r.rateLimited
                 }
                 .accessibilityIdentifier("message-body-web")
         } else {
@@ -249,7 +256,7 @@ struct PlainBody: View {
             .font(Fonts.sans(14)).foregroundStyle(Theme.text)
             .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.openURL, OpenURLAction { url in
-                if !linksLocked && LinkSafety.isAllowed(url) { onLink(url) }
+                if LinkSafety.shouldPrompt(url, linksLocked: linksLocked) { onLink(url) }
                 return .handled
             })
             .accessibilityIdentifier("message-body-text")

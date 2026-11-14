@@ -528,13 +528,20 @@ final class MailStore {
     func cancelForever() { pendingForever = nil }
 
     func perform(_ action: Action, on targets: [ConversationSummary]? = nil) {
-        let rowsToAct = targets ?? selectedRows
-        guard !rowsToAct.isEmpty else { return }
+        let initialRows = targets ?? selectedRows
+        guard !initialRows.isEmpty else { return }
         if isOffline { post("Not available offline", isError: true); return }
-        // Delete inside Trash or Junk is permanent and asks first.
-        if action == .trash, let r = rowsToAct.first,
-           [.trash, .junk].contains(folders.first(where: { $0.path == actingFolder(for: r) })?.role ?? .other) {
-            pendingForever = rowsToAct; return
+        // Delete inside Trash or Junk is permanent and asks first. A mixed selection splits: rows in Trash or Junk
+        // ask, the rest are moved to Trash as usual.
+        var rowsToAct = initialRows
+        if action == .trash {
+            let permanent = rowsToAct.filter { row in [.trash, .junk].contains(folders.first(where: { $0.path == actingFolder(for: row) })?.role ?? .other) }
+            if !permanent.isEmpty {
+                pendingForever = permanent
+                let ids = Set(permanent.map(\.id))
+                rowsToAct = rowsToAct.filter { !ids.contains($0.id) }
+                if rowsToAct.isEmpty { return }
+            }
         }
         let snapshot = rows, readerSnapshot = reader, foldersSnapshot = folders
         let groups = actGroups(rowsToAct)

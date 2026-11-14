@@ -7,10 +7,19 @@ enum AttachmentSafety {
         var s = String(String.UnicodeScalarView(name.unicodeScalars.filter { !bidi.contains($0.value) && $0.value >= 0x20 }))
         s = s.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
         while let last = s.last, last == "." || last == " " { s.removeLast() }
+        if s.count > maxNameLength {
+            // Keep the extension, shorten the stem.
+            let ext = (s as NSString).pathExtension
+            let tail = ext.isEmpty || ext.count > 20 ? "" : "." + ext
+            s = String(s.prefix(maxNameLength - tail.count)) + tail
+        }
         return s.isEmpty ? "attachment" : s
     }
 
-    static let executableExtensions: Set<String> = ["app", "command", "sh", "pkg", "dmg", "terminal", "scpt", "jar", "exe", "bat", "cmd", "ps1", "js", "vbs", "workflow", "action", "pif", "scr", "msi"]
+    static let maxNameLength = 200
+
+    /// Active content types: never opened or previewed from the app, Save only with a warning.
+    static let executableExtensions: Set<String> = ["html", "htm", "xhtml", "svg", "webarchive", "app", "command", "sh", "pkg", "dmg", "terminal", "scpt", "jar", "exe", "bat", "cmd", "ps1", "js", "vbs", "workflow", "action", "pif", "scr", "msi"]
 
     /// Executable and script types are never previewed or opened; Save is offered with a warning.
     static func isExecutable(_ name: String) -> Bool {

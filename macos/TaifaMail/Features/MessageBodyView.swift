@@ -59,7 +59,7 @@ struct MessageBodyView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if !parent.linksLocked, let url = navigationAction.request.url, LinkSafety.isAllowed(url) { parent.onLink(url) }
+            if let url = navigationAction.request.url, LinkSafety.shouldPrompt(url, linksLocked: parent.linksLocked) { parent.onLink(url) }
             return nil
         }
 

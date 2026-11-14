@@ -37,6 +37,9 @@ actor OfflineCache {
         try? u.setResourceValues(v)
     }
 
+    /// The mailbox folder name and file name are authenticated: a file moved to another mailbox or name fails to open.
+    static func aad(_ url: URL) -> Data { Data((url.deletingLastPathComponent().lastPathComponent + "/" + url.lastPathComponent).utf8) }
+
     var keyData: Data { key.withUnsafeBytes { Data($0) } }
 
     static func defaultDirectory() -> URL {
@@ -56,14 +59,14 @@ actor OfflineCache {
     }
 
     private func write<T: Encodable>(_ value: T, to url: URL) {
-        guard let plain = try? encoder.encode(value), let sealed = try? AES.GCM.seal(plain, using: key).combined else { return }
+        guard let plain = try? encoder.encode(value), let sealed = try? AES.GCM.seal(plain, using: key, authenticating: Self.aad(url)).combined else { return }
         try? sealed.write(to: url, options: .atomic)
         try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private func read<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
         guard let blob = try? Data(contentsOf: url) else { return nil }
-        guard let box = try? AES.GCM.SealedBox(combined: blob), let plain = try? AES.GCM.open(box, using: key) else {
+        guard let box = try? AES.GCM.SealedBox(combined: blob), let plain = try? AES.GCM.open(box, using: key, authenticating: Self.aad(url)) else {
             try? fm.removeItem(at: url)   // unreadable (old key or tampered): treat as a miss
             return nil
         }
@@ -144,11 +147,22 @@ actor OfflineCache {
 
 enum CacheKey {
     static let name = "cache-key"
-    /// The per-install key lives in the Keychain; a fresh install (or a wiped one) gets a new random key.
-    static func loadOrCreate(_ secrets: SecretStore) -> SymmetricKey {
-        if let d = secrets.read(name), d.count == 32 { return SymmetricKey(data: d) }
-        let k = SymmetricKey(size: .bits256)
-        _ = secrets.write(name, k.withUnsafeBytes { Data($0) })
-        return k
+
+    struct Loaded { var key: SymmetricKey; var created: Bool; var persisted: Bool }
+
+    /// Existing key: used. Missing key (first run or wiped): a new one is created and `created` is true, so old files are
+    /// unreadable and must be deleted. A transient Keychain error never regenerates the key: an in-memory key is used for
+    /// this run only and nothing is overwritten.
+    static func load(_ secrets: SecretStore) -> Loaded {
+        switch secrets.readResult(name) {
+        case let .found(d) where d.count == 32: return Loaded(key: SymmetricKey(data: d), created: false, persisted: true)
+        case .failed: return Loaded(key: SymmetricKey(size: .bits256), created: false, persisted: false)
+        case .found, .notFound:
+            let k = SymmetricKey(size: .bits256)
+            let ok = secrets.write(name, k.withUnsafeBytes { Data($0) })
+            return Loaded(key: k, created: true, persisted: ok)
+        }
     }
+
+    static func loadOrCreate(_ secrets: SecretStore) -> SymmetricKey { load(secrets).key }
 }

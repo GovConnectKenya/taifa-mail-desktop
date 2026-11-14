@@ -199,7 +199,7 @@ struct PreviewMailService: MailService {
         PreviewFixtures.people.filter { ($0.name + $0.addr).lowercased().contains(matching.lowercased()) }.map { Contact(id: $0.addr, displayName: $0.name, emails: [ContactEmail(type: "work", value: $0.addr, primary: true)]) }
     }
     func stageAttachments(uid: Int, folder: String) async throws -> [StagedAttachment] { [] }
-    func proxiedImage(_ url: String) async -> Data? { nil }
+    func proxiedImage(_ url: String) async -> ImageProxy.Outcome { .failed }
     func fileStatus(_ id: String) async throws -> StoredFile { StoredFile(id: id, filename: "f", mime: nil, sizeBytes: nil, status: "ready", scanVerdict: nil) }
     func signature() async throws -> MailBlock? {
         MailBlock(id: "sig1", blockType: "signature", name: "Signature", html: "Wanjiku Kamau<br>Ministry of Health (example)", text: "Wanjiku Kamau\nMinistry of Health (example)", isDefault: true, scope: "mine")

@@ -23,7 +23,7 @@ protocol MailService: Sendable {
     func contacts(matching: String) async throws -> [Contact]
     func stageAttachments(uid: Int, folder: String) async throws -> [StagedAttachment]
     func fileStatus(_ id: String) async throws -> StoredFile
-    func proxiedImage(_ url: String) async -> Data?
+    func proxiedImage(_ url: String) async -> ImageProxy.Outcome
     func signature() async throws -> MailBlock?
     func saveSignature(html: String, text: String, existing: MailBlock?) async throws
     func autoResponder() async throws -> AutoResponder
@@ -85,11 +85,21 @@ struct LiveMailService: MailService {
         return r.files
     }
 
-    func proxiedImage(_ url: String) async -> Data? {
-        struct Cap: Decodable { var token: String }
-        guard let cap: Cap = try? await api.send(Endpoints.imageProxyCapability(mailboxId)) else { return nil }
-        return try? await api.rawData(Endpoints.proxiedImage(mailboxId, token: cap.token, target: url)).0
+    func proxiedImage(_ url: String) async -> ImageProxy.Outcome {
+        struct Cap: Decodable { var token: String; var expiresAt: String? }
+        let mb = mailboxId, api = api
+        let token = await Self.capabilities.token(mailbox: mb) {
+            guard let c: Cap = try? await api.send(Endpoints.imageProxyCapability(mb)) else { return nil }
+            let exp = c.expiresAt.flatMap(AutoReplyDates.parse) ?? Date().addingTimeInterval(600)
+            return ImageProxyCapabilityCache.Capability(token: c.token, expiresAt: exp)
+        }
+        guard let token else { return .failed }
+        do { return .loaded(try await api.rawData(Endpoints.proxiedImage(mb, token: token, target: url)).0) }
+        catch let e as APIError { return e.statusCode == 429 ? .rateLimited : .failed }
+        catch { return .failed }
     }
+
+    static let capabilities = ImageProxyCapabilityCache()
 
     func fileStatus(_ id: String) async throws -> StoredFile {
         let e: FileEnvelope = try await api.send(Endpoints.file(id))

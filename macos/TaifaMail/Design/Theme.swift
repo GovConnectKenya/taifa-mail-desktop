@@ -135,8 +135,26 @@ enum TextStyle {
     }
 }
 
+extension TextStyle {
+    /// Line heights of tokens.css: caption 11/16, meta 12/16, body 13/20 (others use the font default).
+    var lineHeight: CGFloat? {
+        switch self {
+        case .caption: 16
+        case .meta: 16
+        case .body, .bodyStrong: 20
+        default: nil
+        }
+    }
+    var pointSize: CGFloat {
+        switch self { case .caption: 11; case .meta: 12; case .body, .bodyStrong: 13; case .bodyLg, .reader: 14; case .subhead: 16; case .title: 20; case .display: 24; case .hero: 28 }
+    }
+}
+
 extension View {
-    func taifa(_ style: TextStyle) -> some View { font(style.font) }
+    func taifa(_ style: TextStyle) -> some View {
+        // SwiftUI sizes a line at about 1.25 of the point size; the extra spacing brings it to the token's line height.
+        font(style.font).lineSpacing(max(0, (style.lineHeight ?? 0) - style.pointSize * 1.25))
+    }
     /// Headings only: -0.01em tracking, as the webmail does.
     func taifaHeading(_ style: TextStyle) -> some View { font(style.font).tracking(-0.2) }
 }

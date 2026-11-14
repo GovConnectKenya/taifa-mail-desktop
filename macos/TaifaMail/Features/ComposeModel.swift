@@ -182,12 +182,11 @@ final class ComposeModel {
         var text = "\n"
         if !seed.quote.isEmpty { text += "\n" + seed.quote + "\n" }
         if let signature, !signature.isEmpty { text += "\n-- \n" + signature }
+        // A signature is inserted as text: importing its HTML would fetch remote images and styles.
         let base = NSMutableAttributedString(string: text, attributes: [.font: ComposeFont.body])
-        if (signature ?? "").isEmpty, let html = signatureHTML, !html.isEmpty,
-           let data = html.data(using: .utf8),
-           let sig = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue], documentAttributes: nil) {
-            base.append(NSAttributedString(string: "\n-- \n", attributes: [.font: ComposeFont.body]))
-            base.append(sig)
+        if (signature ?? "").isEmpty, let html = signatureHTML, !html.isEmpty {
+            let plain = MailBlock(id: "", blockType: "signature", name: "", html: html, text: nil, isDefault: true, scope: nil).plainText
+            if !plain.isEmpty { base.append(NSAttributedString(string: "\n-- \n" + plain, attributes: [.font: ComposeFont.body])) }
         }
         attributed = base
         if let uid = seed.stageUid, let folder = seed.stageFolder, seed.kind == .forward {

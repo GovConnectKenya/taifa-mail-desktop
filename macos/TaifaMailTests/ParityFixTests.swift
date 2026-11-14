@@ -43,7 +43,7 @@ final class ParityFixTests: XCTestCase {
         let s = await store(svc)
         s.selectFolder("Deleted Items")      // classified as Trash by name
         await s.loadFirstPage()
-        let row = s.rows.first ?? s.rows.first
+        let row = s.rows.first
         XCTAssertNotNil(row)
         s.perform(.trash, on: row.map { [$0] })
         XCTAssertNotNil(s.pendingForever); XCTAssertTrue(svc.batches.isEmpty)
@@ -226,4 +226,3 @@ final class ParityFixTests: XCTestCase {
     }
 }
 
-enum AuthMessages { static let onboarding = "Finish setting up this mailbox on the web before signing in here." }
