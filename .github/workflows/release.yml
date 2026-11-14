@@ -182,6 +182,22 @@ jobs:
           node scripts/release-notes.mjs "$VERSION" > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
 
+      # Version-less copies of the installers, so the webmail can link to
+      # releases/latest/download/<name> and always get the newest build. They
+      # are byte-identical copies and are NOT listed in latest*.yml: the
+      # updater only ever reads the versioned files.
+      - name: Add version-less download aliases
+        if: matrix.os != 'ubuntu-latest'
+        shell: bash
+        run: |
+          V=$(node -p "require('./package.json').version")
+          cd release
+          alias_copy() { if [ -f "$1" ]; then cp "$1" "$2"; echo "alias $2 <- $1"; fi; }
+          alias_copy "TaifaMail-$V-arm64.dmg" TaifaMail-mac-arm64.dmg
+          alias_copy "TaifaMail-$V-x64.dmg" TaifaMail-mac-x64.dmg
+          alias_copy "TaifaMail-Setup-$V.exe" TaifaMail-Setup-windows-x64.exe
+          alias_copy "TaifaMail-Setup-$V-arm64.exe" TaifaMail-Setup-windows-arm64.exe
+
       # We build with --publish never and upload explicitly: electron-builder's
       # own publisher races across the three runners and can clobber latest*.yml.
       - name: Publish installers to the GitHub Release

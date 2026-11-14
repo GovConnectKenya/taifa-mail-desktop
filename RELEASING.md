@@ -367,6 +367,28 @@ Electron fuses (scripts/after-pack.js): in particular EnableCookieEncryption
 must stay on, or the build cannot read cookies written since 0.2.0 and every
 user is signed out.
 
+### Version-less download links
+
+Every release also carries byte-identical copies of the installers under fixed
+names, so the webmail (and anyone else) can link to
+`https://github.com/GovConnectKenya/taifa-mail-desktop/releases/latest/download/<name>`
+and always get the newest build:
+
+| Alias | Copy of |
+|---|---|
+| `TaifaMail-mac-arm64.dmg` | `TaifaMail-<version>-arm64.dmg` |
+| `TaifaMail-mac-x64.dmg` | `TaifaMail-<version>-x64.dmg` |
+| `TaifaMail-Setup-windows-x64.exe` | `TaifaMail-Setup-<version>.exe` |
+| `TaifaMail-Setup-windows-arm64.exe` | `TaifaMail-Setup-<version>-arm64.exe` |
+
+release.yml makes them in its "Add version-less download aliases" step. They
+are never listed in `latest-mac.yml` or `latest.yml`; the updater only reads
+the versioned files. Do not rename them: published links depend on them. The
+CI Windows leg builds x64 only, so the arm64 alias appears only when an arm64
+installer is added to the release (0.2.0 was built and uploaded by hand).
+After publishing, check each alias:
+`curl -sIL https://github.com/GovConnectKenya/taifa-mail-desktop/releases/latest/download/TaifaMail-mac-arm64.dmg | grep -iE "^location|^HTTP"`.
+
 ### The webmail commit is pinned
 
 `WEBMAIL_REF` holds the full taifa-mail commit the app bundles. Release and
