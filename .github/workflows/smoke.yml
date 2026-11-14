@@ -241,9 +241,7 @@ jobs:
           pgrep -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' >/dev/null || { echo "CHECK FAIL process never started"; exit 1; }
           echo "CHECK PASS process started"
           sleep 12
-          # best effort: the window title needs Accessibility, which a runner may deny
-          osascript -e 'tell application "System Events" to get name of every window of (first process whose name is "Taifa Mail")' 2>&1 || echo "(window title unavailable)"
-
+          pgrep -fl 'Taifa Mail' | head
       - name: Screenshot
         run: |
           mkdir -p shots
