@@ -64,7 +64,16 @@ jobs:
           -p:Platform=${{ matrix.platform }} -p:PublishReadyToRun=false --self-contained true -o artifacts/publish-${{ matrix.rid }}
       - name: Show XAML compiler diagnostics
         if: failure()
-        run: Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter output.json | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Raw }
+        run: |
+          Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter output.json | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Raw }
+          $in = Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter input.json | Select-Object -First 1
+          if ($in) {
+            $xc = Get-ChildItem "$env:USERPROFILE/.nuget/packages/microsoft.windowsappsdk/1.6.250108002/tools/net472" -Filter XamlCompiler.exe | Select-Object -First 1
+            "== manual run of $($xc.FullName) on $($in.FullName)"
+            & $xc.FullName $in.FullName (Join-Path $in.DirectoryName 'manual-output.json') 2>&1 | Out-String | Write-Host
+            "exit $LASTEXITCODE"
+            Get-ChildItem $in.DirectoryName -Filter *output.json | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName -Raw }
+          } else { "no input.json found" }
       - name: Prove preview data is not in Release
         run: |
           $dll = Get-ChildItem artifacts/publish-${{ matrix.rid }} -Filter TaifaMail.dll | Select-Object -First 1
@@ -97,7 +106,16 @@ jobs:
         run: dotnet build src/TaifaMail.App/TaifaMail.App.csproj -c Debug -r win-x64 -p:Platform=x64 --self-contained true -o artifacts/debug-x64
       - name: Show XAML compiler diagnostics
         if: failure()
-        run: Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter output.json | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Raw }
+        run: |
+          Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter output.json | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Raw }
+          $in = Get-ChildItem -Recurse src/TaifaMail.App/obj -Filter input.json | Select-Object -First 1
+          if ($in) {
+            $xc = Get-ChildItem "$env:USERPROFILE/.nuget/packages/microsoft.windowsappsdk/1.6.250108002/tools/net472" -Filter XamlCompiler.exe | Select-Object -First 1
+            "== manual run of $($xc.FullName) on $($in.FullName)"
+            & $xc.FullName $in.FullName (Join-Path $in.DirectoryName 'manual-output.json') 2>&1 | Out-String | Write-Host
+            "exit $LASTEXITCODE"
+            Get-ChildItem $in.DirectoryName -Filter *output.json | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName -Raw }
+          } else { "no input.json found" }
       - name: Prove preview data is in Debug
         run: |
           $bytes = [IO.File]::ReadAllBytes((Resolve-Path artifacts/debug-x64/TaifaMail.dll))
