@@ -6,8 +6,8 @@
 
 const path = require('path');
 
-// Sized to the content (4px grid), so the window has no empty band.
-const ABOUT_SIZE = Object.freeze({ width: 360, height: 372 });
+// Two columns: the illustration panel and the details (4px grid).
+const ABOUT_SIZE = Object.freeze({ width: 720, height: 440 });
 
 // What the page's buttons may ask main to open. The page sends a KEY, never a
 // URL, so even a compromised page can only reach these fixed targets.
@@ -16,6 +16,8 @@ const ABOUT_LINKS = Object.freeze({
   // The webmail has no help route of its own (its help is the docs site that
   // Help > Taifa Mail Help already opens), so Support goes there.
   help: { url: 'https://govconnect.ke/docs' },
+  rcfi: { url: 'https://rcfi.co.ke' },
+  webmail: { url: 'https://mail.govconnect.ke' },
   'chromium-licences': { file: 'LICENSES.chromium.html' },
 });
 
