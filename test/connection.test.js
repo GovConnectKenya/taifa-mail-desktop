@@ -57,3 +57,12 @@ test('page conn fields are reduced to a known kind and short text', () => {
   assert.ok(s.connText.length <= 160 && !s.connText.includes('\u0000'));
   assert.equal(firstSentence('Reconnecting…'), 'Reconnecting…');
 });
+
+test('the error card reads as server trouble, and the probe only runs while not fine', () => {
+  const { shouldProbe } = require('../src/connection');
+  assert.deepEqual(view(page({ bootError: true })), { state: 'offline', label: 'Can’t reach the server' });
+  assert.equal(shouldProbe({ state: 'online', lastProbeAt: 0, now: 1e9 }), false);
+  assert.equal(shouldProbe({ state: 'connecting', lastProbeAt: 0, now: 1e9 }), false);
+  assert.equal(shouldProbe({ state: 'reconnecting', lastProbeAt: 0, now: 1e9 }), true);
+  assert.equal(shouldProbe({ state: 'offline', lastProbeAt: 1e9 - 1000, now: 1e9 }), false, 'not more often than every 5 s');
+});

@@ -74,7 +74,7 @@ const { createNotifier } = require('./notifier');
 const { printConversation } = require('./print');
 const { dropAlert } = require('./drop');
 const { testNotificationReport } = require('./notify-test');
-const { connectionView, createServerHealth } = require('./connection');
+const { connectionView, createServerHealth, shouldProbe } = require('./connection');
 const { linkStatusParts } = require('./link-status');
 const { createFinder } = require('./find');
 const { MESSAGE_SIZE, isConversationRoute, messageWindowCss, shouldCloseOnNavigate, messageTitle } = require('./message-window');
@@ -714,8 +714,33 @@ function connectionState() {
 // The backend's health changes without the page saying anything (a 502, a hung
 // request), so it is re-read every few seconds while the tray is up.
 let lastConnKey = '';
+let lastProbeAt = 0;
+let lastNudgeAt = 0;
+// The server may come back long before the page's own backoff looks again
+// (round 2: 94 s for the mailbox, 63 s for live updates). While the state is
+// not fine, probe /health; when it answers, press the page's own retry.
+async function probeAndNudge() {
+  lastProbeAt = Date.now();
+  const done = serverHealth.start('/health');
+  let ok = false;
+  try {
+    const res = await session.fromPartition(PARTITION).fetch(`${APP_ORIGIN}/health`, { bypassCustomProtocolHandlers: true, cache: 'no-store' });
+    ok = res.status < 500;
+    done(res.status);
+  } catch (_) {
+    done(0);
+  }
+  if (!ok || !win || win.isDestroyed() || showingOffline || Date.now() - lastNudgeAt < 10000) return;
+  const st = pageStates.get(win.webContents.id);
+  if (!st || !(st.bootError || st.degraded)) return;
+  lastNudgeAt = Date.now();
+  const r = await pageAction(win, 'reconnect');
+  if (r) console.log(`[shell] server is back: retried ${r}`);
+}
+
 function watchConnection() {
   setInterval(() => {
+    if (shouldProbe({ state: connectionState(), lastProbeAt, now: Date.now() })) probeAndNudge();
     const c = connectionInfo();
     const key = `${c.state}|${c.label}`;
     if (key === lastConnKey) return;

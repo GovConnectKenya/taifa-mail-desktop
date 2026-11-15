@@ -162,6 +162,23 @@ async function pageAction(name, arg) {
       return true;
     }
 
+    // The server is answering again (main probed it): press the page's own
+    // retry, so the mailbox and its live updates come back now instead of on
+    // the page's next backoff tick. Only the page's retry controls.
+    case 'reconnect': {
+      const boot = q('.tm-boot-retry');
+      if (boot && !boot.disabled) {
+        boot.click();
+        return 'mailbox';
+      }
+      const chip = q('.tm-conn');
+      if (chip) {
+        chip.click();
+        return 'live';
+      }
+      return false;
+    }
+
     case 'refresh': {
       const b = q('button[aria-label="Refresh"]');
       if (!b) return false;
@@ -382,6 +399,7 @@ const VALID = {
   tool: (a) => TOOLS.includes(a),
   reply: (a) => REPLIES.includes(a),
   refresh: () => true,
+  reconnect: (a) => a === undefined || a === null,
   search: () => true,
   sidebar: () => true,
   shortcuts: (a) => a === 'mac' || a === 'other',

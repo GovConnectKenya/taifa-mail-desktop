@@ -42,6 +42,8 @@ function connectionView({ showingOffline, appLoaded, page, serverDown }) {
     return { state: 'offline', label: firstSentence(page.connText) || LABELS.offline };
   }
   if (!page.online) return { state: 'offline', label: LABELS.offline };
+  // The webmail's "Couldn't load your mailbox" card.
+  if (page.bootError) return { state: 'offline', label: LABELS.server };
   // The webmail's "Reconnecting…" chip (its live-updates socket is down).
   if (page.degraded) return { state: 'reconnecting', label: firstSentence(page.connText) || LABELS.reconnecting };
   if (serverDown) return { state: 'offline', label: LABELS.server };
@@ -88,4 +90,11 @@ function createServerHealth({ now = Date.now, hungMs = 20000 } = {}) {
   };
 }
 
-module.exports = { connectionView, createServerHealth, firstSentence, LABELS };
+// While the connection is not fine, main probes the server this often, and
+// nudges the page's own retry as soon as it answers (at most once per
+// nudgeGapMs). Pure decision: probe now?
+function shouldProbe({ state, lastProbeAt, now, everyMs = 5000 }) {
+  return state !== 'online' && state !== 'connecting' && now - lastProbeAt >= everyMs;
+}
+
+module.exports = { shouldProbe, connectionView, createServerHealth, firstSentence, LABELS };

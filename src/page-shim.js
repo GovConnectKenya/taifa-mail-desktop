@@ -182,6 +182,7 @@ function pageShim(cfg) {
         online: navigator.onLine,
         degraded: !!q('.tm-conn'),
         offlineBanner: !!q('.tm-shell-offline'),
+        bootError: !!q('.tm-boot-error'),
         // The window's own words for its connection state, so the tray can say
         // exactly the same thing.
         connKind: (() => {
@@ -448,7 +449,7 @@ function parseMarker(message) {
 // The page state, reduced to the fields main trusts, all booleans except path.
 const STATE_KEYS = [
   'mail', 'signedIn', 'conversation', 'composer', 'composerMinimized', 'modal', 'typing', 'read', 'unread',
-  'starred', 'canArchive', 'canReplyAll', 'search', 'online', 'degraded', 'offlineBanner', 'sound',
+  'starred', 'canArchive', 'canReplyAll', 'search', 'online', 'degraded', 'offlineBanner', 'bootError', 'sound',
 ];
 const CONN_KINDS = new Set(['offline', 'stale', 'recovering', 'degraded']);
 function normaliseState(data) {
