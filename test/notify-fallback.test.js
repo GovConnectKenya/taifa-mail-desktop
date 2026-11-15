@@ -58,3 +58,54 @@ test('appendLine writes, and rotates past the size cap', () => {
   assert.ok(fs.existsSync(`${file}.1`));
   fs.rmSync(dir, { recursive: true });
 });
+
+const { pickNew } = require('../src/notify-fallback');
+const { createNotifier } = require('../src/notifier');
+
+test('fallback: a fresh baseline announces nothing (no banner at sign-in)', () => {
+  const items = [{ uid: 9, unread: true }, { uid: 7, unread: true }];
+  assert.deepEqual(pickNew(items, null), { fresh: [], baseline: 9 });
+  assert.deepEqual(pickNew(null, null), { fresh: [], baseline: null });
+});
+
+test('fallback: only unread mail newer than the baseline, oldest first', () => {
+  const items = [{ uid: 12, unread: true }, { uid: 11, unread: false }, { uid: 10, unread: true }, { uid: 9, unread: true }];
+  const r = pickNew(items, 9);
+  assert.deepEqual(r.fresh.map((i) => i.uid), [10, 12]);
+  assert.equal(r.baseline, 12);
+  assert.deepEqual(pickNew(items, 12).fresh, [], 'nothing is announced twice');
+  assert.deepEqual(pickNew([{ uid: 'x', unread: true }, { uid: -1, unread: true }], 0).fresh, []);
+});
+
+test('fallback: the settle window restarts at sign-in', () => {
+  let t = 0;
+  const f = createFallback({ now: () => t, settleMs: 10000 });
+  f.markLoaded();
+  t = 60000;
+  assert.ok(f.onUnread(0, 3), 'an increase long after load counts');
+  f.markLoaded(); // sign-in
+  t += 2000;
+  assert.equal(f.onUnread(0, 19), null, 'the jump at sign-in does not');
+});
+
+test('fallback envelopes become real notifications: sender, subject, snippet, a click opens it', () => {
+  const posted = [];
+  const opened = [];
+  let pending = null;
+  const n = createNotifier({
+    platform: 'darwin',
+    createNotification: (o) => { const h = {}; const x = { ...o, on: (e, cb) => { h[e] = cb; }, show() {}, close() {}, click: () => h.click() }; posted.push(x); return x; },
+    setTimeout: (fn) => { pending = fn; return 1; },
+    clearTimeout: () => {},
+    onOpen: (r) => opened.push(r),
+  });
+  const { fresh } = pickNew([{ uid: 180, folder: 'INBOX', unread: true, fromName: 'Jane Doe', fromAddr: 'jane@ke.go', subject: 'Budget', snippet: 'Please review' }], 179);
+  for (const m of fresh) n.post({ title: m.fromName || m.fromAddr, body: m.subject, snippet: m.snippet, tag: `mail-${m.folder}-${m.uid}` });
+  pending();
+  assert.equal(posted.length, 1);
+  assert.deepEqual([posted[0].title, posted[0].subtitle, posted[0].body], ['Jane Doe', 'Budget', 'Please review']);
+  posted[0].click();
+  assert.deepEqual(opened, ['/#INBOX/180']);
+  // The page posting the same message later is a duplicate, not a second banner.
+  assert.equal(n.post({ title: 'Jane Doe', body: 'Budget', tag: 'mail-INBOX-180' }), false);
+});

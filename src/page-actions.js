@@ -192,6 +192,36 @@ async function pageAction(name, arg) {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: '/', code: 'Slash', metaKey: arg === 'mac', ctrlKey: arg !== 'mac', bubbles: true }));
       return true;
 
+    // The newest Inbox conversations' envelopes (notify-fallback.js): what a
+    // new-mail notification needs when the page posted none. Read only; the
+    // same list call the page makes, which never changes read state.
+    case 'inbox-head': {
+      let id = '';
+      try {
+        id = localStorage.getItem('taifa-mail-last-mailbox') || '';
+      } catch (_) {}
+      if (!/^[\w-]{1,64}$/.test(id)) return null;
+      try {
+        const res = await fetch('/v1/inbox/' + encodeURIComponent(id) + '/conversations?folder=INBOX&limit=15&offset=0', { credentials: 'include', headers: { Accept: 'application/json' } });
+        if (!res.ok) return null;
+        const body = await res.json();
+        return (Array.isArray(body.items) ? body.items : []).map((c) => {
+          const m = c.latest || {};
+          return {
+            uid: Number(m.uid) || 0,
+            folder: String(m.folder || 'INBOX').slice(0, 300),
+            unread: !!c.unread && !m.seen,
+            fromName: String(m.from_name || '').slice(0, 200),
+            fromAddr: String(m.from_addr || '').slice(0, 200),
+            subject: String(m.subject || '').slice(0, 300),
+            snippet: String(m.snippet || '').slice(0, 400),
+          };
+        });
+      } catch (_) {
+        return null;
+      }
+    }
+
     // The open conversation as an in-app route, for "Open in New Window".
     case 'conversation': {
       if (!reader() || !onMail()) return null;
@@ -357,6 +387,7 @@ const VALID = {
   shortcuts: (a) => a === 'mac' || a === 'other',
   conversation: () => true,
   print: () => true,
+  'inbox-head': (a) => a === undefined || a === null,
 };
 
 // The script for one action. Throws for an unknown action or a bad argument,

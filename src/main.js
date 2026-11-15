@@ -56,7 +56,7 @@ const { harden, installSessionHandlers, openExternally, setAppWindowOpener } = r
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
 const { createNotificationState, detect: detectNotificationState, settingsTarget, linuxGuidance, permissionOverrideScript, createSettingsGate, DOCS_URL } = require('./notify-state');
-const { createFallback, fallbackBody } = require('./notify-fallback');
+const { createFallback, fallbackBody, pickNew } = require('./notify-fallback');
 const { formatLine, appendLine } = require('./notify-log');
 const { ABOUT_SIZE, aboutLink, chromiumLicencePath, buildAboutInfo } = require('./about');
 const { shouldReloadAfterFailedNavigation } = require('./route');
@@ -599,6 +599,7 @@ function handlePageMarker(w, message) {
     syncMessageTitle(w);
     scheduleMenuRefresh();
     if (w === win) {
+      onSignInState(pageStates.get(w.webContents.id).signedIn);
       pushTrayState();
       updateTrayTooltip();
     }
@@ -609,11 +610,12 @@ function handlePageMarker(w, message) {
 }
 
 // Called when the unread count in the title went up while the app was not in
-// front: waits a moment for the page's own notification, then posts a plain one
-// if the page stayed silent (see src/notify-fallback.js). A second increase
-// while waiting restarts the wait, so a burst gives one fallback, not one each.
+// front: waits a moment for the page's own notification, then, if the page
+// stayed silent, announces the new mail itself (see src/notify-fallback.js). A
+// second increase while waiting restarts the wait, so a burst is handled once.
 let fallbackTimer = null;
 let fallbackInc = null;
+let inboxBaseline = null; // newest Inbox uid known at sign-in (or last announced)
 function considerFallback(inc) {
   if (!inc || appInFront()) return;
   fallbackInc = fallbackInc ? { at: fallbackInc.at, delta: fallbackInc.delta + inc.delta } : inc;
@@ -627,9 +629,35 @@ function considerFallback(inc) {
     let pref = 'on';
     try { pref = await win.webContents.executeJavaScript("localStorage.getItem('taifa_mb_notifications')"); } catch (_) { /* keep the default */ }
     if (pref === 'off') { logNotify('fallback-skipped', { reason: 'pref-off' }); return; }
-    logNotify('fallback-posted', { reason: 'page-silent' });
+    const head = await pageAction(win, 'inbox-head');
+    const { fresh, baseline } = pickNew(head, inboxBaseline);
+    if (head) inboxBaseline = baseline;
+    if (fresh.length) {
+      logNotify('fallback-posted', { reason: 'page-silent', kind: 'envelopes', n: fresh.length });
+      for (const m of fresh) {
+        notifier.post({ title: m.fromName || m.fromAddr, body: m.subject, snippet: m.snippet, fromAddr: m.fromAddr, tag: `mail-${m.folder}-${m.uid}` });
+      }
+      return;
+    }
+    logNotify('fallback-posted', { reason: 'page-silent', kind: head ? 'count-no-new-inbox' : 'count-no-list' });
     notifier.postFallback(unreadCount);
   }, 4000);
+}
+
+// Sign-in (or a switch of account): the count is about to jump from nothing to
+// the whole unread total. Restart the settle window and take a fresh baseline
+// a moment later, so only mail that arrives after sign-in is announced.
+let signedIn = false;
+function onSignInState(now) {
+  if (now === signedIn) return;
+  signedIn = now;
+  inboxBaseline = null;
+  if (!now) return;
+  fallback.markLoaded();
+  setTimeout(async () => {
+    const head = await pageAction(win, 'inbox-head');
+    if (head && inboxBaseline === null) inboxBaseline = pickNew(head, null).baseline;
+  }, 6000);
 }
 
 // Help > Send Test Notification: posts a native notification and tells the
@@ -1815,7 +1843,7 @@ app.whenReady().then(async () => {
   // Development runs only (never a packaged build): a handle for driving the
   // app from the Node inspector in manual and automated UI checks.
   if (!app.isPackaged) {
-    global.__taifaDev = { runMenuAction, pageAction, pageStates, mailWindows, openMailWindow, openRoute, notifier, notifyState, connectionState, connectionInfo, serverHealth, printConversation: (data) => printConversation({ BrowserWindow, session, app }, data, { toPdf: true }), getWin: () => win, finder };
+    global.__taifaDev = { runMenuAction, pageAction, pageStates, mailWindows, openMailWindow, openRoute, notifier, notifyState, connectionState, connectionInfo, serverHealth, printConversation: (data) => printConversation({ BrowserWindow, session, app }, data, { toPdf: true }), getWin: () => win, finder, considerFallback, getInboxBaseline: () => inboxBaseline };
   }
   // macOS: clicking a notification banner activates the app. If the window is
   // hidden or minimised at that moment, bring it back.
