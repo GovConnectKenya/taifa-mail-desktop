@@ -64,4 +64,14 @@ function requestNativeNotificationAuthorization(deps) {
   return true;
 }
 
-module.exports = { parseUnread, createBadge, requestNativeNotificationAuthorization };
+// The webmail posts its own new-mail notifications (sender and subject) through
+// the Web Notification API, but only when its local preference is "on". Its
+// default for that preference is "on" only for the 0.1.x user agent token
+// (TaifaMailDesktop), which this app deliberately no longer sends, so on a
+// fresh profile the preference is unset and the webmail stays silent. Seed it
+// to "on" ONLY when it was never set: an explicit "off" is the user's choice.
+const NOTIFY_PREF_KEY = 'taifa_mb_notifications';
+const SEED_NOTIFY_PREF_JS =
+  `(() => { try { if (localStorage.getItem('${NOTIFY_PREF_KEY}') === null) { localStorage.setItem('${NOTIFY_PREF_KEY}', 'on'); return 'seeded'; } return localStorage.getItem('${NOTIFY_PREF_KEY}'); } catch (e) { return 'error'; } })()`;
+
+module.exports = { NOTIFY_PREF_KEY, SEED_NOTIFY_PREF_JS, parseUnread, createBadge, requestNativeNotificationAuthorization };

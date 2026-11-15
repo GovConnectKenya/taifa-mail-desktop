@@ -50,7 +50,7 @@ const { harden, installSessionHandlers } = require('./security');
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
 const windowState = require('./window-state');
-const { parseUnread, createBadge, requestNativeNotificationAuthorization } = require('./badge');
+const { parseUnread, createBadge, requestNativeNotificationAuthorization, SEED_NOTIFY_PREF_JS } = require('./badge');
 const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
 
 const PARTITION = 'persist:taifamail';
@@ -246,11 +246,17 @@ function createWindow() {
       retryAttempt = 0;
       clearRetry();
       if (TIMING && !appLoaded) console.log(`[timing] launch to webmail loaded: ${Date.now() - LAUNCHED_AT}ms`);
+      win.webContents.executeJavaScript(SEED_NOTIFY_PREF_JS).catch(() => {});
       if (!appLoaded) {
         // First real load: let macOS enable banners and the dock badge.
         try {
           requestNativeNotificationAuthorization({ Notification, userDataDir: app.getPath('userData'), platform: process.platform });
         } catch (e) { console.warn('[shell] notification authorization request failed:', e && e.message); }
+      }
+      if (!appLoaded && process.env.TAIFA_SMOKE_NOTIFY === '1') {
+        // Release smoke test hook: proves a native notification reaches the
+        // platform's notification service. Never set in normal use.
+        new Notification({ title: 'Taifa Mail smoke test', body: 'notification reached the system' }).show();
       }
       appLoaded = true;
       if (pendingRoute) {

@@ -48,3 +48,16 @@ test('notification authorization: once per profile, macOS only', () => {
   assert.strictEqual(shown, 1);
   fs.rmSync(dir, { recursive: true });
 });
+
+test('notification preference seed only fills an unset value', () => {
+  const { SEED_NOTIFY_PREF_JS } = require('../src/badge');
+  const run = (initial) => {
+    const store = new Map(initial === undefined ? [] : [['taifa_mb_notifications', initial]]);
+    const localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, v) };
+    const result = new Function('localStorage', `return ${SEED_NOTIFY_PREF_JS}`)(localStorage);
+    return [result, store.get('taifa_mb_notifications')];
+  };
+  assert.deepStrictEqual(run(undefined), ['seeded', 'on']);
+  assert.deepStrictEqual(run('off'), ['off', 'off']);
+  assert.deepStrictEqual(run('on'), ['on', 'on']);
+});
