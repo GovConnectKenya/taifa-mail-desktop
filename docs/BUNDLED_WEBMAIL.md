@@ -201,6 +201,39 @@ Follow-up, backend: send that header when an API change breaks older webmail
 builds. Nothing sends it yet; the client side is in `src/bundle.js` and
 `src/main.js` (`fallBackToLiveSite`).
 
+## Notifications, focus and sound (0.2.1)
+
+All of this lives in the desktop app; none of it needs a webmail change.
+
+- **Enable path.** The webmail's `ensureNotificationPermission()` returns early
+  on `denied`, so a blocked OS used to leave its enable button doing nothing.
+  Electron's permission check handler can only answer allowed or not, and the
+  page then reads `denied`. So while the OS blocks notifications the app
+  overrides `Notification.permission` in the page to read `default`
+  (`permissionOverrideScript` in `src/notify-state.js`, applied on every
+  document and whenever the state flips). The enable button then calls
+  `requestPermission()`, the request handler answers `denied` and opens the OS
+  settings, at most once per click and not more than every 15 seconds
+  (`createSettingsGate`). A request with no click behind it opens nothing.
+- **macOS state.** The authorization verdict is re-read on the first
+  notification request and four seconds after the first unread badge.
+- **Clicking a notification.** A renderer `window.focus()` reaches the browser
+  process as nothing in Electron 45 (measured: no event, the window stays
+  hidden, minimised or behind). The app wraps `window.focus()` in the page with
+  a shim that reports the call as a console marker, and `showWindow()` then
+  unhides the app (macOS `app.show()`), restores, shows and focuses. On macOS
+  `did-become-active` covers a banner click as well.
+- **Sound.** The page is muted whenever the window is not visible, focused and
+  not minimised, so a background arrival makes the OS notification sound and not
+  also the webmail's chime. In front, no banner is shown and the chime plays.
+
+## About window
+
+`About Taifa Mail` (app menu on macOS, Help on Windows and Linux) opens
+`src/about/about.html` through `taifa-ui://`. It has its own bridge
+(`window.taifaAbout`, `src/preload.js`), gated on that page. `open()` takes a key
+from a fixed set (`src/about.js`), never a URL.
+
 ## Known limits
 
 - Passkeys: the button is shown exactly as on the web. On macOS, Electron 45

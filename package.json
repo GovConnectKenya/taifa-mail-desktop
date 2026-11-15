@@ -1,7 +1,7 @@
 {
   "name": "taifa-mail-desktop",
   "productName": "Taifa Mail",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Taifa Mail desktop: the Taifa Mail webmail, bundled into a native app for macOS, Windows and Linux.",
   "main": "src/main.js",
   "author": "RCFI",
@@ -140,14 +140,14 @@
         "gtk3",
         "libnotify",
         "nss",
-        "libXScrnSaver",
-        "libXtst",
+        "(libXScrnSaver or libXss1)",
+        "(libXtst or libXtst6)",
         "xdg-utils",
-        "at-spi2-core",
-        "libuuid",
+        "(at-spi2-core or libatspi2_0-0)",
+        "(libuuid or libuuid1)",
         "libsecret",
-        "alsa-lib",
-        "mesa-libgbm",
+        "(alsa-lib or libasound2)",
+        "(mesa-libgbm or libgbm1)",
         "libdrm"
       ]
     }
