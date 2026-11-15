@@ -50,10 +50,11 @@ const { APP_ORIGIN, APP_URL, THEME_BG, THEME_COOKIE } = require('./config');
 const { harden, installSessionHandlers } = require('./security');
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
+const { createNotificationState, detect: detectNotificationState, settingsTarget, linuxGuidance, DOCS_URL } = require('./notify-state');
 const { shouldReloadAfterFailedNavigation } = require('./route');
 const { handleWillPreventUnload } = require('./unload-guard');
 const windowState = require('./window-state');
-const { parseUnread, createBadge, showNotificationGuidanceOnce, openNotificationSettings, SEED_NOTIFY_PREF_JS } = require('./badge');
+const { parseUnread, createBadge, SEED_NOTIFY_PREF_JS } = require('./badge');
 const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
 
 const PARTITION = 'persist:taifamail';
@@ -250,16 +251,10 @@ function createWindow() {
       clearRetry();
       if (TIMING && !appLoaded) console.log(`[timing] launch to webmail loaded: ${Date.now() - LAUNCHED_AT}ms`);
       win.webContents.executeJavaScript(SEED_NOTIFY_PREF_JS).catch(() => {});
-      if (!appLoaded) {
-        // First real load: point the user at the macOS switch for banners and the dock badge.
-        try {
-          showNotificationGuidanceOnce({ dialog, shell, win, userDataDir: app.getPath('userData'), platform: process.platform });
-        } catch (e) { console.warn('[shell] notification guidance failed:', e && e.message); }
-      }
       if (!appLoaded && process.env.TAIFA_SMOKE_NOTIFY === '1') {
         // Release smoke test hook: proves a native notification reaches the
         // platform's notification service. Never set in normal use.
-        new Notification({ title: 'Taifa Mail smoke test', body: 'notification reached the system' }).show();
+        trackNotification(new Notification({ title: 'Taifa Mail smoke test', body: 'notification reached the system' })).show();
       }
       appLoaded = true;
       if (pendingRoute) {
@@ -538,6 +533,48 @@ function getOverlayDot() {
   return overlayDot;
 }
 
+// ---------------------------------------------------------------------------
+// Notification state
+//
+// The webmail decides whether to notify from Notification.permission, which this
+// app answers in security.js. It used to answer 'granted' unconditionally, so a
+// macOS app that was never authorized (banners AND the Dock badge are dropped)
+// still looked fine to the webmail. Now the answer follows the true OS state, so
+// the webmail's own permission UI shows the problem, and its enable action
+// (Notification.requestPermission) lands in openNotificationHelp.
+// ---------------------------------------------------------------------------
+
+const notifyState = createNotificationState();
+
+// Notifications WE post (the smoke hook) report their own outcome. A denied
+// macOS app still reports 'show', so there the unified-log verdict stays in
+// charge and 'show' proves nothing.
+function trackNotification(n) {
+  n.on('failed', () => notifyState.setBlocked('notification-failed'));
+  n.on('show', () => { if (process.platform !== 'darwin') notifyState.setOk(); });
+  return n;
+}
+
+function openNotificationHelp() {
+  const { reason } = notifyState.snapshot();
+  if (process.platform === 'linux') {
+    dialog
+      .showMessageBox(win && !win.isDestroyed() && win.isVisible() ? win : undefined, {
+        type: 'info',
+        buttons: ['Open help', 'Close'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Taifa Mail',
+        message: 'Notifications are off for Taifa Mail',
+        detail: linuxGuidance(reason),
+      })
+      .then(({ response }) => { if (response === 0) return shell.openExternal(DOCS_URL); })
+      .catch(() => {});
+    return;
+  }
+  shell.openExternal(settingsTarget(process.platform).url).catch(() => {});
+}
+
 const badge = createBadge({
   app,
   platform: process.platform,
@@ -696,7 +733,8 @@ function createAppMenu() {
           label: 'Taifa Mail Help',
           click: () => shell.openExternal('https://govconnect.ke/docs'),
         },
-        ...(isMac ? [{ type: 'separator' }, { label: 'Notification Settings...', click: () => openNotificationSettings(shell) }] : []),
+        { type: 'separator' },
+        { label: 'Notification Settings...', click: () => openNotificationHelp() },
         ...(isMac ? [] : [{ type: 'separator' }, { label: 'Check for Updates...', click: () => checkManual() }, { role: 'about' }]),
       ],
     },
@@ -776,7 +814,12 @@ app.on('open-url', (e, url) => {
 
 app.whenReady().then(async () => {
   const ses = session.fromPartition(PARTITION);
-  installSessionHandlers(ses);
+  // Read the OS notification state in the background: on macOS the verdict is in
+  // our own unified log within a second of launch, well before the webmail asks.
+  detectNotificationState({ platform: process.platform })
+    .then((r) => { if (r.status === 'blocked') notifyState.setBlocked(r.reason); else if (r.status === 'ok') notifyState.setOk(); })
+    .catch(() => {});
+  installSessionHandlers(ses, { snapshot: () => notifyState.snapshot(), onBlockedRequest: openNotificationHelp });
   const bundled = installBundle(ses, { onTooOld: fallBackToLiveSite });
   if (!bundled) console.warn('[shell] no bundled webmail in renderer/: loading the live site');
 

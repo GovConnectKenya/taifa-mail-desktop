@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parseUnread, createBadge, showNotificationGuidanceOnce, SETTINGS_URL } = require('../src/badge');
+const { parseUnread, createBadge } = require('../src/badge');
 
 test('parseUnread reads the webmail prefix only', () => {
   assert.strictEqual(parseUnread('(1035) Inbox · Taifa Mail'), 1035);
@@ -36,23 +36,6 @@ test('linux: setBadgeCount', () => {
   const b = createBadge({ platform: 'linux', app: { setBadgeCount: (n) => calls.push(n) } });
   b.set(5); b.reassert();
   assert.deepStrictEqual(calls, [5, 5]);
-});
-
-test('notification guidance: once per profile, macOS only, opens the settings pane on request', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'taifa-badge-'));
-  const opened = [];
-  const shown = [];
-  const dialog = { showMessageBox: (_w, o) => { shown.push(o); return Promise.resolve({ response: 0 }); } };
-  const shell = { openExternal: (u) => { opened.push(u); return Promise.resolve(); } };
-  const deps = (platform) => ({ dialog, shell, win: {}, userDataDir: dir, platform });
-  assert.strictEqual(showNotificationGuidanceOnce(deps('linux')), false);
-  assert.strictEqual(showNotificationGuidanceOnce(deps('win32')), false);
-  assert.strictEqual(showNotificationGuidanceOnce(deps('darwin')), true);
-  assert.strictEqual(showNotificationGuidanceOnce(deps('darwin')), false);
-  await new Promise((r) => setImmediate(r));
-  assert.strictEqual(shown.length, 1);
-  assert.deepStrictEqual(opened, [SETTINGS_URL]);
-  fs.rmSync(dir, { recursive: true });
 });
 
 test('notification preference seed only fills an unset value', () => {
