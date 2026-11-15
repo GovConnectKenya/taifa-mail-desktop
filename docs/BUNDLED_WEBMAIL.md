@@ -227,6 +227,18 @@ All of this lives in the desktop app; none of it needs a webmail change.
   not minimised, so a background arrival makes the OS notification sound and not
   also the webmail's chime. In front, no banner is shown and the chime plays.
 
+- **Silent new mail.** The webmail notifies only when the websocket event
+  carries the message envelope, which the backend attaches best-effort
+  (`backend/app/api/inbound.py`); a hint-only event updates the list and the
+  title count but posts nothing. When the title count rises while the window is
+  not in front and the page created no Notification around then, the app posts a
+  plain "N unread messages" notice itself (`src/notify-fallback.js`), unless the
+  webmail's notification setting is off or the OS is known to block.
+- **Diagnostics.** A page shim records every Notification attempt (permission,
+  shown, failed, clicked, never the content) to `notifications.log` in the app's
+  logs folder, page warnings and errors go to `page-console.log`, and
+  Help > Send Test Notification posts a native notification and shows the state.
+
 ## About window
 
 `About Taifa Mail` (app menu on macOS, Help on Windows and Linux) opens

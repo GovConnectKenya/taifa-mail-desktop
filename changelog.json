@@ -8,7 +8,8 @@
     "added": [
       "A new About Taifa Mail window with the app and webmail versions, a Check for updates button, What's new, Help and the open source licences.",
       "Taifa Mail for Linux: an AppImage and a .deb package, for x64 and arm64. On Ubuntu 24.04 and later install the .deb: the AppImage cannot start its security sandbox there.",
-      "Quitting while a message is still sending now asks you first, so a message is never lost."
+      "Quitting while a message is still sending now asks you first, so a message is never lost.",
+      "Help, Send Test Notification: posts a test notification and shows what Taifa Mail knows about notification permission. Notification attempts are logged to a small file in the app's logs folder."
     ],
     "improved": [
       "The newest webmail is bundled, with the fixes for the composer, the thread view and the reader background.",
@@ -17,7 +18,8 @@
     ],
     "fixed": [
       "New mail notifications and the Dock or taskbar badge now follow the real permission state, and the webmail's notification settings show it. When your system has notifications turned off, the enable button takes you to the system settings.",
-      "New Message from the tray menu no longer reloads the window."
+      "New Message from the tray menu no longer reloads the window.",
+      "A new message could update the unread count without any notification. Taifa Mail now posts a simple unread notice itself when that happens and the window is not in front."
     ]
   },
   {

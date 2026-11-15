@@ -35,6 +35,9 @@ const {
 
 const LAUNCHED_AT = Date.now();
 
+// Test runs point the logs folder somewhere disposable.
+if (process.env.TAIFA_LOGS_DIR) app.setAppLogsPath(process.env.TAIFA_LOGS_DIR);
+
 // A packaged app never exposes the DevTools protocol. With it, any local
 // process could start the app with --remote-debugging-port and read the
 // signed-in session (cookies included) over a socket. The Electron fuses close
@@ -51,6 +54,8 @@ const { harden, installSessionHandlers } = require('./security');
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
 const { createNotificationState, detect: detectNotificationState, settingsTarget, linuxGuidance, permissionOverrideScript, createSettingsGate, DOCS_URL } = require('./notify-state');
+const { createFallback, fallbackBody } = require('./notify-fallback');
+const { formatLine, appendLine } = require('./notify-log');
 const { ABOUT_SIZE, aboutLink, chromiumLicencePath, buildAboutInfo } = require('./about');
 const { shouldReloadAfterFailedNavigation } = require('./route');
 const { handleWillPreventUnload } = require('./unload-guard');
@@ -218,8 +223,9 @@ function createWindow() {
   win.webContents.on('dom-ready', applyFocusShim);
   win.webContents.on('dom-ready', applyPermissionOverride);
   win.webContents.on('console-message', (event, ...rest) => {
-    const message = typeof event === 'object' && event && typeof event.message === 'string' ? event.message : rest[1];
-    if (message === FOCUS_MARK) showWindow();
+    const d = typeof event === 'object' && event && typeof event.message === 'string' ? event : { level: rest[0], message: rest[1] };
+    if (handlePageMarker(d.message)) return;
+    logPageConsole(d.level, d.message);
   });
   // A settings click is the only time the OS settings may open (settingsGate).
   win.webContents.on('input-event', (_e, input) => {
@@ -278,6 +284,7 @@ function createWindow() {
         // platform's notification service. Never set in normal use.
         trackNotification(new Notification({ title: 'Taifa Mail smoke test', body: 'notification reached the system' })).show();
       }
+      if (!appLoaded) fallback.markLoaded();
       appLoaded = true;
       if (pendingRoute) {
         const route = pendingRoute;
@@ -296,7 +303,9 @@ function createWindow() {
   win.webContents.on('page-title-updated', (_e, title) => {
     const n = parseUnread(title);
     if (n === unreadCount) return;
+    const prevUnread = unreadCount;
     unreadCount = n;
+    considerFallback(fallback.onUnread(prevUnread, n));
     badge.set(n);
     if (n > 0) scheduleBadgeProbe();
     if (tray && !tray.isDestroyed()) tray.setToolTip(unreadTooltip(''));
@@ -350,18 +359,40 @@ function showWindow() {
 // to the front. The shim only ever asks to be shown; a page that fakes the
 // marker can do no more than raise the window it already owns.
 const FOCUS_MARK = '\u0001taifa-focus-request';
-const FOCUS_SHIM_JS = `(() => {
+const NOTIFY_MARK = '\u0001taifa-notify:';
+// One page shim, two jobs, both reported through console markers (the page has
+// no bridge): window.focus() requests, and a record of every Notification the
+// page creates (attempted, shown, failed, clicked) with the permission it saw,
+// never its title or body. The Notification wrapper is a Proxy, so the static
+// permission getter and requestPermission() pass straight through.
+const PAGE_SHIM_JS = `(() => {
   try {
-    if (window.__taifaFocusShim) return;
-    window.__taifaFocusShim = true;
+    if (window.__taifaPageShim) return;
+    window.__taifaPageShim = true;
     const orig = window.focus.bind(window);
     window.focus = function () { try { console.debug(${JSON.stringify(FOCUS_MARK)}); } catch (_) {} return orig(); };
+    const N = window.Notification;
+    if (typeof N === 'function') {
+      const say = (kind) => { try { console.debug(${JSON.stringify(NOTIFY_MARK)} + kind + ':' + N.permission); } catch (_) {} };
+      window.Notification = new Proxy(N, {
+        construct(target, args) {
+          const n = Reflect.construct(target, args);
+          say('attempted');
+          try {
+            n.addEventListener('show', () => say('shown'));
+            n.addEventListener('error', () => say('failed'));
+            n.addEventListener('click', () => say('clicked'));
+          } catch (_) {}
+          return n;
+        },
+      });
+    }
   } catch (_) {}
 })()`;
 
 function applyFocusShim() {
   if (!win || win.isDestroyed() || showingOffline) return;
-  win.webContents.executeJavaScript(FOCUS_SHIM_JS).catch(() => {});
+  win.webContents.executeJavaScript(PAGE_SHIM_JS).catch(() => {});
 }
 
 // Page audio plays only while the window is in front. The webmail plays its own
@@ -369,10 +400,98 @@ function applyFocusShim() {
 // in the background, the OS also plays its notification sound for the banner:
 // two sounds. Muting the page while it is not in front leaves exactly one (the
 // OS one), and in front (no banner is shown then) the chime is the one.
+function windowInFront() {
+  return !!(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused());
+}
+
 function syncAudioMute() {
   if (!win || win.isDestroyed()) return;
-  const front = win.isVisible() && !win.isMinimized() && win.isFocused();
-  win.webContents.setAudioMuted(!front);
+  win.webContents.setAudioMuted(!windowInFront());
+}
+
+// -- notification diagnostics and the new-mail safety net ---------------------
+const logsDir = () => app.getPath('logs');
+const notifyLogFile = () => path.join(logsDir(), 'notifications.log');
+const pageLogFile = () => path.join(logsDir(), 'page-console.log');
+const fallback = createFallback();
+
+function logNotify(event, extra) {
+  appendLine(notifyLogFile(), formatLine({
+    event,
+    os: notifyState.snapshot().status,
+    osReason: notifyState.snapshot().reason,
+    front: windowInFront(),
+    unread: unreadCount,
+    ...extra,
+  }));
+}
+
+// The page's console: warnings and errors only, truncated, to a log file.
+function logPageConsole(level, message) {
+  if (level !== 'warning' && level !== 'error') return;
+  appendLine(pageLogFile(), formatLine({ level, msg: String(message).slice(0, 300) }));
+}
+
+function handlePageMarker(message) {
+  if (message === FOCUS_MARK) { showWindow(); return true; }
+  if (typeof message === 'string' && message.startsWith(NOTIFY_MARK)) {
+    const [kind, permission] = message.slice(NOTIFY_MARK.length).split(':');
+    if (kind === 'attempted') fallback.pageAttempt();
+    logNotify(`page-${kind}`, { permission });
+    return true;
+  }
+  return false;
+}
+
+// Called when the unread count in the title went up while the app was not in
+// front: waits a moment for the page's own notification, then posts a plain one
+// if the page stayed silent (see src/notify-fallback.js).
+function considerFallback(inc) {
+  if (!inc || windowInFront()) return;
+  setTimeout(async () => {
+    if (windowInFront() || !fallback.due(inc)) { logNotify('fallback-skipped', { reason: windowInFront() ? 'in-front' : 'page-notified' }); return; }
+    if (notifyState.snapshot().status === 'blocked') { logNotify('fallback-skipped', { reason: 'os-blocked' }); return; }
+    let pref = 'on';
+    try { pref = await win.webContents.executeJavaScript("localStorage.getItem('taifa_mb_notifications')"); } catch (_) { /* keep the default */ }
+    if (pref === 'off') { logNotify('fallback-skipped', { reason: 'pref-off' }); return; }
+    const n = trackNotification(new Notification({ title: 'Taifa Mail', body: fallbackBody(unreadCount) }));
+    n.on('click', () => showWindow());
+    n.on('show', () => logNotify('fallback-shown'));
+    n.on('failed', (_e, err) => logNotify('fallback-failed', { reason: err }));
+    logNotify('fallback-posted', { reason: 'page-silent' });
+    n.show();
+  }, 4000);
+}
+
+// Help > Send test notification: posts a native notification and says what the
+// app and the page believe about permission, so a silent failure can be told
+// apart from a switched-off one.
+async function sendTestNotification() {
+  const js = (code) => (win && !win.isDestroyed() ? win.webContents.executeJavaScript(code).catch(() => 'unavailable') : Promise.resolve('no window'));
+  const pagePermission = await js('typeof Notification === "undefined" ? "unsupported" : Notification.permission');
+  const pagePref = await js("localStorage.getItem('taifa_mb_notifications')");
+  const snap = notifyState.snapshot();
+  let outcome = 'no event within 3 seconds';
+  const done = new Promise((resolve) => {
+    const n = new Notification({ title: 'Taifa Mail test notification', body: 'If you can read this, notifications reach the system.' });
+    n.on('show', () => { outcome = 'shown'; resolve(); });
+    n.on('failed', (_e, err) => { outcome = `failed: ${err}`; resolve(); });
+    n.on('click', () => showWindow());
+    n.show();
+    setTimeout(resolve, 3000);
+  });
+  await done;
+  logNotify('test', { permission: pagePermission, outcome });
+  const lines = [
+    `Native notification: ${outcome}${process.platform === 'darwin' && outcome === 'shown' ? ' (macOS reports this even when notifications are switched off for the app)' : ''}`,
+    `Permission the webmail sees: ${pagePermission}`,
+    `Webmail notification setting: ${pagePref === null ? 'not set (on)' : pagePref}`,
+    `System state known to the app: ${snap.status}${snap.reason ? ` (${snap.reason})` : ''}`,
+    `Log: ${notifyLogFile()}`,
+  ];
+  dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, { type: 'info', title: 'Taifa Mail', message: 'Test notification sent', detail: lines.join('\n'), buttons: ['OK', 'Open notification settings'], defaultId: 0, cancelId: 0 })
+    .then(({ response }) => { if (response === 1) openNotificationHelp(); })
+    .catch(() => {});
 }
 
 // The updater's onState callback: keep the tooltip and the (live) popover in
@@ -510,6 +629,31 @@ function registerAboutIpc() {
   });
 }
 
+// Release smoke test hook (never set in normal use): TAIFA_SMOKE_DIAG=1 checks
+// the notification diagnostics and the new-mail safety net with the window not
+// in front: a page Notification is recorded (and suppresses the fallback), a
+// silent unread increase posts the fallback, and the log has one line each.
+const SMOKE_DIAG = process.env.TAIFA_SMOKE_DIAG === '1';
+async function smokeDiag() {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  await wait(3000);
+  win.hide();
+  await wait(500);
+  console.log(`[smoke] diag front=${windowInFront()} audioMuted=${win.webContents.isAudioMuted()}`);
+  await win.webContents.executeJavaScript("new Notification('t', { tag: 'diag' }); 1");
+  await wait(500);
+  considerFallback({ at: Date.now(), delta: 1 });
+  await wait(4800);
+  console.log('[smoke] diag after a page notification: see log for fallback-skipped');
+  notifyState.setOk();
+  considerFallback({ at: Date.now() + 10000, delta: 1 });
+  await wait(4800);
+  try { console.log('[smoke] diag log:\n' + require('fs').readFileSync(notifyLogFile(), 'utf8')); } catch (e) { console.log(`[smoke] diag no log ${e.message}`); }
+  console.log('[smoke] done');
+  isQuitting = true;
+  app.quit();
+}
+
 // Release smoke test hook (never set in normal use): TAIFA_SMOKE_PERM=1 forces
 // the OS-blocked state and reports what the page sees: Notification.permission
 // (must read 'default'), what requestPermission() resolves to (must be
@@ -565,6 +709,8 @@ async function smokeFocus() {
     setup();
     await wait(800);
     const before = state();
+    const vis = await win.webContents.executeJavaScript("JSON.stringify({ hidden: document.hidden, vs: document.visibilityState, hasFocus: document.hasFocus() })").catch(() => '?');
+    console.log(`[smoke] page view in '${name}': ${vis}`);
     // Same handler shape as the webmail's desktop-notify.ts: a Notification
     // whose onclick calls window.focus(). The click itself is dispatched from
     // script (an OS banner click cannot be driven from here).
@@ -1083,6 +1229,7 @@ function createAppMenu() {
         },
         { type: 'separator' },
         { label: 'Notification Settings...', click: () => openNotificationHelp() },
+        { label: 'Send Test Notification', click: () => sendTestNotification() },
         ...(isMac ? [] : [{ type: 'separator' }, { label: 'Check for Updates...', click: () => checkManual() }, { label: 'About Taifa Mail', click: () => showAbout() }]),
       ],
     },
@@ -1181,6 +1328,7 @@ app.whenReady().then(async () => {
   if (SMOKE_ABOUT) smokeAbout();
   if (SMOKE_FOCUS) smokeFocus();
   if (SMOKE_PERM) smokePerm();
+  if (SMOKE_DIAG) smokeDiag();
   if (!app.isPackaged && process.platform === 'darwin') app.dock.setIcon(brandingPath('icon.png'));
 
   // Follow the webmail's theme toggle and, for 'system', the OS.

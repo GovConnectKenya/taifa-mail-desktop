@@ -87,7 +87,9 @@ function checkLinuxNotificationService({ exec = execFile } = {}) {
 // One probe per launch, per platform. Windows has nothing to read ahead of
 // time, so it stays unknown until a 'failed' event.
 async function detect({ platform, execFileFn } = {}) {
-  if (platform === 'darwin') return { status: await checkMacAuthorization({ exec: execFileFn }), reason: 'macos-authorization' };
+  // The authorization line is logged when the app asks, once per launch, so
+  // look back to the start of this process rather than a fixed 15 minutes.
+  if (platform === 'darwin') return { status: await checkMacAuthorization({ exec: execFileFn, last: `${Math.ceil(process.uptime()) + 120}s` }), reason: 'macos-authorization' };
   if (platform === 'linux') return { status: await checkLinuxNotificationService({ exec: execFileFn }), reason: 'linux-no-notification-service' };
   return { status: 'unknown', reason: '' };
 }
