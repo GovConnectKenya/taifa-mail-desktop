@@ -14,6 +14,8 @@ alternative (bundling the frontend and pointing it at a remote API) would turn
 every request cross-origin and mean rebuilding all of that by hand. So the shell
 stays a shell: ship the window, let the web app be the web app.
 
+Keyboard shortcuts, and why Cmd+F finds in the open message: [docs/KEYBOARD.md](docs/KEYBOARD.md).
+
 ## Development
 
 ```bash

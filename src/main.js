@@ -20,6 +20,7 @@ const path = require('path');
 const {
   app,
   BrowserWindow,
+  WebContentsView,
   clipboard,
   Menu,
   Tray,
@@ -75,6 +76,7 @@ const { dropAlert } = require('./drop');
 const { testNotificationReport } = require('./notify-test');
 const { connectionView, createServerHealth } = require('./connection');
 const { linkStatusParts } = require('./link-status');
+const { createFinder } = require('./find');
 const prefs = require('./prefs');
 
 const PARTITION = 'persist:taifamail';
@@ -226,6 +228,9 @@ function isMailWindow(w) {
   return !!(w && !w.isDestroyed() && mailWindows.has(w));
 }
 
+// Edit > Find > Find in Message (find.js).
+const finder = createFinder({ WebContentsView, uiUrl, preload: path.join(__dirname, 'preload.js'), isMailWindow });
+
 // What every webmail window gets, primary or not.
 function wireMailWindow(w) {
   mailWindows.add(w);
@@ -287,6 +292,7 @@ function wireMailWindow(w) {
     if (!leave) isQuitting = false;
   });
 
+  w.on('close', () => finder.close(w, false));
   w.on('closed', () => {
     mailWindows.delete(w);
     pageStates.delete(wcId);
@@ -1497,6 +1503,9 @@ async function runMenuAction(id, info = {}) {
       return;
     }
     case 'print': printOpenConversation(w); return;
+    case 'find': surface(); if (!finder.open(w)) shell.beep(); return;
+    case 'find-next': finder.step(w, true); return;
+    case 'find-prev': finder.step(w, false); return;
     case 'search': {
       surface();
       const ok = await pageAction(w, 'search');
@@ -1725,6 +1734,11 @@ app.whenReady().then(async () => {
     }
   });
 
+  // The find bar's calls (find.js checks the sender is one of its bars).
+  for (const ch of ['find:query', 'find:step', 'find:close']) {
+    ipcMain.on(ch, (e, a, b) => finder.handle(ch, e.sender, ch === 'find:step' ? undefined : a, ch === 'find:step' ? a : b));
+  }
+
   // Retry now, from the offline page's button.
   ipcMain.on('shell:retry', () => {
     retryAttempt = 0;
@@ -1765,7 +1779,7 @@ app.whenReady().then(async () => {
   // Development runs only (never a packaged build): a handle for driving the
   // app from the Node inspector in manual and automated UI checks.
   if (!app.isPackaged) {
-    global.__taifaDev = { runMenuAction, pageAction, pageStates, mailWindows, openMailWindow, openRoute, notifier, notifyState, connectionState, connectionInfo, serverHealth, printConversation: (data) => printConversation({ BrowserWindow, session, app }, data, { toPdf: true }), getWin: () => win };
+    global.__taifaDev = { runMenuAction, pageAction, pageStates, mailWindows, openMailWindow, openRoute, notifier, notifyState, connectionState, connectionInfo, serverHealth, printConversation: (data) => printConversation({ BrowserWindow, session, app }, data, { toPdf: true }), getWin: () => win, finder };
   }
   // macOS: clicking a notification banner activates the app. If the window is
   // hidden or minimised at that moment, bring it back.

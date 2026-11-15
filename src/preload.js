@@ -27,6 +27,20 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const IS_UI = location.protocol === 'taifa-ui:' && location.hostname === 'app';
 const IS_ABOUT = IS_UI && location.pathname === '/about/about.html';
+const IS_FIND = IS_UI && location.pathname === '/find/find.html';
+
+// The find bar gets only what a find bar needs. Every call is a fixed channel;
+// main clips the text, checks the sender is one of its find bars and decides
+// which window is searched.
+if (IS_FIND) {
+  contextBridge.exposeInMainWorld('taifaFind', {
+    query: (text, forward) => ipcRenderer.send('find:query', String(text).slice(0, 500), forward !== false),
+    step: (forward) => ipcRenderer.send('find:step', forward !== false),
+    close: () => ipcRenderer.send('find:close'),
+    // Pushed by main on 'find:state' as { matches, active, text, focus }.
+    onState: (cb) => sub('find:state', cb),
+  });
+}
 
 // The About window gets its own, smaller bridge and not taifaShell: it has no
 // use for the tray or retry calls. Every method is a fixed channel. open() takes
@@ -44,7 +58,7 @@ if (IS_ABOUT) {
   });
 }
 
-if (IS_UI && !IS_ABOUT) {
+if (IS_UI && !IS_ABOUT && !IS_FIND) {
   contextBridge.exposeInMainWorld('taifaShell', {
     // -- offline page ----------------------------------------------------
     // Safe even in principle: it takes no arguments, and all it can do is ask

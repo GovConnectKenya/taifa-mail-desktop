@@ -63,9 +63,37 @@ test('no two visible items share an accelerator', () => {
   }
 });
 
-test('Cmd+F searches mail, Cmd+P prints, Cmd+Shift+N opens a window', () => {
+test('Cmd+F finds in the open message, else searches mail; Opt+Cmd+F always searches', () => {
+  const reading = build('darwin', page({ conversation: true }));
+  assert.equal(byId(reading, 'find').accelerator, 'CmdOrCtrl+F');
+  assert.equal(byId(reading, 'find').enabled, true);
+  assert.equal(byId(reading, 'search').accelerator, 'Alt+CmdOrCtrl+F');
+  assert.equal(byId(reading, 'find-next').accelerator, 'CmdOrCtrl+G');
+  assert.equal(byId(reading, 'find-prev').accelerator, 'CmdOrCtrl+Shift+G');
+  for (const p of [page(), page({ conversation: true, composer: true }), page({ conversation: true, modal: true })]) {
+    const tpl = build('darwin', p);
+    assert.equal(byId(tpl, 'search').accelerator, 'CmdOrCtrl+F');
+    assert.equal(byId(tpl, 'find').accelerator, undefined);
+    assert.equal(byId(tpl, 'find').enabled, false);
+    const alt = flatItems(tpl).find((i) => i.id === 'search' && i.visible === false);
+    assert.equal(alt.accelerator, 'Alt+CmdOrCtrl+F');
+  }
+  // Windows and Linux also get F3 / Shift+F3.
+  const win = flatItems(build('win32', page({ conversation: true }))).filter((i) => i.visible === false).map((i) => i.accelerator);
+  assert.ok(win.includes('F3') && win.includes('Shift+F3'));
+});
+
+test('no accelerator is bound twice, in any state', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    for (const p of [null, page(), page({ conversation: true }), page({ conversation: true, composer: true })]) {
+      const accs = flatItems(build(platform, p)).map((i) => i.accelerator).filter(Boolean);
+      assert.equal(new Set(accs).size, accs.length, `${platform} ${JSON.stringify(accs.filter((a, i) => accs.indexOf(a) !== i))}`);
+    }
+  }
+});
+
+test('Cmd+P prints, Cmd+Shift+N opens a window', () => {
   const tpl = build('darwin', page({ conversation: true }));
-  assert.equal(byId(tpl, 'search').accelerator, 'CmdOrCtrl+F');
   assert.equal(byId(tpl, 'print').accelerator, 'CmdOrCtrl+P');
   assert.equal(byId(tpl, 'new-window').accelerator, 'CmdOrCtrl+Shift+N');
   assert.equal(byId(tpl, 'new-message').accelerator, 'CmdOrCtrl+N');
