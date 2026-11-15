@@ -77,6 +77,7 @@ const { testNotificationReport } = require('./notify-test');
 const { connectionView, createServerHealth } = require('./connection');
 const { linkStatusParts } = require('./link-status');
 const { createFinder } = require('./find');
+const { MESSAGE_SIZE, isConversationRoute, messageWindowCss, shouldCloseOnNavigate, messageTitle } = require('./message-window');
 const prefs = require('./prefs');
 
 const PARTITION = 'persist:taifamail';
@@ -403,25 +404,47 @@ function createWindow() {
   loadApp();
 }
 
-// A second webmail window (File > New Window, or a conversation in its own
-// window). It closes for real, and it does not drive the badge or the offline
-// page: the primary window owns those.
+// A second webmail window: File > New Window (a full client), or a single
+// conversation in its own focused window (message-window.js). It closes for
+// real, and it does not drive the badge or the offline page: the primary
+// window owns those.
+const messageWindows = new WeakSet();
 function openMailWindow(route) {
   const anchor = BrowserWindow.getFocusedWindow() || win;
   const ab = anchor && !anchor.isDestroyed() ? anchor.getBounds() : null;
-  const size = route && /\/\d+/.test(route) ? { width: 980, height: 800 } : { width: 1200, height: 820 };
+  const message = isConversationRoute(route);
+  const size = message ? MESSAGE_SIZE : { width: 1200, height: 820 };
   const w = new BrowserWindow({
     ...size,
     ...(ab ? { x: ab.x + 28, y: ab.y + 28 } : {}),
-    minWidth: 720,
+    minWidth: message ? 520 : 720,
     minHeight: 520,
     show: false,
     backgroundColor: THEME_BG[currentTheme],
     icon: process.platform === 'linux' ? brandingPath('icon.png') : undefined,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 22 } : undefined,
+    trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 14 } : undefined,
+    title: message ? 'Taifa Mail' : undefined,
     webPreferences: mailWebPreferences(),
   });
+  if (message) {
+    messageWindows.add(w);
+    const wc = w.webContents;
+    // Reader only, styled before the page draws, so the full client never flashes.
+    wc.on('dom-ready', () => { wc.insertCSS(messageWindowCss(process.platform), { cssOrigin: 'user' }).catch(() => {}); });
+    // The title is the subject, not the page's "Inbox · Taifa Mail".
+    w.on('page-title-updated', (e) => e.preventDefault());
+    // A window for THIS conversation: when it goes away, so does the window.
+    let home = '';
+    wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
+      if (isMainFrame === false || !home) return;
+      if (shouldCloseOnNavigate(home, url) && !w.isDestroyed()) w.close();
+    });
+    wc.on('did-finish-load', () => {
+      home = wc.getURL();
+      if (process.platform !== 'darwin') w.setMenuBarVisibility(false);
+    });
+  }
   wireMailWindow(w);
   w.once('ready-to-show', () => {
     if (!w.isDestroyed()) {
@@ -443,6 +466,13 @@ function openMailWindow(route) {
   });
   w.loadURL(new URL(route || '/', APP_ORIGIN).toString());
   return w;
+}
+
+// A message window's title follows its conversation's subject.
+const SUBJECT_JS = "(() => { const h = document.querySelector('.tm-reader[data-open=\"1\"] h1'); return h ? h.textContent : ''; })()";
+function syncMessageTitle(w) {
+  if (!messageWindows.has(w) || w.isDestroyed()) return;
+  w.webContents.executeJavaScript(SUBJECT_JS, true).then((s) => { if (!w.isDestroyed() && s) w.setTitle(messageTitle(s)); }).catch(() => {});
 }
 
 // The webmail window an action applies to: the focused one, else the primary.
@@ -566,6 +596,7 @@ function handlePageMarker(w, message) {
     else notifier.post(m.data);
   } else if (m.type === 'state') {
     pageStates.set(w.webContents.id, normaliseState(m.data));
+    syncMessageTitle(w);
     scheduleMenuRefresh();
     if (w === win) {
       pushTrayState();
@@ -1454,8 +1485,13 @@ const folderHashes = { Inbox: '#INBOX' };
 
 const TYPING_PROBE = "(() => { const a = document.activeElement; const t = a && a.shadowRoot && a.shadowRoot.activeElement ? a.shadowRoot.activeElement : a; return !!(t && t !== document.body && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))); })()";
 
+// Actions about the mailbox as a whole (folders, search, settings, a new
+// message) go to the main window when a message window is in front.
+const MAILBOX_ACTIONS = new Set(['settings', 'new-message', 'search', 'sidebar', 'shortcuts', 'refresh']);
+
 async function runMenuAction(id, info = {}) {
-  const w = targetWindow();
+  let w = targetWindow();
+  if (w && messageWindows.has(w) && (MAILBOX_ACTIONS.has(id) || id.startsWith('folder:')) && win && !win.isDestroyed()) w = win;
   const surface = () => {
     if (!w) return;
     if (w === win) showWindow();
