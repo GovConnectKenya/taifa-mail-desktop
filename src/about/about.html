@@ -112,6 +112,7 @@
       /* Updates: one quiet status line over one compact button. */
       .update { margin-top: 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
       .status { min-height: 20px; margin: 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); text-align: center; }
+      .status[hidden] { display: none; }
       .status.ok { color: var(--success-ink); }
       .status.err { color: var(--danger); }
       .btn {
@@ -326,6 +327,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.</pre>
           var el = $('status');
           el.className = 'status' + (cls ? ' ' + cls : '');
           el.textContent = '';
+          // No text, no line: the button then sits right under the version line.
+          el.hidden = !text;
           if (cls) {
             var i = document.createElement('span');
             i.className = 'icon ' + (cls === 'ok' ? 'i-tick' : 'i-danger');
