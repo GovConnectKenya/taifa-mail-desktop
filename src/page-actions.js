@@ -89,8 +89,7 @@ async function pageAction(name, arg) {
       // focus in the search field so j and k work at once.
       const leaveSearch = () => {
         const clear = q('.tm-shell-search-clear');
-        if (!clear) return;
-        clear.click();
+        if (clear) clear.click();
         const a = document.activeElement;
         if (a && a.matches && a.matches('[data-search-input]') && typeof a.blur === 'function') a.blur();
       };
@@ -131,7 +130,10 @@ async function pageAction(name, arg) {
         if (item) {
           item.click();
           if (await waitFor(() => superseded() || !q('.tm-cross-head'), 1500) && !superseded()) leaveSearch();
-          if (await settled()) return location.hash.split('?')[0];
+          if (await settled()) {
+            leaveSearch();
+            return location.hash.split('?')[0];
+          }
           if (superseded()) return 'superseded';
         }
         leaveSearch();

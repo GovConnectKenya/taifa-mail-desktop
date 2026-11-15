@@ -71,6 +71,14 @@ test('Cmd+2 from a search in the Inbox lands on Sent with the search gone', asyn
   assert.equal(st.fieldText, false);
 });
 
+test('focus leaves the search field even when the rail row already cleared the query', async () => {
+  const { st } = fakePage({ folder: 'INBOX' });
+  global.document.activeElement = { matches: (s) => s === '[data-search-input]', blur() { st.blurred = true; } };
+  const r = await pageAction('folder', { name: 'Inbox', hash: '#INBOX' });
+  assert.equal(r, '#INBOX');
+  assert.equal(st.blurred, true);
+});
+
 test('a query left in the field alone is cleared too', async () => {
   const { st } = fakePage({ folder: 'INBOX', search: false, fieldText: true });
   const r = await pageAction('folder', { name: 'Inbox', hash: '#INBOX' });
