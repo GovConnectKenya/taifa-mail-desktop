@@ -9,7 +9,7 @@
 // Keyboard model, chosen to match Apple Mail and Outlook rather than a browser:
 // Cmd+R is Reply (never reload), Shift+Cmd+R Reply All, Shift+Cmd+F Forward,
 // Cmd+F finds in the open message (else searches mail; Opt+Cmd+F always
-// searches), Cmd+G finds the next match, Cmd+P prints the open conversation, Cmd+1..5 go to the
+// searches, and always shows), Cmd+G finds the next match, Cmd+P prints the open conversation, Cmd+1..5 go to the
 // standard folders. Reload lives under View > Developer with no shortcut.
 
 // ctx: {
@@ -79,8 +79,10 @@ function buildMenuTemplate(ctx, act) {
         label: 'Find',
         // Cmd+F follows what is on screen, as in Apple Mail: with a message
         // open (and no composer in front of it) it finds in that message;
-        // otherwise it searches mail. The menu shows Cmd+F on whichever item
-        // it will run right now. Opt+Cmd+F always searches mail.
+        // otherwise it searches mail. Search Mail always shows Opt+Cmd+F, so
+        // that shortcut is never hidden (round 3 found it only as a hidden
+        // duplicate while no message was open); plain Cmd+F then searches
+        // through a hidden item.
         submenu: [
           item('find', 'Find in Message…', msg ? 'CmdOrCtrl+F' : null, msg),
           item('find-next', 'Find Next', 'CmdOrCtrl+G', msg),
@@ -90,8 +92,8 @@ function buildMenuTemplate(ctx, act) {
             item('find-prev', 'Find Previous', 'Shift+F3', msg, { visible: false, acceleratorWorksWhenHidden: true }),
           ]),
           sep,
-          item('search', 'Search Mail', msg ? 'Alt+CmdOrCtrl+F' : 'CmdOrCtrl+F', ready && p.search),
-          ...(msg ? [] : [item('search', 'Search Mail', 'Alt+CmdOrCtrl+F', ready && p.search, { visible: false, acceleratorWorksWhenHidden: true })]),
+          item('search', 'Search Mail', 'Alt+CmdOrCtrl+F', ready && p.search),
+          ...(msg ? [] : [item('search', 'Search Mail', 'CmdOrCtrl+F', ready && p.search, { visible: false, acceleratorWorksWhenHidden: true })]),
         ],
       },
       {

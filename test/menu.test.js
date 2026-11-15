@@ -72,11 +72,15 @@ test('Cmd+F finds in the open message, else searches mail; Opt+Cmd+F always sear
   assert.equal(byId(reading, 'find-prev').accelerator, 'CmdOrCtrl+Shift+G');
   for (const p of [page(), page({ conversation: true, composer: true }), page({ conversation: true, modal: true })]) {
     const tpl = build('darwin', p);
-    assert.equal(byId(tpl, 'search').accelerator, 'CmdOrCtrl+F');
+    // The visible Search Mail always shows Opt+Cmd+F (round 3: it was only a
+    // hidden duplicate here); plain Cmd+F searches through a hidden item.
+    assert.equal(byId(tpl, 'search').accelerator, 'Alt+CmdOrCtrl+F');
+    assert.notEqual(byId(tpl, 'search').visible, false);
     assert.equal(byId(tpl, 'find').accelerator, undefined);
     assert.equal(byId(tpl, 'find').enabled, false);
-    const alt = flatItems(tpl).find((i) => i.id === 'search' && i.visible === false);
-    assert.equal(alt.accelerator, 'Alt+CmdOrCtrl+F');
+    const plain = flatItems(tpl).find((i) => i.id === 'search' && i.visible === false);
+    assert.equal(plain.accelerator, 'CmdOrCtrl+F');
+    assert.equal(plain.acceleratorWorksWhenHidden, true);
   }
   // Windows and Linux also get F3 / Shift+F3.
   const win = flatItems(build('win32', page({ conversation: true }))).filter((i) => i.visible === false).map((i) => i.accelerator);
