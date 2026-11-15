@@ -420,7 +420,7 @@ function openMailWindow(route) {
     ? placeMessageWindow({
         saved: prefs.get('messageWindowBounds') || null,
         displays: screen.getAllDisplays().map((d) => d.workArea),
-        open: [...messageWindows].filter((m) => !m.isDestroyed()).map((m) => m.getBounds()),
+        open: [...mailWindows].filter((m) => messageWindows.has(m) && !m.isDestroyed()).map((m) => m.getBounds()),
         anchor: ab,
       })
     : { width: 1200, height: 820, ...(ab ? { x: ab.x + 28, y: ab.y + 28 } : {}) };

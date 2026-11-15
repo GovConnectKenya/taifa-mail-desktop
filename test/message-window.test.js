@@ -63,3 +63,9 @@ test('newer and older are told apart from the page advancing by itself', () => {
   assert.ok(FOLLOW_JS.includes('isContentEditable'), 'j and k typed in a field do not count');
   assert.doesNotThrow(() => new Function(`return ${FOLLOW_CHECK_JS}`));
 });
+
+test('main lists open message windows from an iterable set (messageWindows is a WeakSet)', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  assert.ok(!/\[\.\.\.messageWindows\]/.test(src), 'a WeakSet cannot be spread');
+  assert.match(src, /\[\.\.\.mailWindows\]\.filter\(\(m\) => messageWindows\.has\(m\)/);
+});
