@@ -79,7 +79,26 @@ async function pageAction(name, arg) {
       // arg: { name, hash? }. hash is the folder's route as last seen, which
       // main remembers so another page can link straight to it.
       const label = arg.name;
-      if (label === 'Inbox') return go('/#INBOX') && '#INBOX';
+      // A search (or the Starred view) is showing: the cross-folder results,
+      // or a query in the search field. The title can still say "Inbox"
+      // then, so the title alone never means the folder is on screen.
+      const searching = () => !!(q('.tm-cross-head') || q('.tm-shell-search-clear'));
+      // Leave the search the way the user would: the rail row (the page's
+      // selectFolder closes the results and clears the query), then the
+      // field's own clear button for anything left, without keeping the
+      // focus in the search field so j and k work at once.
+      const leaveSearch = () => {
+        const clear = q('.tm-shell-search-clear');
+        if (!clear) return;
+        clear.click();
+        const a = document.activeElement;
+        if (a && a.matches && a.matches('[data-search-input]') && typeof a.blur === 'function') a.blur();
+      };
+      if (label === 'Inbox' && onMail() && !searching()) {
+        go('/#INBOX');
+        return '#INBOX';
+      }
+      if (label === 'Inbox' && !onMail()) return go('/#INBOX') && '#INBOX';
       // From another page: open the mail page, then let it settle (it applies
       // its own first route, and may auto-open a conversation) before acting.
       const quiet = async () => {
@@ -100,12 +119,25 @@ async function pageAction(name, arg) {
         await quiet();
         if (superseded()) return 'superseded';
       }
-      const arrived = () => document.title.replace(/^\(\d+\)\s*/, '').startsWith(label + ' ·');
+      const arrived = () => !searching() && document.title.replace(/^\(\d+\)\s*/, '').startsWith(label + ' ·');
       const settled = async () => {
         if (!(await waitFor(() => superseded() || arrived(), 1200)) || superseded()) return false;
         await new Promise((r) => setTimeout(r, 400));
         return !superseded() && arrived();
       };
+      if (searching()) {
+        // Always run the navigation: the rail row, whatever the title says.
+        const item = railItem(label);
+        if (item) {
+          item.click();
+          if (await waitFor(() => superseded() || !q('.tm-cross-head'), 1500) && !superseded()) leaveSearch();
+          if (await settled()) return location.hash.split('?')[0];
+          if (superseded()) return 'superseded';
+        }
+        leaveSearch();
+        if (await settled()) return location.hash.split('?')[0];
+        if (superseded()) return 'superseded';
+      }
       if (arg.hash && onMail()) {
         // The folder's route is known: open it directly, the way Inbox is.
         go('/' + arg.hash);
