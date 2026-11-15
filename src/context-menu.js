@@ -31,7 +31,8 @@ function linkKind(url) {
   return null;
 }
 
-// ctx: { platform, isDev }. act(id, arg) runs an action.
+// ctx: { platform, isDev, message: null | { canReplyAll, inWindow } } (message:
+// the click landed in the open conversation). act(id, arg) runs an action.
 function buildContextMenuTemplate(params, ctx, act) {
   const isMac = ctx.platform === 'darwin';
   const flags = params.editFlags || {};
@@ -88,6 +89,24 @@ function buildContextMenuTemplate(params, ctx, act) {
     ]);
   } else if (hasSel) {
     sections.push([{ role: 'copy', enabled: flags.canCopy !== false }]);
+  }
+
+  // In the open message (its text, or its HTML body) and not in a field: the
+  // message's own actions, as Apple Mail and Outlook offer on right-click.
+  // Before this, a right-click on message text with nothing selected showed no
+  // menu at all in a packaged build.
+  if (ctx.message && !params.isEditable) {
+    const m = ctx.message;
+    sections.push([
+      { label: 'Reply', click: click('menu', 'reply') },
+      { label: 'Reply All', enabled: !!m.canReplyAll, click: click('menu', 'reply-all') },
+      { label: 'Forward', click: click('menu', 'forward') },
+    ]);
+    sections.push([
+      { label: 'Find in Message…', click: click('menu', 'find') },
+      { label: 'Print…', click: click('menu', 'print') },
+      ...(m.inWindow ? [] : [{ label: 'Open in New Window', click: click('menu', 'open-window') }]),
+    ]);
   }
 
   if (ctx.isDev) sections.push([{ label: 'Inspect Element', click: click('inspect', { x: params.x, y: params.y }) }]);

@@ -80,3 +80,25 @@ test('spell languages follow the system where a dictionary exists', () => {
   assert.deepEqual(pickSpellLanguages([], []), ['en-GB', 'en-US']);
   assert.ok(pickSpellLanguages(['en-GB', 'en-US', 'fr', 'de'], avail).length <= 3);
 });
+
+test('right-click in the open message offers its actions, even with nothing selected', () => {
+  const acts = [];
+  const tpl = buildContextMenuTemplate({ x: 1, y: 1, editFlags: {} }, { platform: 'darwin', isDev: false, message: { canReplyAll: false, inWindow: false } }, (id, arg) => acts.push([id, arg]));
+  const labels = tpl.filter((i) => i.label).map((i) => i.label);
+  assert.deepEqual(labels, ['Reply', 'Reply All', 'Forward', 'Find in Message…', 'Print…', 'Open in New Window']);
+  assert.equal(tpl.find((i) => i.label === 'Reply All').enabled, false);
+  tpl.find((i) => i.label === 'Forward').click();
+  assert.deepEqual(acts, [['menu', 'forward']]);
+  const inWin = buildContextMenuTemplate({ editFlags: {} }, { platform: 'win32', message: { canReplyAll: true, inWindow: true } }, () => {});
+  assert.ok(!inWin.some((i) => i.label === 'Open in New Window'), 'not inside a message window');
+  // Outside the message, or in a field: unchanged.
+  assert.equal(buildContextMenuTemplate({ editFlags: {} }, { platform: 'darwin', message: null }, () => {}).length, 0);
+  assert.ok(!buildContextMenuTemplate({ isEditable: true, editFlags: {} }, { platform: 'darwin', message: { canReplyAll: true } }, () => {}).some((i) => i.label === 'Reply'));
+});
+
+test('a selection in the message keeps Copy and Look Up, then the message actions', () => {
+  const tpl = buildContextMenuTemplate({ selectionText: 'budget', editFlags: { canCopy: true } }, { platform: 'darwin', message: { canReplyAll: true } }, () => {});
+  const seq = tpl.map((i) => i.label || i.role || i.type);
+  assert.ok(seq.indexOf('copy') < seq.indexOf('Reply'));
+  assert.ok(seq[0].startsWith('Look Up'));
+});

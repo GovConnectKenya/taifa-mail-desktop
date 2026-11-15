@@ -1630,10 +1630,28 @@ async function printOpenConversation(w) {
 // Right-click menu (context-menu.js)
 // ---------------------------------------------------------------------------
 
-function showContextMenu(w, params) {
+// Did a right-click land in the open conversation? A message's HTML body is a
+// frame inside the reader; anything else is checked by its point.
+async function contextInMessage(w, params) {
+  const st = pageStates.get(w.webContents.id);
+  if (!st || !st.conversation || st.modal) return null;
+  const message = { canReplyAll: !!st.canReplyAll, inWindow: messageWindows.has(w) };
+  if (params.frame && params.frame !== w.webContents.mainFrame) return message;
+  const x = Math.round(Number(params.x) || 0);
+  const y = Math.round(Number(params.y) || 0);
+  const hit = await w.webContents
+    .executeJavaScript(`(() => { const e = document.elementFromPoint(${x}, ${y}); return !!(e && e.closest('.tm-reader[data-open="1"]') && !e.closest('.compose')); })()`, true)
+    .catch(() => false);
+  return hit ? message : null;
+}
+
+async function showContextMenu(w, params) {
   const wc = w.webContents;
-  const template = buildContextMenuTemplate(params, { platform: process.platform, isDev: !app.isPackaged }, (id, arg) => {
+  const message = await contextInMessage(w, params);
+  if (w.isDestroyed()) return;
+  const template = buildContextMenuTemplate(params, { platform: process.platform, isDev: !app.isPackaged, message }, (id, arg) => {
     switch (id) {
+      case 'menu': runMenuAction(String(arg)); break;
       case 'replace-misspelling': wc.replaceMisspelling(String(arg)); break;
       case 'add-to-dictionary': wc.session.addWordToSpellCheckerDictionary(String(arg)); break;
       case 'look-up': if (process.platform === 'darwin') wc.showDefinitionForSelection(); break;
