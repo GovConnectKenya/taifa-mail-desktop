@@ -11,8 +11,15 @@ const path = require('path');
 
 test('main.js imports every shell helper it calls', () => {
   const src = path.join(__dirname, '..', 'src');
-  // Comments removed, so prose like "the webmail load (...)" is not a call.
-  const main = fs.readFileSync(path.join(src, 'main.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+  // Comments and string contents removed, so prose like "failed to load (...)"
+  // is not a call.
+  const main = fs
+    .readFileSync(path.join(src, 'main.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
+    .replace(/`(?:\\.|[^`\\])*`/g, '``')
+    .replace(/'(?:\\.|[^'\\\n])*'/g, "''")
+    .replace(/"(?:\\.|[^"\\\n])*"/g, '""');
   const exported = new Map();
   for (const f of fs.readdirSync(src).filter((f) => f.endsWith('.js') && f !== 'main.js' && f !== 'preload.js')) {
     let mod;
