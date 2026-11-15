@@ -210,6 +210,22 @@ async function pageAction(name, arg) {
       return true;
     }
 
+    // Back to the list after Mark as Unread, as Gmail does: otherwise the
+    // conversation stays open and is, in effect, being read again. Waits
+    // until the page shows it as unread (its toolbar offers Mark as read),
+    // then presses the reader's own Back to list.
+    case 'back-after-unread': {
+      const r = await waitFor(() => {
+        const x = reader();
+        return x && x.querySelector('.tm-reader-tool[aria-label="Mark as read"]') ? x : null;
+      }, 1500);
+      if (!r) return false;
+      const b = r.querySelector('.tm-reader-back');
+      if (!b || b.disabled) return false;
+      b.click();
+      return true;
+    }
+
     case 'reply': {
       const r = reader();
       if (!r) return false;
@@ -476,6 +492,7 @@ const VALID = {
   compose: (a) => a === undefined || a === null,
   tool: (a) => TOOLS.includes(a),
   reply: (a) => REPLIES.includes(a),
+  'back-after-unread': (a) => a === undefined || a === null,
   refresh: () => true,
   reconnect: (a) => a === undefined || a === null,
   search: (a) => a === undefined || a === null || (typeof a === 'string' && a.length > 0 && a.length <= 200 && !/[\u0000-\u001f]/.test(a)),

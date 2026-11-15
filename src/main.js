@@ -1572,7 +1572,10 @@ async function runMenuAction(id, info = {}) {
         return;
       }
     }
-    await pageAction(w, 'tool', MESSAGE_TOOLS[id]);
+    const done = await pageAction(w, 'tool', MESSAGE_TOOLS[id]);
+    // Mark as Unread hands the conversation back to the list in the main
+    // window. A message window is for that one conversation, so it stays.
+    if (id === 'mark-unread' && done && !messageWindows.has(w)) await pageAction(w, 'back-after-unread');
     return;
   }
   if (REPLY_TEXT[id]) {
