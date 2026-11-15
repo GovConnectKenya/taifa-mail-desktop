@@ -235,6 +235,25 @@ function pageShim(cfg) {
     });
     setTimeout(() => report(true), 0);
 
+    // -- right-click on selected message text --------------------------------
+    // The reader opens its own menu on any right-click (Reply, Forward, Star,
+    // labels), which has no Copy, Look Up or Search Mail. On selected text
+    // those are what the user wants, as in Apple Mail and Outlook, so there
+    // the event is stopped before the page's handler (never cancelled), and
+    // the app's native menu shows: Look Up, Search Mail for, Copy, then the
+    // message's own actions. Without a selection the page's menu is unchanged.
+    window.addEventListener('contextmenu', (e) => {
+      try {
+        const t = e.target instanceof Element ? e.target : e.target && e.target.parentElement;
+        if (!t || !t.closest('.tm-reader[data-open="1"]') || t.closest('input, textarea, [contenteditable="true"], .compose')) return;
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !String(sel).trim()) return;
+        const r = sel.getRangeAt(0);
+        if (!r.intersectsNode(t)) return;
+        e.stopImmediatePropagation();
+      } catch (_) {}
+    }, true);
+
     // -- the link status bubble -----------------------------------------------
     // Where a hovered link goes, at the bottom-left of the window like a
     // browser's status bubble, so a link's real destination can be read before
