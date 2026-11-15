@@ -1,6 +1,7 @@
 'use strict';
 const { shell } = require('electron');
-const { ALLOWED_PERMISSIONS, isAllowedNav, isExternallyOpenable } = require('./config');
+const { APP_ORIGIN, ALLOWED_PERMISSIONS, isAllowedNav, isExternallyOpenable } = require('./config');
+const { conversationRouteFromUrl } = require('./route');
 const { permissionCheck, permissionRequest } = require('./notify-state');
 
 // Hands a URL to the OS, but only if config vouches for the scheme. Every
@@ -9,6 +10,12 @@ const { permissionCheck, permissionRequest } = require('./notify-state');
 function openExternally(url) {
   if (!isExternallyOpenable(url)) return;
   shell.openExternal(url).catch(() => { /* the OS had no handler; nothing to do */ });
+}
+
+// Set by main.js: opens a conversation route in a new app window.
+let openAppWindow = null;
+function setAppWindowOpener(fn) {
+  openAppWindow = typeof fn === 'function' ? fn : null;
 }
 
 // ---------- per-WebContents hardening ----------
@@ -27,7 +34,18 @@ function harden(wc) {
   // latter leaves the door open to any redirector.
   wc.on('will-redirect', guardNav);
 
-  wc.setWindowOpenHandler(({ url }) => {
+  wc.setWindowOpenHandler(({ url, disposition }) => {
+    // One exception, and it never returns 'allow' either: the webmail's own
+    // "Open in new window" (a script window.open with window features, so
+    // disposition 'new-window') on a conversation route of the webmail origin.
+    // Main makes that window itself, with this app's own webPreferences. A link
+    // in an email is an <a target=_blank> (disposition 'foreground-tab'), and
+    // email bodies run no script, so mail content cannot take this path.
+    const route = disposition === 'new-window' && openAppWindow ? conversationRouteFromUrl(url, APP_ORIGIN) : null;
+    if (route) {
+      openAppWindow(route);
+      return { action: 'deny' };
+    }
     openExternally(url);
     // ALWAYS deny. Never 'allow', under any circumstance.
     //
@@ -96,4 +114,4 @@ function installSessionHandlers(ses, notify) {
   ses.setDevicePermissionHandler(() => false);
 }
 
-module.exports = { harden, installSessionHandlers };
+module.exports = { harden, installSessionHandlers, openExternally, setAppWindowOpener };

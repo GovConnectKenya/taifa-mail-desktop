@@ -35,7 +35,7 @@ function restoreBounds(defaults) {
   // running, and is invisible. That reaches us as a "the app won't open" ticket
   // and is miserable to diagnose remotely. Dropping x/y lets Electron centre it.
   if (!intersectsSomeWorkArea({ x, y, width, height })) return centred;
-  return { x, y, width, height, isMaximized: !!saved.isMaximized };
+  return { x, y, width, height, isMaximized: !!saved.isMaximized, isFullScreen: !!saved.isFullScreen };
 }
 
 function track(win) {
@@ -47,7 +47,7 @@ function track(win) {
       // screen instead of back to the size the user actually chose.
       const b = win.getNormalBounds();
       fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
-      fs.writeFileSync(STATE_PATH, JSON.stringify({ ...b, isMaximized: win.isMaximized() }));
+      fs.writeFileSync(STATE_PATH, JSON.stringify({ ...b, isMaximized: win.isMaximized(), isFullScreen: win.isFullScreen() }));
     } catch (_) { /* a state file we cannot write is not worth a crash */ }
   };
   // resize and move fire continuously through a drag, so coalesce instead of
@@ -55,6 +55,8 @@ function track(win) {
   const queue = () => { clearTimeout(timer); timer = setTimeout(save, 500); };
   win.on('resize', queue);
   win.on('move', queue);
+  win.on('enter-full-screen', queue);
+  win.on('leave-full-screen', queue);
   // Save synchronously on close: a pending debounce would never fire once the
   // window is gone, losing the last move or resize. The window is not destroyed
   // yet at this point, so the bounds are still readable.
