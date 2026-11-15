@@ -61,6 +61,16 @@ async function pageAction(name, arg) {
       return n && n.textContent.trim() === label;
     });
 
+  // Navigation tickets. Cmd+4 then Cmd+1 in quick succession run two actions
+  // at once, and the older one's retry loop used to click its folder again
+  // after the newer one had landed. Each navigation takes a ticket on arrival
+  // (scripts start in the order main sent them), and an action whose ticket is
+  // no longer the latest stops before its next click: the last shortcut
+  // pressed always wins.
+  const navActions = { navigate: 1, folder: 1, compose: 1 };
+  const ticket = navActions[name] ? (window.__taifaNavTicket = (window.__taifaNavTicket || 0) + 1) : 0;
+  const superseded = () => ticket !== window.__taifaNavTicket;
+
   switch (name) {
     case 'navigate':
       return go(String(arg));
@@ -78,6 +88,7 @@ async function pageAction(name, arg) {
         const t0 = Date.now();
         while (Date.now() - t0 < 4000) {
           await new Promise((r) => setTimeout(r, 100));
+          if (superseded()) return;
           if (location.hash !== h) {
             h = location.hash;
             since = Date.now();
@@ -87,22 +98,30 @@ async function pageAction(name, arg) {
       if (!onMail()) {
         go(arg.hash ? '/' + arg.hash : '/#INBOX');
         await quiet();
+        if (superseded()) return 'superseded';
       }
       const arrived = () => document.title.replace(/^\(\d+\)\s*/, '').startsWith(label + ' ·');
       const settled = async () => {
-        if (!(await waitFor(arrived, 1200))) return false;
+        if (!(await waitFor(() => superseded() || arrived(), 1200)) || superseded()) return false;
         await new Promise((r) => setTimeout(r, 400));
-        return arrived();
+        return !superseded() && arrived();
       };
-      if (arg.hash && (await settled())) return location.hash.split('?')[0];
+      if (arg.hash && onMail()) {
+        // The folder's route is known: open it directly, the way Inbox is.
+        go('/' + arg.hash);
+        if (await settled()) return location.hash.split('?')[0];
+        if (superseded()) return 'superseded';
+      }
       // The page titles itself after the open folder ("Sent · Taifa Mail").
       // Coming from another page, its own first route (#INBOX) can land after
       // the click, so the click is repeated until the folder stays open.
       for (let i = 0; i < 4; i += 1) {
-        const item = await waitFor(() => onMail() && railItem(label), 5000);
+        const item = await waitFor(() => superseded() || (onMail() && railItem(label)), 5000);
+        if (superseded()) return 'superseded';
         if (!item) return false;
         item.click();
         if (await settled()) return location.hash.split('?')[0];
+        if (superseded()) return 'superseded';
       }
       return arrived() ? location.hash.split('?')[0] : false;
     }
