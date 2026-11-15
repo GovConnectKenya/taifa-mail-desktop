@@ -5,6 +5,7 @@
 // src/about/about.html, served from taifa-ui://app/about/about.html.
 
 const path = require('path');
+const { APP_ORIGIN } = require('./config');
 
 // Two columns: the illustration panel and the details (4px grid).
 const ABOUT_SIZE = Object.freeze({ width: 720, height: 440 });
@@ -17,7 +18,8 @@ const ABOUT_LINKS = Object.freeze({
   // Help > Taifa Mail Help already opens), so Support goes there.
   help: { url: 'https://govconnect.ke/docs' },
   rcfi: { url: 'https://rcfi.co.ke' },
-  webmail: { url: 'https://mail.taifa.go.ke' },
+  // The host the app itself talks to (round 3 found mail.taifa.go.ke here).
+  webmail: { url: APP_ORIGIN },
   'chromium-licences': { file: 'LICENSES.chromium.html' },
 });
 
@@ -41,6 +43,7 @@ function buildAboutInfo({ platform, appVersion, bundle, update, now = Date.now()
   return {
     platform,
     appVersion,
+    webmailHost: new URL(APP_ORIGIN).host,
     webmailVersion: bundle && bundle.webmail ? String(bundle.webmail) : '',
     webmailCommit: bundle && bundle.commit ? String(bundle.commit).slice(0, 9) : '',
     update: update

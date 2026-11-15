@@ -258,7 +258,7 @@
             </div>
             <div>
               <button class="link" id="site-rcfi">rcfi.co.ke</button><span class="sep" aria-hidden="true">&middot;</span>
-              <button class="link" id="site-webmail">mail.taifa.go.ke</button>
+              <button class="link" id="site-webmail">mail.govconnect.ke</button>
             </div>
           </nav>
 
@@ -461,6 +461,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.</pre>
           var names = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' };
           if (names[info.platform]) $('caption').textContent = 'Taifa Mail for ' + names[info.platform];
           $('v-app').textContent = info.appVersion;
+          if (typeof info.webmailHost === 'string' && /^[a-z0-9.-]{1,253}(:\d{1,5})?$/i.test(info.webmailHost)) $('site-webmail').textContent = info.webmailHost;
           $('v-web').textContent = '';
           if (info.webmailVersion) {
             $('v-web').appendChild(document.createTextNode(info.webmailVersion));
