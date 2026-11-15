@@ -1,6 +1,7 @@
 'use strict';
 const { shell } = require('electron');
 const { ALLOWED_PERMISSIONS, isAllowedNav, isExternallyOpenable } = require('./config');
+const { permissionCheck, permissionRequest } = require('./notify-state');
 
 // Hands a URL to the OS, but only if config vouches for the scheme. Every
 // openExternal in this app goes through here: shell.openExternal on an
@@ -48,7 +49,9 @@ function harden(wc) {
 }
 
 // ---------- per-Session handlers ----------
-function installSessionHandlers(ses) {
+// `notify` is { snapshot(), onBlockedRequest(), onFirstRequest?() }: the true OS notification state,
+// and what to do when the webmail's enable action reaches a blocked OS.
+function installSessionHandlers(ses, notify) {
   // BOTH permission handlers are required, and they are not redundant.
   // Notification.requestPermission() (the async prompt) routes through the
   // REQUEST handler, while Notification.permission (the sync getter) routes
@@ -59,21 +62,30 @@ function installSessionHandlers(ses) {
   // Both are deny-by-default via the ALLOWED_PERMISSIONS allowlist, so any
   // permission Chromium adds in a future Electron bump is denied automatically
   // rather than inherited.
-  ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+  ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     // The requesting frame is not always the top-level document (email bodies
     // render in an iframe), so prefer the URL Electron attributes the request to
     // and fall back to the WebContents URL only when it gives us nothing.
     const url = details?.requestingUrl || wc.getURL();
-    if (!isAllowedNav(url)) return callback(false);
-    callback(ALLOWED_PERMISSIONS.has(permission));
+    // The first notification request re-reads the OS state: the launch-time
+    // probe can run before macOS has logged its authorization verdict.
+    if (permission === 'notifications' && notify.onFirstRequest) {
+      try { await notify.onFirstRequest(); } catch (_) { /* keep the last known state */ }
+    }
+    const r = permissionRequest({ permission, url, allowlist: ALLOWED_PERMISSIONS, isAllowedOrigin: isAllowedNav, snapshot: notify.snapshot() });
+    // Open the OS settings when blocked, and answer denied either way.
+    if (r.openSettings) notify.onBlockedRequest(wc);
+    callback(r.grant);
   });
 
   // requestingOrigin is compared as a parsed origin, not as a string: Electron
   // may hand it over as a URL with a trailing slash, and a literal comparison
   // then denies every check, so Notification.permission reads 'denied' and the
-  // webmail never shows a new-mail notification.
+  // webmail never shows a new-mail notification. For 'notifications' the answer
+  // also follows the TRUE OS state, so the webmail's own permission UI shows a
+  // blocked OS exactly as it shows a blocked browser.
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
-    isAllowedNav(requestingOrigin) && ALLOWED_PERMISSIONS.has(permission));
+    permissionCheck({ permission, origin: requestingOrigin, allowlist: ALLOWED_PERMISSIONS, isAllowedOrigin: isAllowedNav, snapshot: notify.snapshot() }));
 
   // No HID, USB, or serial. A mail client has no business enumerating hardware,
   // and this one line keeps a compromised page from trying.

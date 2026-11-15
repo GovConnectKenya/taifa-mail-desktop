@@ -102,7 +102,11 @@ jobs:
           - os: windows-latest
             args: '--win'
           - os: ubuntu-latest
-            args: '--linux'
+            # --config.productName=TaifaMail only changes the install folder,
+            # /opt/TaifaMail instead of /opt/Taifa Mail: the setuid chrome-sandbox
+            # helper cannot be launched from a path with a space in it ("failed
+            # to execvp: /opt/Taifa"), which breaks the sandbox on every deb.
+            args: '--linux --config.productName=TaifaMail'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +161,11 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: node scripts/set-min-macos.mjs
 
+      # electron-builder builds the .rpm with fpm, which needs rpmbuild.
+      - name: Install rpm tooling (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
       - name: Build and package (Windows / Linux)
         if: matrix.os != 'macos-latest'
         run: npx electron-builder ${{ matrix.args }} --publish never
@@ -187,7 +196,6 @@ jobs:
       # are byte-identical copies and are NOT listed in latest*.yml: the
       # updater only ever reads the versioned files.
       - name: Add version-less download aliases
-        if: matrix.os != 'ubuntu-latest'
         shell: bash
         run: |
           V=$(node -p "require('./package.json').version")
@@ -197,6 +205,18 @@ jobs:
           alias_copy "TaifaMail-$V-x64.dmg" TaifaMail-mac-x64.dmg
           alias_copy "TaifaMail-Setup-$V.exe" TaifaMail-Setup-windows-x64.exe
           alias_copy "TaifaMail-Setup-$V-arm64.exe" TaifaMail-Setup-windows-arm64.exe
+          # Linux: electron-builder names the arch per package format (x64 or
+          # x86_64 or amd64, arm64 or aarch64), the alias is always x64 or arm64.
+          for f in TaifaMail-$V-linux-*.AppImage TaifaMail-$V-linux-*.deb TaifaMail-$V-linux-*.rpm; do
+            [ -f "$f" ] || continue
+            ext="${f##*.}"
+            case "$f" in
+              *x64*|*x86_64*|*amd64*) a=x64 ;;
+              *arm64*|*aarch64*) a=arm64 ;;
+              *) continue ;;
+            esac
+            alias_copy "$f" "TaifaMail-linux-$a.$ext"
+          done
 
       # We build with --publish never and upload explicitly: electron-builder's
       # own publisher races across the three runners and can clobber latest*.yml.
@@ -213,6 +233,7 @@ jobs:
             release/*.exe
             release/*.AppImage
             release/*.deb
+            release/*.rpm
             release/*.blockmap
             release/latest*.yml
           fail_on_unmatched_files: false

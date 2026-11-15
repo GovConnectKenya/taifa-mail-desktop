@@ -21,7 +21,10 @@
 //   OnlyLoadAppFromAsar on: only app.asar is loaded, never a loose app/ folder
 //     dropped next to it.
 //   GrantFileProtocolExtraPrivileges off: file:// pages get ordinary browser
-//     privileges. Our own file:// pages (offline, tray popover) need nothing more.
+//     privileges. This also removes file:// reads from inside app.asar, so our
+//     own pages (offline, tray popover) load through the taifa-ui:// scheme
+//     (src/ui-scheme.js), never file://: loadFile() fails with
+//     ERR_FILE_NOT_FOUND once this fuse is off.
 //   LoadBrowserProcessSpecificV8Snapshot: left at Electron's default (off).
 //
 //   EnableCookieEncryption on: cookie values are encrypted at rest with a key

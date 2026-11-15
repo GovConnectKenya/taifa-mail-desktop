@@ -129,7 +129,8 @@ Two further benefits of the real origin:
   `ELECTRON_RUN_AS_NODE`, no `NODE_OPTIONS`, no `--inspect`, the app loads only
   from its asar, the asar is checked against the hash sealed in the signed
   Info.plist (macOS; electron-builder 24 cannot embed it on Windows), and
-  file:// gets no extra privileges. Cookies are encrypted at rest (Keychain on
+  file:// gets no extra privileges (so the tray popover and offline page load
+  through the taifa-ui:// scheme, src/ui-scheme.js, not from file://). Cookies are encrypted at rest (Keychain on
   macOS, DPAPI on Windows); existing plaintext cookies stay readable, so the
   0.1.x session carries over (tested as a profile upgrade). Packaged builds also
   ignore `--remote-debugging-port` / `--remote-debugging-pipe`, which would
@@ -199,6 +200,51 @@ safety valves:
 Follow-up, backend: send that header when an API change breaks older webmail
 builds. Nothing sends it yet; the client side is in `src/bundle.js` and
 `src/main.js` (`fallBackToLiveSite`).
+
+## Notifications, focus and sound (0.2.1)
+
+All of this lives in the desktop app; none of it needs a webmail change.
+
+- **Enable path.** The webmail's `ensureNotificationPermission()` returns early
+  on `denied`, so a blocked OS used to leave its enable button doing nothing.
+  Electron's permission check handler can only answer allowed or not, and the
+  page then reads `denied`. So while the OS blocks notifications the app
+  overrides `Notification.permission` in the page to read `default`
+  (`permissionOverrideScript` in `src/notify-state.js`, applied on every
+  document and whenever the state flips). The enable button then calls
+  `requestPermission()`, the request handler answers `denied` and opens the OS
+  settings, at most once per click and not more than every 15 seconds
+  (`createSettingsGate`). A request with no click behind it opens nothing.
+- **macOS state.** The authorization verdict is re-read on the first
+  notification request and four seconds after the first unread badge.
+- **Clicking a notification.** A renderer `window.focus()` reaches the browser
+  process as nothing in Electron 45 (measured: no event, the window stays
+  hidden, minimised or behind). The app wraps `window.focus()` in the page with
+  a shim that reports the call as a console marker, and `showWindow()` then
+  unhides the app (macOS `app.show()`), restores, shows and focuses. On macOS
+  `did-become-active` covers a banner click as well.
+- **Sound.** The page is muted whenever the window is not visible, focused and
+  not minimised, so a background arrival makes the OS notification sound and not
+  also the webmail's chime. In front, no banner is shown and the chime plays.
+
+- **Silent new mail.** The webmail notifies only when the websocket event
+  carries the message envelope, which the backend attaches best-effort
+  (`backend/app/api/inbound.py`); a hint-only event updates the list and the
+  title count but posts nothing. When the title count rises while the window is
+  not in front and the page created no Notification around then, the app posts a
+  plain "N unread messages" notice itself (`src/notify-fallback.js`), unless the
+  webmail's notification setting is off or the OS is known to block.
+- **Diagnostics.** A page shim records every Notification attempt (permission,
+  shown, failed, clicked, never the content) to `notifications.log` in the app's
+  logs folder, page warnings and errors go to `page-console.log`, and
+  Help > Send Test Notification posts a native notification and shows the state.
+
+## About window
+
+`About Taifa Mail` (app menu on macOS, Help on Windows and Linux) opens
+`src/about/about.html` through `taifa-ui://`. It has its own bridge
+(`window.taifaAbout`, `src/preload.js`), gated on that page. `open()` takes a key
+from a fixed set (`src/about.js`), never a URL.
 
 ## Known limits
 

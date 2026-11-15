@@ -380,6 +380,8 @@ and always get the newest build:
 | `TaifaMail-mac-x64.dmg` | `TaifaMail-<version>-x64.dmg` |
 | `TaifaMail-Setup-windows-x64.exe` | `TaifaMail-Setup-<version>.exe` |
 | `TaifaMail-Setup-windows-arm64.exe` | `TaifaMail-Setup-<version>-arm64.exe` |
+| `TaifaMail-linux-x64.AppImage`, `.deb`, `.rpm` | `TaifaMail-<version>-linux-<x86_64 or amd64>.<ext>` |
+| `TaifaMail-linux-arm64.AppImage`, `.deb`, `.rpm` | `TaifaMail-<version>-linux-<arm64 or aarch64>.<ext>` |
 
 release.yml makes them in its "Add version-less download aliases" step. They
 are never listed in `latest-mac.yml` or `latest.yml`; the updater only reads
@@ -419,5 +421,19 @@ installed copy quietly stops receiving updates.
 - macOS auto-**install** requires a signed and notarized build. The check and the
   download work fine unsigned, but `quitAndInstall` on an unsigned mac build is
   blocked by Gatekeeper: the update downloads and then never applies.
+- **Linux: recommend the .deb on Ubuntu 24.04 and later.** AppArmor blocks
+  unprivileged user namespaces there, so the AppImage's Chromium sandbox cannot
+  start, and we never ship `--no-sandbox`. The .deb installs a setuid
+  `chrome-sandbox` and works. The AppImage stays for other distributions, and
+  the release notes and the webmail's download section say which to pick. The
+  smoke workflow launches the .deb, without `--no-sandbox`.
+- **The Linux packages install to `/opt/TaifaMail`, not `/opt/Taifa Mail`.** The
+  Linux build passes `--config.productName=TaifaMail` (release.yml). Chromium
+  launches the setuid `chrome-sandbox` helper through a command line that splits
+  on spaces, so with a space in the install path the sandbox cannot start (the
+  zygote dies with "failed to execvp: /opt/Taifa"). Measured on Ubuntu 24.04
+  arm64. The app name, user data folder and window title are unchanged.
+- **rpm targets Fedora and RHEL**, with boolean alternatives for the openSUSE
+  library names. It needs rpmbuild, which does not run on macOS.
 - Windows and Linux builds are unsigned. Windows SmartScreen will warn on first
   run until we buy a code-signing certificate.

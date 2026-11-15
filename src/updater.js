@@ -170,7 +170,9 @@ function initUpdater(opts) {
 }
 
 // Tray menu and Help > Check for Updates.
-async function checkManual() {
+// opts.quiet: the About window asked, and shows the result inline, so a failed
+// check must not also raise the error dialog.
+async function checkManual(opts) {
   if (!app.isPackaged) {
     setState({ state: 'dev', version: app.getVersion() });
     return;
@@ -184,7 +186,7 @@ async function checkManual() {
     return;
   }
   wireEvents();
-  manualCheck = true;
+  manualCheck = !(opts && opts.quiet);
   await check();
 }
 

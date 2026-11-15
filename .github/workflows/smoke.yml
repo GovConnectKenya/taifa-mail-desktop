@@ -16,7 +16,7 @@ permissions:
 
 env:
   BASE: https://github.com/GovConnectKenya/taifa-mail-desktop/releases/latest/download
-  EXPECT_VERSION: '0.2.0'
+  EXPECT_VERSION: '0.2.1'
 
 jobs:
   windows:
@@ -280,3 +280,110 @@ jobs:
           sleep 3
           pkill -f 'Taifa Mail.app/Contents/MacOS/Taifa Mail' || true
           echo "quit"
+
+  linux:
+    name: Linux x64 AppImage and deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Install the tools the check needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xdotool x11-utils imagemagick dunst dbus-x11 libnotify-bin libfuse2t64 || sudo apt-get install -y xvfb xdotool x11-utils imagemagick dunst dbus-x11 libnotify-bin libfuse2
+
+      - name: Download the AppImage and deb, verify the AppImage sha512
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dl"
+          curl -fsSL -o "$RUNNER_TEMP/dl/TaifaMail-linux-x64.AppImage" "$BASE/TaifaMail-linux-x64.AppImage"
+          curl -fsSL -o "$RUNNER_TEMP/dl/TaifaMail-linux-x64.deb" "$BASE/TaifaMail-linux-x64.deb"
+          curl -fsSL -o "$RUNNER_TEMP/dl/latest-linux.yml" "$BASE/latest-linux.yml"
+          grep -q "^version: $EXPECT_VERSION\$" "$RUNNER_TEMP/dl/latest-linux.yml" || { echo "latest-linux.yml is not version $EXPECT_VERSION"; exit 1; }
+          want=$(awk -v u="TaifaMail-$EXPECT_VERSION-linux-x86_64.AppImage" '$1=="-" && $2=="url:" {hit=($3==u)} hit && $1=="sha512:" {print $2; exit}' "$RUNNER_TEMP/dl/latest-linux.yml")
+          got=$(openssl dgst -sha512 -binary "$RUNNER_TEMP/dl/TaifaMail-linux-x64.AppImage" | base64 -w0)
+          echo "want $want"; echo "got  $got"
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "CHECK FAIL sha512 mismatch (check the url name in latest-linux.yml)"; exit 1; }
+          echo "CHECK PASS sha512 matches latest-linux.yml"
+
+      - name: Check the deb metadata, desktop entry and mailto handler
+        run: |
+          set -euo pipefail
+          dpkg-deb -I "$RUNNER_TEMP/dl/TaifaMail-linux-x64.deb" | tee "$RUNNER_TEMP/deb-info.txt"
+          grep -q "Version: $EXPECT_VERSION" "$RUNNER_TEMP/deb-info.txt"
+          dpkg-deb -x "$RUNNER_TEMP/dl/TaifaMail-linux-x64.deb" "$RUNNER_TEMP/deb"
+          D=$(find "$RUNNER_TEMP/deb/usr/share/applications" -name '*.desktop' | head -1)
+          cat "$D"
+          grep -q 'x-scheme-handler/mailto' "$D" || { echo "CHECK FAIL no mailto MimeType"; exit 1; }
+          grep -q '^Categories=.*Email' "$D" || { echo "CHECK FAIL no Email category"; exit 1; }
+          grep -q '^StartupWMClass=' "$D" || { echo "CHECK FAIL no StartupWMClass"; exit 1; }
+          ls "$RUNNER_TEMP"/deb/usr/share/icons/hicolor/*/apps/ | head -20
+          echo "CHECK PASS desktop entry has mailto, Email category and StartupWMClass"
+
+      - name: Start Xvfb, a session bus and a notification daemon (dunst)
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1280x800x24 &
+          sleep 2
+          cat > "$RUNNER_TEMP/session.sh" <<'EOS'
+          export DISPLAY=:99
+          eval "$(dbus-launch --sh-syntax)"
+          echo "export DBUS_SESSION_BUS_ADDRESS='$DBUS_SESSION_BUS_ADDRESS'" > "$RUNNER_TEMP/dbus.env"
+          dunst &
+          sleep 2
+          notify-send "daemon check" "hello" 
+          sleep 1
+          dunstctl history | grep -q 'daemon check' && echo "CHECK PASS dunst receives notifications"
+          sleep 600
+          EOS
+          RUNNER_TEMP="$RUNNER_TEMP" nohup bash "$RUNNER_TEMP/session.sh" > "$RUNNER_TEMP/session.log" 2>&1 &
+          sleep 8
+          cat "$RUNNER_TEMP/session.log"
+          grep -q 'CHECK PASS dunst' "$RUNNER_TEMP/session.log" || { echo "CHECK FAIL dunst did not start"; exit 1; }
+
+      - name: Install the deb and launch it (no --no-sandbox) until the sign-in window shows
+        run: |
+          set -uo pipefail
+          export DISPLAY=:99
+          . "$RUNNER_TEMP/dbus.env"
+          # The AppImage cannot run its Chromium sandbox on Ubuntu 24.04 and later
+          # (AppArmor blocks unprivileged user namespaces), and we never ship
+          # --no-sandbox. The deb installs a setuid chrome-sandbox, so it is the
+          # package that is launched here, with the sandbox on.
+          sudo apt-get install -y "$RUNNER_TEMP/dl/TaifaMail-linux-x64.deb"
+          ls -l /opt/TaifaMail/chrome-sandbox
+          TAIFA_SMOKE_NOTIFY=1 nohup taifa-mail > "$RUNNER_TEMP/app.log" 2>&1 &
+          expected="Sign in · Taifa Mail"
+          title=""
+          for i in $(seq 1 90); do
+            title=$(xdotool search --name 'Taifa Mail' getwindowname %@ 2>/dev/null | head -1)
+            [ "$title" = "$expected" ] && break
+            sleep 1
+          done
+          echo "final window title: [$title]"
+          [ "$title" = "$expected" ] || { tail -40 "$RUNNER_TEMP/app.log"; echo "CHECK FAIL window title"; exit 1; }
+          echo "CHECK PASS window titled '$expected'"
+          xprop -root _NET_ACTIVE_WINDOW | head -1
+          for w in $(xdotool search --name 'Taifa Mail'); do xprop -id "$w" WM_CLASS; done
+          sleep 5
+          mkdir -p shots
+          import -window root shots/linux-signin.png
+          [ -s shots/linux-signin.png ] && echo "CHECK PASS screenshot saved"
+
+      - name: The app's own notification reached the daemon
+        run: |
+          set -uo pipefail
+          export DISPLAY=:99
+          . "$RUNNER_TEMP/dbus.env"
+          for i in $(seq 1 20); do
+            dunstctl history | grep -q 'Taifa Mail smoke test' && { echo "CHECK PASS the app posted a notification through org.freedesktop.Notifications"; exit 0; }
+            sleep 1
+          done
+          dunstctl history | head -40
+          echo "CHECK FAIL no notification from the app reached dunst"; exit 1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-screenshot
+          path: shots/*.png
+          if-no-files-found: warn
