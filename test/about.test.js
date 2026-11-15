@@ -16,7 +16,7 @@ test('aboutLink accepts only the fixed keys', () => {
   assert.ok(aboutLink('help').url.startsWith('https://'));
   assert.equal(aboutLink('rcfi').url, 'https://rcfi.co.ke');
   // Round 3: the link named mail.taifa.go.ke while the app talks to mail.govconnect.ke.
-  assert.equal(aboutLink('webmail').url, require('../src/config').APP_ORIGIN);
+  assert.equal(aboutLink('webmail').url, 'https://mail.taifa.go.ke');
   assert.equal(aboutLink('chromium-licences').file, 'LICENSES.chromium.html');
   for (const bad of ['', 'https://evil.example', '../x', 'constructor', '__proto__', 'toString', undefined, null, 5]) {
     assert.equal(aboutLink(bad), null, String(bad));
@@ -63,11 +63,12 @@ test('the About page references only allowlisted taifa-ui assets', () => {
   for (const r of refs) assert.ok(Object.prototype.hasOwnProperty.call(PAGES, r), r);
 });
 
-test('the About page and info name the host the app talks to, not mail.taifa.go.ke', () => {
+test('the About page and info name the public webmail address, mail.taifa.go.ke (owner decision)', () => {
   const fs = require('fs');
   const path = require('path');
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'about', 'about.html'), 'utf8');
-  assert.ok(!html.includes('taifa.go.ke'));
+  assert.ok(html.includes('>mail.taifa.go.ke<'));
+  assert.ok(!html.includes('>mail.govconnect.ke<'));
   const i = buildAboutInfo({ platform: 'darwin', appVersion: '0.2.2', bundle: null, update: null });
-  assert.equal(i.webmailHost, new URL(require('../src/config').APP_ORIGIN).host);
+  assert.equal(i.webmailHost, 'mail.taifa.go.ke');
 });
