@@ -350,7 +350,7 @@ jobs:
           # --no-sandbox. The deb installs a setuid chrome-sandbox, so it is the
           # package that is launched here, with the sandbox on.
           sudo apt-get install -y "$RUNNER_TEMP/dl/TaifaMail-linux-x64.deb"
-          ls -l /opt/Taifa\ Mail/chrome-sandbox
+          ls -l /opt/TaifaMail/chrome-sandbox
           TAIFA_SMOKE_NOTIFY=1 nohup taifa-mail > "$RUNNER_TEMP/app.log" 2>&1 &
           expected="Sign in · Taifa Mail"
           title=""

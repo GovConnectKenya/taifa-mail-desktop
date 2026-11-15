@@ -102,7 +102,11 @@ jobs:
           - os: windows-latest
             args: '--win'
           - os: ubuntu-latest
-            args: '--linux'
+            # --config.productName=TaifaMail only changes the install folder,
+            # /opt/TaifaMail instead of /opt/Taifa Mail: the setuid chrome-sandbox
+            # helper cannot be launched from a path with a space in it ("failed
+            # to execvp: /opt/Taifa"), which breaks the sandbox on every deb.
+            args: '--linux --config.productName=TaifaMail'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

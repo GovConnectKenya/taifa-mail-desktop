@@ -427,6 +427,12 @@ installed copy quietly stops receiving updates.
   `chrome-sandbox` and works. The AppImage stays for other distributions, and
   the release notes and the webmail's download section say which to pick. The
   smoke workflow launches the .deb, without `--no-sandbox`.
+- **The Linux packages install to `/opt/TaifaMail`, not `/opt/Taifa Mail`.** The
+  Linux build passes `--config.productName=TaifaMail` (release.yml). Chromium
+  launches the setuid `chrome-sandbox` helper through a command line that splits
+  on spaces, so with a space in the install path the sandbox cannot start (the
+  zygote dies with "failed to execvp: /opt/Taifa"). Measured on Ubuntu 24.04
+  arm64. The app name, user data folder and window title are unchanged.
 - **rpm targets Fedora and RHEL**, with boolean alternatives for the openSUSE
   library names. It needs rpmbuild, which does not run on macOS.
 - Windows and Linux builds are unsigned. Windows SmartScreen will warn on first
