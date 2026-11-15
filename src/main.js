@@ -72,6 +72,7 @@ const { buildContextMenuTemplate, pickSpellLanguages } = require('./context-menu
 const { createNotifier } = require('./notifier');
 const { printConversation } = require('./print');
 const { dropAlert } = require('./drop');
+const { testNotificationReport } = require('./notify-test');
 const prefs = require('./prefs');
 
 const PARTITION = 'persist:taifamail';
@@ -587,34 +588,34 @@ function considerFallback(inc) {
   }, 4000);
 }
 
-// Help > Send test notification: posts a native notification and says what the
-// app and the page believe about permission, so a silent failure can be told
-// apart from a switched-off one.
+// Help > Send Test Notification: posts a native notification and tells the
+// user, in plain words, whether notifications work (notify-test.js). What the
+// app and the page believe about permission goes to notifications.log.
 async function sendTestNotification() {
   const js = (code) => (win && !win.isDestroyed() ? win.webContents.executeJavaScript(code).catch(() => 'unavailable') : Promise.resolve('no window'));
   const pagePermission = await js('typeof Notification === "undefined" ? "unsupported" : Notification.permission');
   const pagePref = await js("localStorage.getItem('taifa_mb_notifications')");
-  const snap = notifyState.snapshot();
-  let outcome = 'no event within 3 seconds';
-  const done = new Promise((resolve) => {
-    const n = new Notification({ title: 'Taifa Mail test notification', body: 'If you can read this, notifications reach the system.' });
+  let outcome = 'timeout';
+  let reason = '';
+  await new Promise((resolve) => {
+    // trackNotification: a refusal also records the blocked state, so the app
+    // stops reporting 'unknown' after macOS has said no.
+    const n = trackNotification(new Notification({ title: 'Taifa Mail', body: 'Notifications are working. New mail will show up like this.' }));
     n.on('show', () => { outcome = 'shown'; resolve(); });
-    n.on('failed', (_e, err) => { outcome = `failed: ${err}`; resolve(); });
+    n.on('failed', (_e, err) => { outcome = 'failed'; reason = String(err); resolve(); });
     n.on('click', () => showWindow());
     n.show();
     setTimeout(resolve, 3000);
   });
-  await done;
-  logNotify('test', { permission: pagePermission, outcome });
-  const lines = [
-    `Native notification: ${outcome}${process.platform === 'darwin' && outcome === 'shown' ? ' (macOS reports this even when notifications are switched off for the app)' : ''}`,
-    `Permission the webmail sees: ${pagePermission}`,
-    `Webmail notification setting: ${pagePref === null ? 'not set (on)' : pagePref}`,
-    `System state known to the app: ${snap.status}${snap.reason ? ` (${snap.reason})` : ''}`,
-    `Log: ${notifyLogFile()}`,
-  ];
-  dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, { type: 'info', title: 'Taifa Mail', message: 'Test notification sent', detail: lines.join('\n'), buttons: ['OK', 'Open notification settings'], defaultId: 0, cancelId: 0 })
-    .then(({ response }) => { if (response === 1) openNotificationHelp(); })
+  const snap = notifyState.snapshot();
+  logNotify('test', { permission: pagePermission, outcome, reason, pref: pagePref === null ? 'unset' : pagePref });
+  const r = testNotificationReport({ platform: process.platform, outcome, osStatus: snap.status, pagePref });
+  dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, { type: outcome === 'failed' || snap.status === 'blocked' ? 'warning' : 'info', message: r.message, detail: r.detail, buttons: r.buttons, defaultId: 0, cancelId: r.buttons.length - 1 })
+    .then(({ response }) => {
+      const a = r.actions[response];
+      if (a === 'os-settings') openNotificationHelp();
+      else if (a === 'app-settings') openRoute('/settings');
+    })
     .catch(() => {});
 }
 
