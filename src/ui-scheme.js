@@ -29,7 +29,7 @@ const PAGES = Object.freeze({
   // The popover's icons: the webmail's own two-tone Iconsax files.
   'tray/icons/direct-inbox.svg': 'tray/icons/direct-inbox.svg',
   'tray/icons/edit.svg': 'tray/icons/edit.svg',
-  'tray/icons/setting2.svg': 'tray/icons/setting2.svg',
+  'tray/icons/setting.svg': 'tray/icons/setting.svg',
   'shell/offline.html': 'shell/offline.html',
   // The find bar (src/find), shown over a mail window by find.js.
   'find/find.html': 'find/find.html',

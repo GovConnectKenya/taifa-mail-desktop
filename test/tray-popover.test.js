@@ -22,7 +22,7 @@ test('icons are the vendored Iconsax files, served by the app, no inline drawing
   // The only inline SVG is the Taifa brand mark.
   const svgs = html.match(/<svg[^>]*>/g) || [];
   assert.deepEqual(svgs.map((t) => /class="mark"/.test(t)), svgs.map(() => true), 'no hand-drawn interface icons');
-  for (const n of ['direct-inbox', 'edit', 'setting2']) {
+  for (const n of ['direct-inbox', 'edit', 'setting']) {
     assert.ok(html.includes(`taifa-ui://app/tray/icons/${n}.svg`), n);
     assert.ok(fs.existsSync(path.join(__dirname, '..', 'src', 'tray', 'icons', `${n}.svg`)), n);
     assert.equal(PAGES[`tray/icons/${n}.svg`], `tray/icons/${n}.svg`, 'served by taifa-ui://');
