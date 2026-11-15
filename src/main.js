@@ -751,6 +751,25 @@ async function smokeAbout() {
         fs.writeFileSync(path.join(dir, `about-${scheme}-${process.platform}.png`), img.toPNG());
         console.log(`[smoke] about screenshot ${scheme}`);
       }
+      // The update states, pushed over the real channel, in both schemes.
+      const states = {
+        checking: { state: 'checking' },
+        current: { state: 'current' },
+        ready: { state: 'ready', version: '0.2.2' },
+        error: { state: 'error' },
+      };
+      for (const scheme of ['light', 'dark']) {
+        nativeTheme.themeSource = scheme;
+        for (const [name, s] of Object.entries(states)) {
+          w.webContents.send('about:update', s);
+          await new Promise((r) => setTimeout(r, 400));
+          fs.writeFileSync(path.join(dir, `about-${name}-${scheme}-${process.platform}.png`), (await w.webContents.capturePage()).toPNG());
+        }
+      }
+      const layout = await w.webContents.executeJavaScript(
+        "(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(); const tag = document.querySelector('.tag').getBoundingClientRect(); const foot = document.querySelector('footer').getBoundingClientRect(); return JSON.stringify({ tagLeft: Math.round(tag.left), tagRight: Math.round(tag.right), width: innerWidth, height: innerHeight, buttonBottom: Math.round(r('update').bottom), footerTop: Math.round(foot.top), footerBottom: Math.round(foot.bottom) }); })()");
+      console.log(`[smoke] about layout ${layout}`);
+      w.webContents.send('about:update', { state: 'idle' });
       // The licences view, scrolled to the top, in the current (dark) scheme.
       await w.webContents.executeJavaScript("document.getElementById('lic').click()");
       await new Promise((r) => setTimeout(r, 500));

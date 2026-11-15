@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.2.2",
+    "date": "2026-11-15",
+    "tag": "",
+    "major": false,
+    "summary": "A redesigned About window with the Taifa Mail illustration, version details, update status and links.",
+    "added": [],
+    "improved": [
+      "A new About window with the Taifa Mail illustration, version details, update status and links to rcfi.co.ke and mail.govconnect.ke."
+    ],
+    "fixed": []
+  },
+  {
     "version": "0.2.1",
     "date": "2026-11-15",
     "tag": "",

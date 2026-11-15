@@ -7,13 +7,15 @@ const fs = require('fs');
 const { aboutLink, chromiumLicencePath, buildAboutInfo, ABOUT_SIZE } = require('../src/about');
 const { PAGES, contentType, resolveUiRequest } = require('../src/ui-scheme');
 
-test('the About window is 420x520', () => {
-  assert.deepEqual({ ...ABOUT_SIZE }, { width: 420, height: 520 });
+test('the About window is 720x440', () => {
+  assert.deepEqual({ ...ABOUT_SIZE }, { width: 720, height: 440 });
 });
 
-test('aboutLink accepts only the three fixed keys', () => {
+test('aboutLink accepts only the fixed keys', () => {
   assert.equal(aboutLink('whats-new').url, 'https://github.com/GovConnectKenya/taifa-mail-desktop/releases');
   assert.ok(aboutLink('help').url.startsWith('https://'));
+  assert.equal(aboutLink('rcfi').url, 'https://rcfi.co.ke');
+  assert.equal(aboutLink('webmail').url, 'https://mail.govconnect.ke');
   assert.equal(aboutLink('chromium-licences').file, 'LICENSES.chromium.html');
   for (const bad of ['', 'https://evil.example', '../x', 'constructor', '__proto__', 'toString', undefined, null, 5]) {
     assert.equal(aboutLink(bad), null, String(bad));
