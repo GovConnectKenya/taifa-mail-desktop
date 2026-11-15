@@ -129,7 +129,8 @@ Two further benefits of the real origin:
   `ELECTRON_RUN_AS_NODE`, no `NODE_OPTIONS`, no `--inspect`, the app loads only
   from its asar, the asar is checked against the hash sealed in the signed
   Info.plist (macOS; electron-builder 24 cannot embed it on Windows), and
-  file:// gets no extra privileges. Cookies are encrypted at rest (Keychain on
+  file:// gets no extra privileges (so the tray popover and offline page load
+  through the taifa-ui:// scheme, src/ui-scheme.js, not from file://). Cookies are encrypted at rest (Keychain on
   macOS, DPAPI on Windows); existing plaintext cookies stay readable, so the
   0.1.x session carries over (tested as a profile upgrade). Packaged builds also
   ignore `--remote-debugging-port` / `--remote-debugging-pipe`, which would

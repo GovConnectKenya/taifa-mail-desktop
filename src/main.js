@@ -57,7 +57,13 @@ const windowState = require('./window-state');
 const { parseUnread, createBadge, SEED_NOTIFY_PREF_JS } = require('./badge');
 const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
 
+const { registerUiScheme, installUiScheme, uiUrl } = require('./ui-scheme');
+
 const PARTITION = 'persist:taifamail';
+
+// Must be registered before 'ready'. Serves the tray popover and the offline
+// page (see ui-scheme.js for why they are not file:// pages).
+registerUiScheme();
 
 let win = null;
 let tray = null;
@@ -151,7 +157,7 @@ function pushShellState(state) {
 
 function showOffline() {
   showingOffline = true;
-  win.loadFile(path.join(__dirname, 'shell', 'offline.html'));
+  win.loadURL(uiUrl('shell/offline.html'));
   // The page subscribes on load, so announce the first countdown once it is up
   // rather than into the void.
   win.webContents.once('did-finish-load', () => scheduleRetry());
@@ -369,7 +375,7 @@ function buildTrayMenu() {
 // Tray popover
 //
 // A frameless, transparent local window (src/tray/popover.html) shown under the
-// tray icon on a left click, hidden on blur. It is a file:// page, so it gets
+// tray icon on a left click, hidden on blur. It is a taifa-ui:// page, so it gets
 // the taifaShell bridge (the remote webmail never does), and every button is a
 // no-argument call that main services below. The classic right-click Menu stays
 // as a fallback.
@@ -383,6 +389,44 @@ function pushTrayState() {
   trayWin.webContents.send('tray:state', {
     update: { state: s.state, percent: s.percent, version: s.version },
     unread: unreadCount,
+  });
+}
+
+// Release smoke test hook (never set in normal use): TAIFA_SMOKE_TRAY=1 makes
+// the app report whether the tray popover and the offline page load and get
+// the bridge, then quit. Needs no display tray, so it works headless.
+const SMOKE_TRAY = process.env.TAIFA_SMOKE_TRAY === '1';
+
+async function smokeProbe(label, wc, loaded) {
+  try {
+    await loaded;
+    const r = await wc.executeJavaScript(
+      "JSON.stringify({ href: location.href, title: document.title, bridge: typeof window.taifaShell, body: document.body ? document.body.children.length : 0 })");
+    console.log(`[smoke] ${label} loaded ${r}`);
+  } catch (e) {
+    console.log(`[smoke] ${label} FAILED ${e && e.message}`);
+  }
+}
+
+function smokeReportTray(w) {
+  const loaded = new Promise((resolve, reject) => {
+    w.webContents.once('did-finish-load', resolve);
+    w.webContents.once('did-fail-load', (_e, code, desc) => reject(new Error(`${code} ${desc}`)));
+  });
+  smokeProbe('tray popover', w.webContents, loaded).then(async () => {
+    const off = new BrowserWindow({
+      show: false,
+      webPreferences: { partition: PARTITION, preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    const offLoaded = new Promise((resolve, reject) => {
+      off.webContents.once('did-finish-load', resolve);
+      off.webContents.once('did-fail-load', (_e, code, desc) => reject(new Error(`${code} ${desc}`)));
+    });
+    off.loadURL(uiUrl('shell/offline.html'));
+    await smokeProbe('offline page', off.webContents, offLoaded);
+    console.log('[smoke] done');
+    isQuitting = true;
+    app.quit();
   });
 }
 
@@ -406,7 +450,11 @@ function createTrayWindow() {
       sandbox: true,
     },
   });
-  trayWin.loadFile(path.join(__dirname, 'tray', 'popover.html'));
+  trayWin.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    if (isMainFrame) console.warn(`[shell] tray popover failed to load (${code} ${desc}): ${url}`);
+  });
+  trayWin.loadURL(uiUrl('tray/popover.html'));
+  if (SMOKE_TRAY) smokeReportTray(trayWin);
   // Dismiss on click-away, the expected behaviour for a menu-bar widget.
   trayWin.on('blur', () => {
     if (trayWin && !trayWin.isDestroyed()) trayWin.hide();
@@ -814,6 +862,8 @@ app.on('open-url', (e, url) => {
 
 app.whenReady().then(async () => {
   const ses = session.fromPartition(PARTITION);
+  installUiScheme(ses, __dirname);
+  installUiScheme(session.defaultSession, __dirname);
   // Read the OS notification state in the background: on macOS the verdict is in
   // our own unified log within a second of launch, well before the webmail asks.
   detectNotificationState({ platform: process.platform })
@@ -867,7 +917,7 @@ app.whenReady().then(async () => {
     loadApp();
   });
 
-  // Tray popover actions. Each is a fixed channel from our own file:// popover;
+  // Tray popover actions. Each is a fixed channel from our own taifa-ui:// popover;
   // main owns the routes and decides the action.
   ipcMain.on('tray:open-inbox', () => {
     hideTrayPopover();

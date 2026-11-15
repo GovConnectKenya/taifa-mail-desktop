@@ -2,7 +2,7 @@
 
 // This preload is attached to REMOTE content: the window loads the webmail at
 // https://mail.govconnect.ke, and webPreferences are fixed at window creation
-// time, so the same preload also runs on the bundled file:// shell pages. There
+// time, so the same preload also runs on the bundled shell pages (taifa-ui://app). There
 // is no way to attach it to one and not the other.
 //
 // So it gates on the origin. Everything exposed to the remote app would be
@@ -10,7 +10,7 @@
 // got there via XSS, a compromised npm dependency in the webmail's own build,
 // or a hostile ad/iframe. The remote app is a web app: it already has every
 // capability it needs from the browser. It gets NOTHING from us. Only our own
-// bundled file:// pages get a bridge, and only a harmless one.
+// bundled taifa-ui:// pages get a bridge, and only a harmless one.
 //
 // THE RULE, for anyone tempted to add to this file later: every method here
 // must be safe when called with hostile arguments by an attacker who has XSS on
@@ -25,7 +25,7 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-if (location.protocol === 'file:') {
+if (location.protocol === 'taifa-ui:' && location.hostname === 'app') {
   contextBridge.exposeInMainWorld('taifaShell', {
     // -- offline page ----------------------------------------------------
     // Safe even in principle: it takes no arguments, and all it can do is ask
@@ -41,7 +41,7 @@ if (location.protocol === 'file:') {
 
     // -- tray popover ----------------------------------------------------
     // Every method here is the same safety class as retry(): no arguments, a
-    // single fixed channel, and only ever reachable from OUR own file:// pages
+    // single fixed channel, and only ever reachable from OUR own taifa-ui:// pages
     // (the remote webmail never gets this bridge, see the header). Main owns
     // every URL and decides every action, so the worst a caller can do is
     // trigger a navigation or a quit, which the popover's own buttons already
