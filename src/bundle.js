@@ -168,9 +168,15 @@ let onBackendHeaders = null;
 // redirect to another site would come back as that site's content under the
 // webmail's origin. Here every 3xx goes back to the renderer as a 3xx, and
 // Chromium follows it as it would for any page.
+// Told about every backend request the app forwards: onBackendRequest(pathname)
+// returns a done(status) callback, called with the HTTP status or 0 when no
+// answer came. Feeds the server-health signal (connection.js).
+let onBackendRequest = null;
+
 function passThrough(ses, req) {
   const started = NET_LOG ? Date.now() : 0;
   const url = new URL(req.url);
+  const settle = onBackendRequest && url.origin === APP_ORIGIN ? onBackendRequest(url.pathname) : () => {};
   return new Promise((resolve, reject) => {
     // The page's own credentials and cache modes cannot be honoured: the
     // Request a protocol handler receives always reports credentials
@@ -218,6 +224,7 @@ function passThrough(ses, req) {
         for (const v of [].concat(values)) out.append(name, v);
       }
       out.set('location', location);
+      settle(status);
       if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> ${status} redirect ${Date.now() - started}ms`);
       resolve(new Response(null, { status, headers: out }));
     });
@@ -229,6 +236,7 @@ function passThrough(ses, req) {
         for (const v of [].concat(values)) out.append(name, v);
       }
       if (onBackendHeaders && url.origin === APP_ORIGIN) onBackendHeaders(url.pathname, out);
+      settle(res.statusCode);
       if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> ${res.statusCode} ${Date.now() - started}ms`);
       if (NULL_BODY_STATUS.has(res.statusCode) || req.method === 'HEAD') {
         res.resume();
@@ -258,6 +266,7 @@ function passThrough(ses, req) {
     });
 
     rq.on('error', (e) => {
+      settle(0);
       if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> error ${e.message}`);
       reject(e);
     });
@@ -271,6 +280,7 @@ function passThrough(ses, req) {
       }
       rq.end();
     })().catch((e) => {
+      settle(0);
       rq.abort();
       reject(e);
     });
@@ -288,6 +298,7 @@ function passThrough(ses, req) {
 function installBundle(ses, opts = {}) {
   if (!hasBundle()) return false;
 
+  onBackendRequest = typeof opts.onBackendRequest === 'function' ? opts.onBackendRequest : null;
   const info = bundleInfo();
   const bundleDate = info && Date.parse(info.commitDate);
   let tooOldReported = false;
@@ -341,6 +352,7 @@ function installBundle(ses, opts = {}) {
 // the network, the window loads the live site.
 function uninstallBundle(ses) {
   onBackendHeaders = null;
+  onBackendRequest = null;
   try {
     ses.protocol.unhandle('https');
   } catch (_) {

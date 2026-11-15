@@ -182,6 +182,17 @@ function pageShim(cfg) {
         online: navigator.onLine,
         degraded: !!q('.tm-conn'),
         offlineBanner: !!q('.tm-shell-offline'),
+        // The window's own words for its connection state, so the tray can say
+        // exactly the same thing.
+        connKind: (() => {
+          const b = q('.tm-shell-offline');
+          if (b) return b.classList.contains('recovering') ? 'recovering' : b.classList.contains('stale') ? 'stale' : 'offline';
+          return q('.tm-conn') ? 'degraded' : '';
+        })(),
+        connText: (() => {
+          const el = q('.tm-shell-offline') || q('.tm-conn-label');
+          return el ? String(el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+        })(),
         sound: (() => {
           try {
             return localStorage.getItem('taifa_mb_notifications_sound') === '1';
@@ -383,10 +394,13 @@ const STATE_KEYS = [
   'mail', 'signedIn', 'conversation', 'composer', 'composerMinimized', 'modal', 'typing', 'read', 'unread',
   'starred', 'canArchive', 'canReplyAll', 'search', 'online', 'degraded', 'offlineBanner', 'sound',
 ];
+const CONN_KINDS = new Set(['offline', 'stale', 'recovering', 'degraded']);
 function normaliseState(data) {
   const s = {};
   for (const k of STATE_KEYS) s[k] = !!(data && data[k]);
   s.path = data && typeof data.path === 'string' ? data.path.slice(0, 200) : '';
+  s.connKind = data && CONN_KINDS.has(data.connKind) ? data.connKind : '';
+  s.connText = data && typeof data.connText === 'string' ? data.connText.replace(/[\u0000-\u001f]/g, ' ').slice(0, 160) : '';
   if (data && data.online === undefined) s.online = true;
   return s;
 }

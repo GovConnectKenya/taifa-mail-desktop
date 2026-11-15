@@ -491,17 +491,22 @@
 
         var connEl = document.getElementById('conn');
         var connTxt = document.getElementById('conn-txt');
-        var CONN_TEXT = { online: '', connecting: 'Connecting', reconnecting: 'Reconnecting', offline: 'Offline' };
+        // Main sends { state, label }: the same words the window and the tray
+        // tooltip use (src/connection.js). Nothing shows while connected.
+        var CONN_STATES = { online: 1, connecting: 1, reconnecting: 1, offline: 1 };
         function renderConn(c) {
-          c = CONN_TEXT.hasOwnProperty(c) ? c : 'online';
-          connEl.className = 'conn ' + c;
-          connTxt.textContent = CONN_TEXT[c];
-          connEl.setAttribute('aria-label', c === 'online' ? 'Connected' : CONN_TEXT[c]);
+          var st = c && typeof c === 'object' ? c.state : c;
+          var label = c && typeof c === 'object' && typeof c.label === 'string' ? c.label.slice(0, 60) : '';
+          if (!CONN_STATES.hasOwnProperty(st)) st = 'online';
+          connEl.className = 'conn ' + st;
+          connTxt.textContent = st === 'online' ? '' : label;
+          connEl.setAttribute('aria-label', label || 'Connected');
+          connEl.title = label;
         }
 
         renderUnread(0);
         renderUpdate({ state: 'idle' });
-        renderConn('online');
+        renderConn({ state: 'online', label: 'Connected' });
 
         // Main pushes { update, unread } on 'tray:state' whenever either
         // changes and every time the popover is shown.

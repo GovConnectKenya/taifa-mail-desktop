@@ -73,6 +73,7 @@ const { createNotifier } = require('./notifier');
 const { printConversation } = require('./print');
 const { dropAlert } = require('./drop');
 const { testNotificationReport } = require('./notify-test');
+const { connectionView, createServerHealth } = require('./connection');
 const prefs = require('./prefs');
 
 const PARTITION = 'persist:taifamail';
@@ -628,38 +629,37 @@ function updateStatusLabel() {
   pushAboutState();
 }
 
-// 'online' | 'reconnecting' | 'offline', from the primary window: the offline
-// page, the browser's own offline flag, or the webmail's own banners.
-// A server that stays unreachable for this long is shown as offline, not as
-// still reconnecting.
-const RECONNECT_GRACE_MS = 45000;
-let degradedSince = 0;
-let connTimer = null;
-function connectionState() {
-  if (showingOffline) return 'offline';
+// The one connection state (connection.js), from the primary window's page
+// state, the offline page and the backend's health. The tray popover, the tray
+// tooltip and the window all say the same words.
+const serverHealth = createServerHealth();
+function connectionInfo() {
   const st = win && !win.isDestroyed() ? pageStates.get(win.webContents.id) : null;
-  if (!st) return appLoaded ? 'online' : 'connecting';
-  if (!st.online || st.offlineBanner) return 'offline';
-  if (st.degraded) {
-    if (!degradedSince) {
-      degradedSince = Date.now();
-      // Re-evaluate when the grace period ends, even if nothing else changes.
-      clearTimeout(connTimer);
-      connTimer = setTimeout(() => { updateTrayTooltip(); pushTrayState(); }, RECONNECT_GRACE_MS + 100);
-    }
-    return Date.now() - degradedSince > RECONNECT_GRACE_MS ? 'offline' : 'reconnecting';
-  }
-  degradedSince = 0;
-  return 'online';
+  return connectionView({ showingOffline, appLoaded, page: st || null, serverDown: serverHealth.down() });
+}
+function connectionState() {
+  return connectionInfo().state;
+}
+// The backend's health changes without the page saying anything (a 502, a hung
+// request), so it is re-read every few seconds while the tray is up.
+let lastConnKey = '';
+function watchConnection() {
+  setInterval(() => {
+    const c = connectionInfo();
+    const key = `${c.state}|${c.label}`;
+    if (key === lastConnKey) return;
+    lastConnKey = key;
+    updateTrayTooltip();
+    pushTrayState();
+  }, 3000).unref();
 }
 
 function updateTrayTooltip() {
   if (!tray || tray.isDestroyed()) return;
   const s = getStatus();
   const parts = [];
-  const conn = connectionState();
-  if (conn === 'offline') parts.push('offline');
-  else if (conn === 'reconnecting') parts.push('reconnecting');
+  const conn = connectionInfo();
+  if (conn.state !== 'online') parts.push(conn.label);
   if (s.state === 'downloading') parts.push(`update ${s.percent || 0}%`);
   else if (s.state === 'ready') parts.push('update ready, restart to apply');
   else if (s.state === 'error') parts.push('update check failed');
@@ -977,7 +977,7 @@ function pushTrayState() {
   trayWin.webContents.send('tray:state', {
     update: { state: s.state, percent: s.percent, version: s.version },
     unread: unreadCount,
-    conn: connectionState(),
+    conn: connectionInfo(),
   });
 }
 
@@ -1619,6 +1619,7 @@ function startDeferred() {
   if (deferredStarted) return;
   deferredStarted = true;
   createTray();
+  watchConnection();
   initUpdater({ onState: updateStatusLabel });
 }
 
@@ -1661,7 +1662,7 @@ app.whenReady().then(async () => {
   // our own unified log within a second of launch, well before the webmail asks.
   reprobeNotifications();
   installSessionHandlers(ses, { snapshot: () => notifyState.snapshot(), onBlockedRequest: onBlockedNotificationRequest, onFirstRequest: onFirstNotificationRequest });
-  const bundled = installBundle(ses, { onTooOld: fallBackToLiveSite });
+  const bundled = installBundle(ses, { onTooOld: fallBackToLiveSite, onBackendRequest: (p) => serverHealth.start(p) });
   if (!bundled) console.warn('[shell] no bundled webmail in renderer/: loading the live site');
 
   // 0.1.x registered the web build's service worker in this partition, and it
@@ -1758,7 +1759,7 @@ app.whenReady().then(async () => {
   // Development runs only (never a packaged build): a handle for driving the
   // app from the Node inspector in manual and automated UI checks.
   if (!app.isPackaged) {
-    global.__taifaDev = { runMenuAction, pageAction, pageStates, mailWindows, openMailWindow, openRoute, notifier, notifyState, connectionState, printConversation: (data) => printConversation({ BrowserWindow, session, app }, data, { toPdf: true }), getWin: () => win };
+    global.__taifaDev = { runMenuAction, pageAction, pageStates, mailWindows, openMailWindow, openRoute, notifier, notifyState, connectionState, connectionInfo, serverHealth, printConversation: (data) => printConversation({ BrowserWindow, session, app }, data, { toPdf: true }), getWin: () => win };
   }
   // macOS: clicking a notification banner activates the app. If the window is
   // hidden or minimised at that moment, bring it back.
