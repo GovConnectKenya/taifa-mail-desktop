@@ -9,9 +9,13 @@
 // the window had lost the mailbox. Now:
 //
 // - whatever the window shows, the tray says, in the window's own words (the
-//   offline banner's first sentence, or the "Reconnecting…" chip);
-// - when the window shows nothing but the backend is failing (server health,
-//   below), the tray says "Can’t reach the server";
+//   offline banner's first sentence, the "Can't reach the server" notice, or
+//   the "Reconnecting…" chip), and the most serious one when it shows several;
+// - the window is the ONE source while it is showing the webmail. Round 3 saw
+//   the tray turn green 4 s after a 502 ended (from the app's own health
+//   probe) while the window still said "Can't reach the server" until 18 s.
+//   Server health (below) now only decides when to probe and nudge the page's
+//   own retry, and speaks only while there is no page to ask;
 // - no timers turn one state into another behind the window's back.
 //
 // Pure, so it is unit tested (test/connection.test.js).
@@ -44,9 +48,11 @@ function connectionView({ showingOffline, appLoaded, page, serverDown }) {
   if (!page.online) return { state: 'offline', label: LABELS.offline };
   // The webmail's "Couldn't load your mailbox" card.
   if (page.bootError) return { state: 'offline', label: LABELS.server };
+  // The webmail's sticky "Can't reach the server. Showing saved mail…" notice.
+  // It outranks the "Reconnecting…" chip shown next to it.
+  if (page.connKind === 'server') return { state: 'offline', label: firstSentence(page.connText) || LABELS.server };
   // The webmail's "Reconnecting…" chip (its live-updates socket is down).
   if (page.degraded) return { state: 'reconnecting', label: firstSentence(page.connText) || LABELS.reconnecting };
-  if (serverDown) return { state: 'offline', label: LABELS.server };
   return { state: 'online', label: LABELS.online };
 }
 

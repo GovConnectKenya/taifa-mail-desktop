@@ -229,12 +229,21 @@ async function pageAction(name, arg) {
         boot.click();
         return 'mailbox';
       }
+      const done = [];
+      // The "Can't reach the server" notice's own Try again: reloads the
+      // list, which is what clears the notice.
+      const notice = [...document.querySelectorAll('.toast-viewport .toast-slot')].find((t) => /\b(can.t|cannot) reach the server\b/i.test(t.textContent || ''));
+      const again = notice && [...notice.querySelectorAll('button')].find((b) => /^try again$/i.test((b.textContent || '').trim()));
+      if (again && !again.disabled) {
+        again.click();
+        done.push('list');
+      }
       const chip = q('.tm-conn');
       if (chip) {
         chip.click();
-        return 'live';
+        done.push('live');
       }
-      return false;
+      return done.length ? done.join('+') : false;
     }
 
     case 'refresh': {

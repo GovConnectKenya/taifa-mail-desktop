@@ -21,8 +21,15 @@ test('a long reconnect stays "Reconnecting…", as the window shows it', () => {
   assert.equal(view(page({ degraded: true, connKind: 'degraded', connText: 'Reconnecting…' })).state, 'reconnecting');
 });
 
-test('a failing backend is not green when the window shows nothing', () => {
-  assert.deepEqual(view(page({}), { serverDown: true }), { state: 'offline', label: 'Can’t reach the server' });
+test('the window is the one source: the app’s own probe never contradicts it', () => {
+  // Round 3: the tray said "Connected" 4 s after a 502 ended while the window
+  // kept "Can't reach the server" until 18 s, and said "Reconnecting…" while
+  // the window said "Can't reach the server".
+  const notice = { connKind: 'server', connText: "Can't reach the server. Showing saved mail, which may be out of date. Try again" };
+  assert.deepEqual(view(page(notice), { serverDown: false }), { state: 'offline', label: "Can't reach the server" });
+  assert.deepEqual(view(page({ ...notice, degraded: true })), { state: 'offline', label: "Can't reach the server" }, 'the notice outranks the chip next to it');
+  assert.deepEqual(view(page({}), { serverDown: true }), { state: 'online', label: 'Connected' }, 'the window shows nothing wrong, so neither does the tray');
+  // With no page to ask, server health still speaks.
   assert.equal(view(null, { serverDown: true }).state, 'offline');
   assert.equal(view(null, { appLoaded: false }).state, 'connecting');
   assert.equal(view(null, { showingOffline: true }).label, 'Can’t reach the server');

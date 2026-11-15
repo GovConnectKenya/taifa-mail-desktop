@@ -157,6 +157,10 @@ function pageShim(cfg) {
       const tag = t.tagName;
       return tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !/^(button|checkbox|radio|submit|reset|range|color|file)$/i.test(t.type || ''));
     };
+    // The webmail's "Can't reach the server. Showing saved mail…" notice: a
+    // sticky toast, up until a live answer lands.
+    const serverNotice = () =>
+      [...document.querySelectorAll('.toast-viewport .toast-slot')].find((t) => /\b(can.t|cannot) reach the server\b/i.test(t.textContent || '')) || null;
     const snapshot = () => {
       const reader = q('.tm-reader[data-open="1"]');
       const tool = (label) => (reader ? reader.querySelector('.tm-reader-tool[aria-label="' + label + '"]') : null);
@@ -188,10 +192,11 @@ function pageShim(cfg) {
         connKind: (() => {
           const b = q('.tm-shell-offline');
           if (b) return b.classList.contains('recovering') ? 'recovering' : b.classList.contains('stale') ? 'stale' : 'offline';
+          if (serverNotice()) return 'server';
           return q('.tm-conn') ? 'degraded' : '';
         })(),
         connText: (() => {
-          const el = q('.tm-shell-offline') || q('.tm-conn-label');
+          const el = q('.tm-shell-offline') || serverNotice() || q('.tm-conn-label');
           return el ? String(el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) : '';
         })(),
         sound: (() => {
@@ -475,7 +480,7 @@ const STATE_KEYS = [
   'mail', 'signedIn', 'conversation', 'composer', 'composerMinimized', 'modal', 'typing', 'read', 'unread',
   'starred', 'canArchive', 'canReplyAll', 'search', 'online', 'degraded', 'offlineBanner', 'bootError', 'sound',
 ];
-const CONN_KINDS = new Set(['offline', 'stale', 'recovering', 'degraded']);
+const CONN_KINDS = new Set(['offline', 'stale', 'recovering', 'server', 'degraded']);
 function normaliseState(data) {
   const s = {};
   for (const k of STATE_KEYS) s[k] = !!(data && data[k]);

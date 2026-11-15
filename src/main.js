@@ -732,7 +732,7 @@ async function probeAndNudge() {
   }
   if (!ok || !win || win.isDestroyed() || showingOffline || Date.now() - lastNudgeAt < 10000) return;
   const st = pageStates.get(win.webContents.id);
-  if (!st || !(st.bootError || st.degraded)) return;
+  if (!st || !(st.bootError || st.degraded || st.connKind === 'server')) return;
   lastNudgeAt = Date.now();
   const r = await pageAction(win, 'reconnect');
   if (r) console.log(`[shell] server is back: retried ${r}`);
@@ -740,7 +740,7 @@ async function probeAndNudge() {
 
 function watchConnection() {
   setInterval(() => {
-    if (shouldProbe({ state: connectionState(), lastProbeAt, now: Date.now() })) probeAndNudge();
+    if (shouldProbe({ state: connectionState(), lastProbeAt, now: Date.now(), everyMs: 2500 })) probeAndNudge();
     const c = connectionInfo();
     const key = `${c.state}|${c.label}`;
     if (key === lastConnKey) return;
