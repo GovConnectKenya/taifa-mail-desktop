@@ -747,16 +747,28 @@ let lastNudgeAt = 0;
 // The server may come back long before the page's own backoff looks again
 // (round 2: 94 s for the mailbox, 63 s for live updates). While the state is
 // not fine, probe /health; when it answers, press the page's own retry.
+// One probe at a time, and never longer than PROBE_TIMEOUT_MS: the probe
+// bypasses the protocol handler (and so its read deadline), and round 3's hang
+// test showed unanswered probes piling up every few seconds until they held
+// every connection Chromium allows to the host, so nothing at all reached the
+// server after it came back.
+const PROBE_TIMEOUT_MS = 4000;
+let probing = false;
 async function probeAndNudge() {
+  if (probing) return;
+  probing = true;
   lastProbeAt = Date.now();
   const done = serverHealth.start('/health');
   let ok = false;
   try {
-    const res = await session.fromPartition(PARTITION).fetch(`${APP_ORIGIN}/health`, { bypassCustomProtocolHandlers: true, cache: 'no-store' });
+    const res = await session.fromPartition(PARTITION).fetch(`${APP_ORIGIN}/health`, { bypassCustomProtocolHandlers: true, cache: 'no-store', signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
     ok = res.status < 500;
     done(res.status);
+    res.body?.cancel().catch(() => {});
   } catch (_) {
     done(0);
+  } finally {
+    probing = false;
   }
   if (!ok || !win || win.isDestroyed() || showingOffline || Date.now() - lastNudgeAt < 10000) return;
   const st = pageStates.get(win.webContents.id);

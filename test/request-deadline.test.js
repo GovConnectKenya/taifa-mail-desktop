@@ -23,3 +23,14 @@ test('writes, other hosts and the app’s own files never time out', () => {
   assert.equal(requestDeadline('GET', O + '/_app/immutable/x.js', O), 0);
   assert.equal(requestDeadline('GET', 'not a url', O), 0);
 });
+
+// Round 3 hang test (this session): the app's own /health probe bypasses the
+// protocol handler, so it needs its own limit, and must never overlap itself.
+test('the health probe is single-flight and aborted after a few seconds', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function probeAndNudge'), src.indexOf('function watchConnection'));
+  assert.match(fn, /if \(probing\) return;/);
+  assert.match(fn, /signal: AbortSignal\.timeout\(PROBE_TIMEOUT_MS\)/);
+  assert.match(fn, /finally \{\s*probing = false;/);
+  assert.match(src, /const PROBE_TIMEOUT_MS = 4000;/);
+});
