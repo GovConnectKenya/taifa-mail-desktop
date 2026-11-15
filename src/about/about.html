@@ -6,10 +6,11 @@
       The About Taifa Mail window. A taifa-ui://app page (see src/ui-scheme.js),
       so it needs no network and paints at once. It gets its own small bridge,
       window.taifaAbout (src/preload.js), and nothing else: every call is a fixed
-      channel that main validates. Colours and type are copied as literals from
-      the webmail's design tokens (frontend/src/lib/styles/tokens.css), because a
-      local page cannot import the webmail. Light and dark follow the OS-level
-      theme the app resolves, through prefers-color-scheme.
+      channel that main validates. Colours, type sizes and radii are copied as
+      literals from the webmail's design tokens (frontend/src/lib/styles/tokens.css),
+      because a local page cannot import the webmail. The icons are the webmail's
+      own two-tone Iconsax files (frontend/src/lib/icons/two-tone). Light and dark
+      follow the theme the app resolves, through prefers-color-scheme.
     -->
     <meta
       http-equiv="Content-Security-Policy"
@@ -32,13 +33,13 @@
         --border-2: #c3d0c8;
         --text: #000000;
         --muted: #52665e;
+        --muted-soft: #5c6f67;
         --accent: #008c51;
         --accent-fill: #00864e;
         --accent-fill-hover: #007343;
-        --accent-ink: #00643a;
         --on-accent: #ffffff;
+        --success-ink: #00643a;
         --danger: #922529;
-        --ring: 0 0 0 4px rgb(0 140 81 / 20%);
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -49,12 +50,12 @@
           --border-2: #3d3d3d;
           --text: #ececec;
           --muted: #a8a8a8;
+          --muted-soft: #949494;
           --accent: #1ea94e;
           --accent-fill: #16803c;
           --accent-fill-hover: #1a8f44;
-          --accent-ink: #8adbaa;
+          --success-ink: #7fd4a6;
           --danger: #ff7a5e;
-          --ring: 0 0 0 4px rgb(30 169 78 / 20%);
         }
       }
 
@@ -66,17 +67,19 @@
         background: var(--bg);
         color: var(--text);
         font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 14px;
-        line-height: 1.45;
+        font-size: 13px;
+        line-height: 20px;
         -webkit-font-smoothing: antialiased;
         user-select: none;
         cursor: default;
       }
+      button { font: inherit; color: inherit; cursor: default; }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       .drag { position: fixed; inset: 0 0 auto 0; height: 40px; -webkit-app-region: drag; }
 
       /* The close button exists only where the window has no native one. */
       .close {
-        position: fixed; top: 8px; right: 8px; width: 32px; height: 32px; padding: 0;
+        position: fixed; top: 8px; right: 8px; width: 28px; height: 28px; padding: 0;
         display: none; align-items: center; justify-content: center;
         border: 0; border-radius: 8px; background: transparent; color: var(--muted);
         -webkit-app-region: no-drag;
@@ -85,68 +88,67 @@
       .close:hover { background: var(--surface-2); color: var(--text); }
 
       .icon {
-        display: inline-block; width: 18px; height: 18px; flex: none; background: currentColor;
+        display: inline-block; width: 16px; height: 16px; flex: none; background: currentColor;
         -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat;
       }
       .i-refresh { --i: url(taifa-ui://app/about/icons/refresh.svg); }
-      .i-close { --i: url(taifa-ui://app/about/icons/close.svg); width: 14px; height: 14px; }
-      .i-doc { --i: url(taifa-ui://app/about/icons/document.svg); }
-      .i-support { --i: url(taifa-ui://app/about/icons/support.svg); }
+      .i-close { --i: url(taifa-ui://app/about/icons/close.svg); width: 12px; height: 12px; }
       .i-tick { --i: url(taifa-ui://app/about/icons/tick.svg); }
+      .i-danger { --i: url(taifa-ui://app/about/icons/danger.svg); }
       .i-back { --i: url(taifa-ui://app/about/icons/chevron-left.svg); }
 
-      .view { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 44px 32px 0; }
+      .view { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 40px 24px 20px; }
       .view[hidden] { display: none; }
 
-      .hero { text-align: center; padding-top: 8px; }
-      .logo { display: block; width: 72px; height: auto; margin: 0 auto 14px; border-radius: 0; }
-      h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
-      .tag { margin: 6px auto 0; max-width: 300px; color: var(--muted); font-size: 14px; }
+      /* Identity: logo, name, one-line tagline, version line. */
+      .hero { display: flex; flex-direction: column; align-items: center; text-align: center; }
+      .logo { display: block; width: 64px; height: 64px; object-fit: contain; }
+      h1 { margin: 16px 0 0; font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
+      .tag { margin: 4px 0 0; color: var(--muted); white-space: nowrap; }
+      .meta { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 16px; user-select: text; cursor: text; }
+      .meta .dot { margin: 0 6px; }
+      .mono { font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
 
-      .versions {
-        margin: 22px 0 0; padding: 4px 16px; background: var(--surface);
-        border: 1px solid var(--border); border-radius: 12px;
-      }
-      .versions div { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 0; }
-      .versions div + div { border-top: 1px solid var(--border); }
-      .versions dt { color: var(--muted); }
-      .versions dd { margin: 0; font-weight: 500; }
-      .mono { font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-weight: 400; font-size: 12.5px; }
-
-      .status { min-height: 22px; margin: 14px 0 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font-size: 13px; text-align: center; }
-      .status.ok { color: var(--accent-ink); }
+      /* Updates: one quiet status line over one compact button. */
+      .update { margin-top: 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+      .status { min-height: 20px; margin: 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); text-align: center; }
+      .status.ok { color: var(--success-ink); }
       .status.err { color: var(--danger); }
-
-      .actions { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-      .row { display: flex; gap: 8px; }
-      .row .btn { flex: 1; }
       .btn {
-        display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-        height: 40px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border-2);
-        background: var(--surface); color: var(--text); font: inherit; font-weight: 500; cursor: default;
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        height: 32px; padding: 0 12px 0 10px; border-radius: 8px; border: 1px solid var(--border-2);
+        background: var(--surface); color: var(--text); font-weight: 500;
       }
-      .btn:hover { background: var(--surface-2); }
-      .btn:focus-visible, .link:focus-visible, .close:focus-visible { outline: none; box-shadow: var(--ring); }
+      .btn:hover:not(:disabled) { background: var(--surface-2); }
+      .btn:disabled { color: var(--muted); }
       .btn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); }
-      .btn.primary:hover { background: var(--accent-fill-hover); }
-      .btn:disabled { opacity: 0.6; }
-      .spin { animation: spin 0.9s linear infinite; }
+      .btn.primary:hover:not(:disabled) { background: var(--accent-fill-hover); }
+      .btn .icon { color: var(--muted); }
+      .btn.primary .icon { color: inherit; }
+      .spin { animation: spin 1s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
       @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 
-      footer { margin-top: auto; padding: 0 0 18px; text-align: center; color: var(--muted); font-size: 12px; }
-      .link { background: none; border: 0; padding: 2px 4px; border-radius: 4px; font: inherit; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; cursor: default; }
+      /* Footer: muted text links in one row, then the copyright. */
+      footer { margin-top: auto; text-align: center; color: var(--muted); font-size: 12px; line-height: 16px; }
+      .links { display: flex; justify-content: center; align-items: center; gap: 4px; }
+      .links .dot { color: var(--muted-soft); }
+      .link { background: none; border: 0; padding: 0 2px; border-radius: 4px; color: var(--muted); text-decoration: none; }
+      .link:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+      .copy { margin: 4px 0 0; color: var(--muted-soft); font-size: 11px; }
 
       /* Licences view */
-      .lic-head { display: flex; align-items: center; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-      .lic-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
-      .lic-head .btn { height: 32px; padding: 0 8px 0 4px; border-color: transparent; background: transparent; }
-      .lic-head .btn:hover { background: var(--surface-2); }
-      .lic-body { flex: 1; overflow-y: auto; margin: 0 -32px; padding: 14px 32px 24px; user-select: text; }
-      .lic-body h3 { margin: 18px 0 4px; font-size: 14px; font-weight: 600; }
+      #licences { padding-bottom: 0; }
+      .lic-head { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+      .lic-head h2 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 600; }
+      .back { display: inline-flex; align-items: center; gap: 2px; height: 28px; padding: 0 8px 0 4px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+      .back:hover { background: var(--surface-2); color: var(--text); }
+      .lic-body { flex: 1; overflow-y: auto; margin: 0 -24px; padding: 12px 24px 24px; user-select: text; }
+      .lic-body h3 { margin: 16px 0 4px; font-size: 13px; line-height: 20px; font-weight: 600; }
       .lic-body h3:first-child { margin-top: 0; }
-      .lic-body p { margin: 4px 0 8px; color: var(--muted); font-size: 13px; }
-      .lic-body pre { margin: 8px 0 0; white-space: pre-wrap; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.5; color: var(--muted); }
+      .lic-body p { margin: 4px 0 8px; color: var(--muted); font-size: 12px; line-height: 16px; }
+      .lic-body .link { color: var(--accent); padding: 0; }
+      .lic-body pre { margin: 8px 0 0; white-space: pre-wrap; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; line-height: 16px; color: var(--muted); }
     </style>
   </head>
   <body>
@@ -160,38 +162,37 @@
           <img class="logo" src="taifa-ui://app/about/logo.svg" alt="" />
         </picture>
         <h1>Taifa Mail</h1>
-        <p class="tag">Official email for Kenyan government institutions.</p>
+        <p class="tag">Official email for Kenyan government institutions</p>
+        <p class="meta">Version <span id="v-app">...</span><span class="dot" aria-hidden="true">&middot;</span>Webmail <span id="v-web">...</span></p>
       </div>
 
-      <dl class="versions">
-        <div><dt>Version</dt><dd id="v-app">...</dd></div>
-        <div><dt>Webmail</dt><dd id="v-web">...</dd></div>
-      </dl>
-
-      <p class="status" id="status" role="status" aria-live="polite"></p>
-
-      <div class="actions">
-        <button class="btn primary" id="update"><span class="icon i-refresh" id="update-icon"></span><span id="update-label">Check for updates</span></button>
-        <div class="row">
-          <button class="btn" id="whatsnew"><span class="icon i-doc"></span>What's new</button>
-          <button class="btn" id="help"><span class="icon i-support"></span>Help</button>
-        </div>
+      <div class="update">
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+        <button class="btn" id="update"><span class="icon i-refresh" id="update-icon"></span><span id="update-label">Check for updates</span></button>
       </div>
 
       <footer>
-        <span id="copy">Copyright RCFI</span> &middot; <button class="link" id="lic">Open source licences</button>
+        <div class="links">
+          <button class="link" id="whatsnew">What's new</button>
+          <span class="dot" aria-hidden="true">&middot;</span>
+          <button class="link" id="help">Help</button>
+          <span class="dot" aria-hidden="true">&middot;</span>
+          <button class="link" id="lic">Open source licences</button>
+        </div>
+        <p class="copy" id="copy">Copyright RCFI</p>
       </footer>
     </section>
 
     <section class="view" id="licences" hidden>
       <div class="lic-head">
-        <button class="btn" id="lic-back" aria-label="Back"><span class="icon i-back"></span>Back</button>
+        <button class="back" id="lic-back" aria-label="Back"><span class="icon i-back"></span>Back</button>
         <h2>Open source licences</h2>
       </div>
-      <div class="lic-body">
+      
+<div class="lic-body">
         <h3>Electron and Chromium</h3>
         <p>Taifa Mail runs on Electron, which includes Chromium and many open source components, each under its own licence.</p>
-        <button class="btn" id="lic-chromium"><span class="icon i-doc"></span>Open the full list</button>
+        <p><button class="link" id="lic-chromium">Open the full list</button></p>
 
         <h3>Google Sans</h3>
         <p>Copyright 2025 The Google Sans Project Authors (github.com/googlefonts/googlesans). Licensed under the SIL Open Font License, Version 1.1.</p>
@@ -320,28 +321,38 @@ OTHER DEALINGS IN THE FONT SOFTWARE.</pre>
         $('lic-chromium').addEventListener('click', function () { api.open('chromium-licences'); });
 
         var state = { state: 'idle' };
+        // One quiet line: an optional small icon ('ok' tick, 'err' warning) and text.
         function setStatus(text, cls) {
           var el = $('status');
           el.className = 'status' + (cls ? ' ' + cls : '');
           el.textContent = '';
-          if (cls === 'ok') { var i = document.createElement('span'); i.className = 'icon i-tick'; el.appendChild(i); }
+          if (cls) {
+            var i = document.createElement('span');
+            i.className = 'icon ' + (cls === 'ok' ? 'i-tick' : 'i-danger');
+            el.appendChild(i);
+          }
           el.appendChild(document.createTextNode(text));
         }
         function render(u) {
           state = u || state;
+          var s = state.state, v = state.version ? ' ' + state.version : '';
           var btn = $('update'), label = $('update-label'), icon = $('update-icon');
-          var busy = state.state === 'checking' || state.state === 'downloading' || state.state === 'available';
-          btn.disabled = busy;
+          var busy = s === 'checking' || s === 'available' || s === 'downloading';
+          btn.disabled = busy || s === 'dev';
+          // Primary only when there is something to install.
+          btn.classList.toggle('primary', s === 'ready');
           icon.classList.toggle('spin', busy);
-          label.textContent = state.state === 'ready' ? 'Restart to update' : 'Check for updates';
-          switch (state.state) {
-            case 'checking': setStatus('Checking for updates...'); break;
-            case 'available': setStatus('Update ' + (state.version || '') + ' found, downloading...'); break;
-            case 'downloading': setStatus('Downloading update' + (typeof state.percent === 'number' ? ' (' + state.percent + '%)' : '') + '...'); break;
-            case 'current': setStatus('Taifa Mail is up to date.', 'ok'); break;
-            case 'ready': setStatus('Update ' + (state.version || '') + ' is ready. Restart to finish installing it.', 'ok'); break;
-            case 'error': setStatus('Could not check for updates. Try again later.', 'err'); break;
-            case 'dev': setStatus('Updates are off in development builds.'); break;
+          label.textContent = s === 'ready' ? 'Restart to update'
+            : s === 'error' ? 'Try again'
+            : 'Check for updates';
+          switch (s) {
+            case 'checking': setStatus('Checking for updates'); break;
+            case 'available': setStatus('Version' + v + ' found'); break;
+            case 'downloading': setStatus('Downloading update' + (typeof state.percent === 'number' ? ' (' + state.percent + '%)' : '')); break;
+            case 'current': setStatus('Taifa Mail is up to date', 'ok'); break;
+            case 'ready': setStatus('Version' + v + ' is ready to install', 'ok'); break;
+            case 'error': setStatus('Could not check for updates', 'err'); break;
+            case 'dev': setStatus('Updates are off in development builds'); break;
             default: setStatus('');
           }
         }
@@ -353,13 +364,17 @@ OTHER DEALINGS IN THE FONT SOFTWARE.</pre>
         api.getInfo().then(function (info) {
           if (info.platform !== 'darwin') document.body.classList.add('has-close');
           $('v-app').textContent = info.appVersion;
-          $('v-web').innerHTML = '';
+          $('v-web').textContent = '';
           if (info.webmailVersion) {
-            $('v-web').appendChild(document.createTextNode(info.webmailVersion + ' '));
-            var c = document.createElement('span');
-            c.className = 'mono';
-            c.textContent = info.webmailCommit || '';
-            $('v-web').appendChild(c);
+            $('v-web').appendChild(document.createTextNode(info.webmailVersion));
+            if (info.webmailCommit) {
+              $('v-web').appendChild(document.createTextNode(' ('));
+              var c = document.createElement('span');
+              c.className = 'mono';
+              c.textContent = info.webmailCommit;
+              $('v-web').appendChild(c);
+              $('v-web').appendChild(document.createTextNode(')'));
+            }
           } else {
             $('v-web').textContent = 'live site';
           }

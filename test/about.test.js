@@ -7,8 +7,8 @@ const fs = require('fs');
 const { aboutLink, chromiumLicencePath, buildAboutInfo, ABOUT_SIZE } = require('../src/about');
 const { PAGES, contentType, resolveUiRequest } = require('../src/ui-scheme');
 
-test('the About window is 420x520', () => {
-  assert.deepEqual({ ...ABOUT_SIZE }, { width: 420, height: 520 });
+test('the About window is 360x372', () => {
+  assert.deepEqual({ ...ABOUT_SIZE }, { width: 360, height: 372 });
 });
 
 test('aboutLink accepts only the three fixed keys', () => {

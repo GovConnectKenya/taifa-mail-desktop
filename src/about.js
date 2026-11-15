@@ -6,7 +6,8 @@
 
 const path = require('path');
 
-const ABOUT_SIZE = Object.freeze({ width: 420, height: 520 });
+// Sized to the content (4px grid), so the window has no empty band.
+const ABOUT_SIZE = Object.freeze({ width: 360, height: 372 });
 
 // What the page's buttons may ask main to open. The page sends a KEY, never a
 // URL, so even a compromised page can only reach these fixed targets.
