@@ -74,6 +74,7 @@ const { printConversation } = require('./print');
 const { dropAlert } = require('./drop');
 const { testNotificationReport } = require('./notify-test');
 const { connectionView, createServerHealth } = require('./connection');
+const { linkStatusParts } = require('./link-status');
 const prefs = require('./prefs');
 
 const PARTITION = 'persist:taifamail';
@@ -244,6 +245,11 @@ function wireMailWindow(w) {
     if (input && (input.type === 'mouseDown' || input.type === 'keyDown' || input.type === 'rawKeyDown')) settingsGate.noteGesture();
   });
   wc.on('context-menu', (_e, params) => showContextMenu(w, params));
+  // The link status bubble: where a hovered link goes (link-status.js).
+  wc.on('update-target-url', (_e, url) => {
+    const parts = linkStatusParts(url, APP_ORIGIN);
+    wc.executeJavaScript(`window.__taifaPageShim && window.__taifaPageShim.link && window.__taifaPageShim.link(${JSON.stringify(parts)})`).catch(() => {});
+  });
   wc.on('did-start-navigation', (_e, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) {
       pageStates.delete(wcId);

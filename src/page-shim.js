@@ -229,6 +229,62 @@ function pageShim(cfg) {
     });
     setTimeout(() => report(true), 0);
 
+    // -- the link status bubble -----------------------------------------------
+    // Where a hovered link goes, at the bottom-left of the window like a
+    // browser's status bubble, so a link's real destination can be read before
+    // it is clicked. Main sends the text (link-status.js) from Chromium's
+    // update-target-url event, which also covers links inside message frames.
+    // A closed shadow root keeps page styles out; textContent only; it never
+    // takes a click.
+    let bubbleHost = null;
+    let bubbleParts = null;
+    let bubbleHide = null;
+    let mouse = { x: 0, y: 0 };
+    window.addEventListener('mousemove', (e) => {
+      mouse = { x: e.clientX, y: e.clientY };
+    }, { capture: true, passive: true });
+    api.link = (parts) => {
+      clearTimeout(bubbleHide);
+      if (!parts || !parts.host) {
+        // A short delay, so moving between two links does not flicker.
+        bubbleHide = setTimeout(() => {
+          if (bubbleHost) bubbleHost.style.opacity = '0';
+        }, 120);
+        return;
+      }
+      if (!bubbleHost) {
+        bubbleHost = document.createElement('div');
+        bubbleHost.setAttribute('data-taifa-link-status', '');
+        bubbleHost.setAttribute('aria-hidden', 'true');
+        bubbleHost.style.cssText = 'position:fixed;left:0;bottom:0;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity 90ms linear;max-width:min(640px,60vw);';
+        const root = bubbleHost.attachShadow({ mode: 'closed' });
+        const style = document.createElement('style');
+        style.textContent =
+          '.b{margin:0 0 6px 6px;padding:4px 9px;border-radius:7px;font:12px/1.4 var(--font-sans,"Google Sans"),system-ui,sans-serif;' +
+          'background:var(--surface,#fff);color:var(--muted,#555);border:1px solid color-mix(in srgb,var(--text,#111) 16%,transparent);' +
+          'box-shadow:0 2px 8px rgba(0,0,0,.18);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;unicode-bidi:plaintext}' +
+          '.h{color:var(--text,#111);font-weight:600}';
+        const b = document.createElement('div');
+        b.className = 'b';
+        const pre = document.createElement('span');
+        const host = document.createElement('span');
+        host.className = 'h';
+        const rest = document.createElement('span');
+        b.append(pre, host, rest);
+        root.append(style, b);
+        bubbleParts = { pre, host, rest };
+        document.documentElement.appendChild(bubbleHost);
+      }
+      bubbleParts.pre.textContent = String(parts.pre || '');
+      bubbleParts.host.textContent = String(parts.host || '');
+      bubbleParts.rest.textContent = String(parts.rest || '');
+      // Out of the pointer's way: to the right when the pointer is at the bottom-left.
+      const right = mouse.y > innerHeight - 48 && mouse.x < Math.min(660, innerWidth * 0.6);
+      bubbleHost.style.left = right ? 'auto' : '0';
+      bubbleHost.style.right = right ? '6px' : 'auto';
+      bubbleHost.style.opacity = '1';
+    };
+
     // -- files dropped on the window -----------------------------------------
     // The composer takes drops on itself. Anywhere else, Chromium would try to
     // open the file, which the app blocks, so the drop silently did nothing.
