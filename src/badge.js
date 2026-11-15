@@ -39,28 +39,40 @@ function createBadge(deps) {
   };
 }
 
-// macOS only enables the Notification Centre entry (banners, sounds, "Badge
-// application icon") for an app after it has asked for authorization, and
-// Electron asks only when the app first posts a native notification. The
-// webmail uses the Web Notification API, whose permission this shell grants
-// itself, so macOS is never asked until the first new-mail banner is attempted,
-// which may be never. Post one quiet notification, once per profile, at a
-// moment the user has just opened the app, so the system prompt appears then.
-function requestNativeNotificationAuthorization(deps) {
-  const { Notification, userDataDir, platform } = deps;
+// macOS 26 and later gate BOTH banners and the Dock badge on notification
+// authorization, and the OS asks only ONCE per bundle id: Electron requests
+// authorization at every launch, but the first request is shown as a transient
+// banner that vanishes if nobody clicks it, after which every request fails
+// instantly (UNErrorDomain 1) and the app can never prompt again. Posting a
+// notification does not help (measured on macOS 27 with Electron 45: the
+// notification is accepted and the request still fails). The only way back is
+// the user switching it on in System Settings, so say so once and open the pane.
+const SETTINGS_URL = 'x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=ke.govconnect.taifamail';
+
+function openNotificationSettings(shell) {
+  return shell.openExternal(SETTINGS_URL);
+}
+
+function showNotificationGuidanceOnce(deps) {
+  const { dialog, shell, win, userDataDir, platform } = deps;
   if (platform !== 'darwin') return false;
-  const marker = path.join(userDataDir, 'notification-authorization.json');
+  const marker = path.join(userDataDir, 'notification-guidance.json');
   try {
     if (fs.existsSync(marker)) return false;
-  } catch { /* fall through and try */ }
-  if (!Notification.isSupported()) return false;
-  const n = new Notification({
-    title: 'Taifa Mail notifications are on',
-    body: 'You will see new mail here. Change this in System Settings, Notifications.',
-    silent: true,
-  });
-  n.show();
-  try { fs.writeFileSync(marker, JSON.stringify({ requestedAt: new Date().toISOString() })); } catch { /* retry next launch */ }
+  } catch { /* fall through */ }
+  try { fs.writeFileSync(marker, JSON.stringify({ shownAt: new Date().toISOString() })); } catch { /* ask again next launch */ }
+  dialog
+    .showMessageBox(win, {
+      type: 'info',
+      buttons: ['Open Notification Settings', 'Not now'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Taifa Mail',
+      message: 'Turn on notifications for Taifa Mail',
+      detail: 'To see new-mail banners and the unread count on the Dock icon, allow notifications for Taifa Mail in System Settings, Notifications. You can open that page from the Help menu at any time.',
+    })
+    .then(({ response }) => { if (response === 0) return openNotificationSettings(shell); })
+    .catch(() => {});
   return true;
 }
 
@@ -74,4 +86,4 @@ const NOTIFY_PREF_KEY = 'taifa_mb_notifications';
 const SEED_NOTIFY_PREF_JS =
   `(() => { try { if (localStorage.getItem('${NOTIFY_PREF_KEY}') === null) { localStorage.setItem('${NOTIFY_PREF_KEY}', 'on'); return 'seeded'; } return localStorage.getItem('${NOTIFY_PREF_KEY}'); } catch (e) { return 'error'; } })()`;
 
-module.exports = { NOTIFY_PREF_KEY, SEED_NOTIFY_PREF_JS, parseUnread, createBadge, requestNativeNotificationAuthorization };
+module.exports = { NOTIFY_PREF_KEY, SEED_NOTIFY_PREF_JS, parseUnread, createBadge, showNotificationGuidanceOnce, openNotificationSettings, SETTINGS_URL };

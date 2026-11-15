@@ -53,7 +53,7 @@ const { mailtoToRoute } = require('./mailto');
 const { shouldReloadAfterFailedNavigation } = require('./route');
 const { handleWillPreventUnload } = require('./unload-guard');
 const windowState = require('./window-state');
-const { parseUnread, createBadge, requestNativeNotificationAuthorization, SEED_NOTIFY_PREF_JS } = require('./badge');
+const { parseUnread, createBadge, showNotificationGuidanceOnce, openNotificationSettings, SEED_NOTIFY_PREF_JS } = require('./badge');
 const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
 
 const PARTITION = 'persist:taifamail';
@@ -251,10 +251,10 @@ function createWindow() {
       if (TIMING && !appLoaded) console.log(`[timing] launch to webmail loaded: ${Date.now() - LAUNCHED_AT}ms`);
       win.webContents.executeJavaScript(SEED_NOTIFY_PREF_JS).catch(() => {});
       if (!appLoaded) {
-        // First real load: let macOS enable banners and the dock badge.
+        // First real load: point the user at the macOS switch for banners and the dock badge.
         try {
-          requestNativeNotificationAuthorization({ Notification, userDataDir: app.getPath('userData'), platform: process.platform });
-        } catch (e) { console.warn('[shell] notification authorization request failed:', e && e.message); }
+          showNotificationGuidanceOnce({ dialog, shell, win, userDataDir: app.getPath('userData'), platform: process.platform });
+        } catch (e) { console.warn('[shell] notification guidance failed:', e && e.message); }
       }
       if (!appLoaded && process.env.TAIFA_SMOKE_NOTIFY === '1') {
         // Release smoke test hook: proves a native notification reaches the
@@ -696,6 +696,7 @@ function createAppMenu() {
           label: 'Taifa Mail Help',
           click: () => shell.openExternal('https://govconnect.ke/docs'),
         },
+        ...(isMac ? [{ type: 'separator' }, { label: 'Notification Settings...', click: () => openNotificationSettings(shell) }] : []),
         ...(isMac ? [] : [{ type: 'separator' }, { label: 'Check for Updates...', click: () => checkManual() }, { role: 'about' }]),
       ],
     },
