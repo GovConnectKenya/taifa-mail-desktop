@@ -70,3 +70,23 @@ test('a failed in-page navigation never reloads the webmail', () => {
   assert.strictEqual(f('file:///app/src/shell/offline.html', o), true);
   assert.strictEqual(f('', o), true);
 });
+
+test('unload guard: Stay keeps the page, Leave overrides it, hidden window gets an unparented dialog', () => {
+  const { handleWillPreventUnload } = require('../src/unload-guard');
+  const mk = (choice, visible) => {
+    const calls = []; let prevented = false;
+    const dialog = { showMessageBoxSync: (...a) => { calls.push(a); return choice; } };
+    const win = { isDestroyed: () => false, isVisible: () => visible };
+    const r = handleWillPreventUnload({ dialog, win }, { preventDefault: () => { prevented = true; } });
+    return { r, prevented, calls };
+  };
+  const stay = mk(0, true);
+  assert.deepStrictEqual([stay.r, stay.prevented], [false, false]);
+  assert.strictEqual(stay.calls[0].length, 2);
+  assert.strictEqual(stay.calls[0][1].defaultId, 0);
+  assert.strictEqual(stay.calls[0][1].message, 'A message is still being sent. Leave anyway?');
+  const leave = mk(1, true);
+  assert.deepStrictEqual([leave.r, leave.prevented], [true, true]);
+  const hidden = mk(1, false);
+  assert.strictEqual(hidden.calls[0].length, 1);
+});

@@ -25,6 +25,7 @@ const {
   ipcMain,
   nativeImage,
   nativeTheme,
+  dialog,
   Notification,
   powerMonitor,
   screen,
@@ -50,6 +51,7 @@ const { harden, installSessionHandlers } = require('./security');
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
 const { shouldReloadAfterFailedNavigation } = require('./route');
+const { handleWillPreventUnload } = require('./unload-guard');
 const windowState = require('./window-state');
 const { parseUnread, createBadge, requestNativeNotificationAuthorization, SEED_NOTIFY_PREF_JS } = require('./badge');
 const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
@@ -281,6 +283,15 @@ function createWindow() {
     badge.set(n);
     if (tray && !tray.isDestroyed()) tray.setToolTip(unreadTooltip(''));
     pushTrayState();
+  });
+
+  // The webmail cancels beforeunload while a send is pending. Without this
+  // handler that silently blocks reloads, quit and the updater restart.
+  win.webContents.on('will-prevent-unload', (e) => {
+    const leave = handleWillPreventUnload({ dialog, win }, e);
+    // Stay during a quit or an updater restart cancels the quit. Clear the flag
+    // so a later window close hides to the tray again instead of destroying it.
+    if (!leave) isQuitting = false;
   });
 
   // Keep the app alive in the tray. A mail client that quits when you close the
