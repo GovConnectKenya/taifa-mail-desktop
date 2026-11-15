@@ -294,7 +294,15 @@ function pageShim(cfg) {
       // Something must show for every drop: an upload row, or an error row. A
       // row that appears and is then silently removed (the server refused the
       // upload) is a failure too, so the row must still be there a moment later.
-      const ok = (await waitFor(() => attachRows() > before, 6000)) && (await new Promise((r) => setTimeout(r, 3000)), attachRows() > before);
+      const held = async () => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < 8000) {
+          await new Promise((r) => setTimeout(r, 400));
+          if (attachRows() <= before) return false;
+        }
+        return true;
+      };
+      const ok = (await waitFor(() => attachRows() > before, 6000)) && (await held());
       say(cfg.drop + JSON.stringify({ outcome: ok ? 'attached' : 'failed', count: files.length, names }));
     };
     window.addEventListener('dragover', (e) => {
