@@ -173,6 +173,26 @@ let onBackendHeaders = null;
 // answer came. Feeds the server-health signal (connection.js).
 let onBackendRequest = null;
 
+// How long a backend read may wait for its response headers before the app
+// gives up on it. Round 3: a server that accepted connections and never
+// answered left 14 hung sockets, which used up Chromium's per-host pool, so
+// the app sent nothing for over 80 s after the server came back. Only reads
+// (GET, HEAD) to the backend get a deadline: aborting a write (a send, a
+// move) the server may already have done could make the page do it twice.
+// The deadline covers the wait for headers only, never a body being streamed.
+const READ_DEADLINE_MS = 30000;
+function requestDeadline(method, url, appOrigin = APP_ORIGIN) {
+  const m = String(method || 'GET').toUpperCase();
+  if (m !== 'GET' && m !== 'HEAD') return 0;
+  let u;
+  try {
+    u = new URL(url);
+  } catch (_) {
+    return 0;
+  }
+  return u.origin === appOrigin && (u.pathname === '/health' || u.pathname.startsWith('/v1/') || u.pathname.startsWith('/auth/')) ? READ_DEADLINE_MS : 0;
+}
+
 function passThrough(ses, req) {
   const started = NET_LOG ? Date.now() : 0;
   const url = new URL(req.url);
@@ -206,6 +226,25 @@ function passThrough(ses, req) {
       reject(e);
       return;
     }
+    // No headers within the deadline: abort, so the socket is freed, and fail
+    // the request the way a dropped connection would.
+    let timedOut = false;
+    const deadline = requestDeadline(req.method, req.url);
+    const timer = deadline
+      ? setTimeout(() => {
+          timedOut = true;
+          try {
+            rq.abort();
+          } catch (_) {}
+          settle(0);
+          if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> timed out after ${deadline}ms`);
+          reject(new Error('timed out'));
+        }, deadline)
+      : null;
+    const answered = () => {
+      if (timer) clearTimeout(timer);
+      return !timedOut;
+    };
     for (const [name, value] of req.headers) {
       if (SKIP_REQUEST_HEADERS.has(name.toLowerCase())) continue;
       try {
@@ -218,6 +257,7 @@ function passThrough(ses, req) {
     rq.on('redirect', (status, _method, location, headers) => {
       // Cookies on the redirect itself are already in the jar.
       rq.abort();
+      if (!answered()) return;
       const out = new Headers();
       for (const [name, values] of Object.entries(headers || {})) {
         if (SKIP_RESPONSE_HEADERS.has(name.toLowerCase())) continue;
@@ -230,6 +270,10 @@ function passThrough(ses, req) {
     });
 
     rq.on('response', (res) => {
+      if (!answered()) {
+        res.resume();
+        return;
+      }
       const out = new Headers();
       for (const [name, values] of Object.entries(res.headers)) {
         if (SKIP_RESPONSE_HEADERS.has(name.toLowerCase())) continue;
@@ -266,6 +310,7 @@ function passThrough(ses, req) {
     });
 
     rq.on('error', (e) => {
+      if (!answered()) return;
       settle(0);
       if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> error ${e.message}`);
       reject(e);
@@ -360,4 +405,4 @@ function uninstallBundle(ses) {
   }
 }
 
-module.exports = { installBundle, uninstallBundle, hasBundle, bundleInfo, RENDERER_DIR };
+module.exports = { installBundle, uninstallBundle, hasBundle, bundleInfo, requestDeadline, READ_DEADLINE_MS, RENDERER_DIR };
