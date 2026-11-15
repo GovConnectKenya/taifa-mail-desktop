@@ -71,6 +71,7 @@ const { buildMenuTemplate, menuSignature } = require('./menu');
 const { buildContextMenuTemplate, pickSpellLanguages } = require('./context-menu');
 const { createNotifier } = require('./notifier');
 const { printConversation } = require('./print');
+const { dropAlert } = require('./drop');
 const prefs = require('./prefs');
 
 const PARTITION = 'persist:taifamail';
@@ -1578,29 +1579,17 @@ function showContextMenu(w, params) {
   Menu.buildFromTemplate(template).popup({ window: w, frame: params.frame || undefined });
 }
 
-// A file drop the page could not attach (page-shim.js): say so, on the window
-// it happened in. At most one sheet every few seconds.
+// A file drop the page could not attach (page-shim.js): one accurate message
+// (drop.js), on the window it happened in, at most one sheet every few seconds.
+// When the page explained the failure itself, the app says nothing.
 let lastDropAlert = 0;
 function handleDropResult(w, data) {
-  const outcome = data && data.outcome;
-  appendLine(pageLogFile(), formatLine({ level: 'info', msg: `drop ${outcome} count=${Number(data && data.count) || 0}` }));
-  if (outcome === 'attached' || !isMailWindow(w)) return;
+  appendLine(pageLogFile(), formatLine({ level: 'info', msg: `drop ${data && data.outcome} count=${Number(data && data.count) || 0}` }));
+  const alert = dropAlert(data);
+  if (!alert || !isMailWindow(w)) return;
   if (Date.now() - lastDropAlert < 3000) return;
   lastDropAlert = Date.now();
-  const n = Number(data.count) || 0;
-  const names = Array.isArray(data.names) ? data.names.map((x) => String(x).slice(0, 80)).slice(0, 5) : [];
-  dialog
-    .showMessageBox(w, {
-      type: 'warning',
-      message: n === 1 ? 'The file could not be attached' : 'The files could not be attached',
-      detail:
-        (outcome === 'no-composer'
-          ? `Taifa Mail could not open a new message to attach ${n === 1 ? 'it' : 'them'} to.`
-          : `The upload did not start or did not finish. Check your connection and try attaching ${n === 1 ? 'it' : 'them'} again.`) +
-        (names.length ? `\n\n${names.join('\n')}` : ''),
-      buttons: ['OK'],
-    })
-    .catch(() => {});
+  dialog.showMessageBox(w, { type: 'warning', message: alert.message, detail: alert.detail, buttons: ['OK'] }).catch(() => {});
 }
 
 // The backend said the bundled webmail is older than it supports

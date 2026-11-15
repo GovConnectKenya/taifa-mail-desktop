@@ -265,8 +265,27 @@ function pageShim(cfg) {
         tick();
       });
     let preDrop = 0;
+    // What the page itself says about a drop: the webmail explains a refused
+    // upload in a toast ("x.csv was not attached: ..."). When it has, the app
+    // must not add a second, different explanation on top.
+    const toastText = () => {
+      const v = q('.toast-viewport');
+      return v ? String(v.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    };
     const deliver = async (files, viaComposer) => {
       const names = files.map((f) => f.name).slice(0, 5);
+      const said = [];
+      const listen = new MutationObserver(() => {
+        const t = toastText();
+        if (t && !said.includes(t)) said.push(t);
+      });
+      listen.observe(document.body, { subtree: true, childList: true, characterData: true });
+      const pageSpoke = () =>
+        said.some((t) => names.some((n) => n && t.includes(n)) || /\b(attach|upload)/i.test(t));
+      const report = (outcome) => {
+        listen.disconnect();
+        say(cfg.drop + JSON.stringify({ outcome: outcome !== 'attached' && pageSpoke() ? 'page-reported' : outcome, count: files.length, names, online: navigator.onLine }));
+      };
       const before = viaComposer ? preDrop : attachRows();
       let input = viaComposer ? null : fileInput();
       if (!viaComposer && !input) {
@@ -276,7 +295,7 @@ function pageShim(cfg) {
         else location.href = '/#INBOX?compose=new';
         input = await waitFor(fileInput, 5000);
         if (!input) {
-          say(cfg.drop + JSON.stringify({ outcome: 'no-composer', count: files.length, names }));
+          report('no-composer');
           return;
         }
       }
@@ -287,7 +306,7 @@ function pageShim(cfg) {
           input.files = dt.files;
           input.dispatchEvent(new Event('change', { bubbles: true }));
         } catch (_) {
-          say(cfg.drop + JSON.stringify({ outcome: 'failed', count: files.length, names }));
+          report('failed');
           return;
         }
       }
@@ -303,7 +322,7 @@ function pageShim(cfg) {
         return true;
       };
       const ok = (await waitFor(() => attachRows() > before, 6000)) && (await held());
-      say(cfg.drop + JSON.stringify({ outcome: ok ? 'attached' : 'failed', count: files.length, names }));
+      report(ok ? 'attached' : 'failed');
     };
     window.addEventListener('dragover', (e) => {
       if (!hasFiles(e)) return;
