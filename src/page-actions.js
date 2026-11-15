@@ -127,18 +127,44 @@ async function pageAction(name, arg) {
     }
 
     case 'compose': {
+      // The page's own Compose control: the rail's primary button, or the
+      // phone layout's floating one. Pressing it runs the page's startCompose,
+      // which tucks any other composer (a minimised reply included) and opens
+      // a new message. Rewriting the route to ?compose=new did nothing while
+      // a reply was minimised, since its route already carried compose=reply.
+      const composeButton = () =>
+        [...document.querySelectorAll('.tm-shell-primary, .tm-compose-fab')].find((b) => {
+          const name = ((b.getAttribute('aria-label') || '') + ' ' + (b.textContent || '')).trim();
+          return /\bcompose\b/i.test(name) && !b.disabled;
+        }) || null;
+      const expanded = () => q('.compose:not(.minimized)');
       if (!onMail()) {
-        link('/#INBOX?compose=new');
-        return 'link';
+        // From another page: open the mail page, then compose there.
+        link('/#INBOX');
+        const ready = await waitFor(() => superseded() || (onMail() && composeButton()), 6000);
+        if (superseded()) return 'superseded';
+        if (!ready) {
+          link('/#INBOX?compose=new');
+          return 'link';
+        }
       }
       // A message is already being written: bring it forward instead.
-      const open = q('.compose:not(.minimized)');
+      const open = expanded();
       if (open) {
         const f = open.querySelector('input, [contenteditable="true"]');
         if (f) f.focus();
         return 'focused';
       }
-      // Stay where the user is: compose over the current folder, not the Inbox.
+      const b = composeButton();
+      if (b) {
+        b.click();
+        if (await waitFor(expanded, 2000)) return 'button';
+      }
+      // No button on screen (an unusual layout): the page's own "c" shortcut,
+      // live while every composer is only a minimised bar.
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', code: 'KeyC', bubbles: true, cancelable: true }));
+      if (await waitFor(expanded, 1000)) return 'key';
+      // Last resort, the route: compose over the current folder, not the Inbox.
       const base = location.hash.split('?')[0] || '#INBOX';
       location.hash = base + '?compose=new';
       return 'hash';

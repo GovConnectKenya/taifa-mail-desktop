@@ -315,12 +315,39 @@ function pageShim(cfg) {
         }, 60);
       }
     };
-    // One .att row per attachment, in any phase (MailComposerCore.svelte).
-    const attachRows = () => document.querySelectorAll('.compose .att').length;
+    // One .att row per attachment, in any phase (MailComposerCore.svelte),
+    // counted in the expanded composer only: a minimised reply's attachments
+    // are not the ones being dropped.
+    const attachRows = () => document.querySelectorAll('.compose:not(.minimized) .att').length;
     const fileInput = () => {
-      const c = q('.compose');
+      const c = q('.compose:not(.minimized)');
       if (!c) return null;
       return [...c.querySelectorAll('input[type="file"][multiple]')].find((i) => !i.accept) || null;
+    };
+    // A new message, opened the way the user would: the page's own Compose
+    // control (the rail's primary button, or the phone layout's floating
+    // one), else its "c" shortcut, and only then the ?compose=new route. The
+    // route alone did nothing while a reply was minimised (its route already
+    // carries compose=reply), so a drop then reported "no composer".
+    const openNewMessage = async () => {
+      const b = [...document.querySelectorAll('.tm-shell-primary, .tm-compose-fab')].find((x) => {
+        const name = ((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '')).trim();
+        return /\bcompose\b/i.test(name) && !x.disabled;
+      });
+      if (b && location.pathname === '/') {
+        b.click();
+        const i = await waitFor(fileInput, 2500);
+        if (i) return i;
+      }
+      if (location.pathname === '/') {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', code: 'KeyC', bubbles: true, cancelable: true }));
+        const i = await waitFor(fileInput, 1200);
+        if (i) return i;
+        location.hash = (location.hash.replace(/\?.*$/, '') || '#INBOX') + '?compose=new';
+      } else {
+        location.href = '/#INBOX?compose=new';
+      }
+      return waitFor(fileInput, 5000);
     };
     const waitFor = (fn, ms) =>
       new Promise((resolve) => {
@@ -357,11 +384,8 @@ function pageShim(cfg) {
       const before = viaComposer ? preDrop : attachRows();
       let input = viaComposer ? null : fileInput();
       if (!viaComposer && !input) {
-        // No composer: open a new message where the user is, then attach.
-        const h = location.hash.replace(/\?.*$/, '') || '#INBOX';
-        if (location.pathname === '/') location.hash = h + '?compose=new';
-        else location.href = '/#INBOX?compose=new';
-        input = await waitFor(fileInput, 5000);
+        // No composer in front: open a new message where the user is, then attach.
+        input = await openNewMessage();
         if (!input) {
           report('no-composer');
           return;
