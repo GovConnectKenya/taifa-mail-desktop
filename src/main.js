@@ -77,7 +77,7 @@ const { testNotificationReport } = require('./notify-test');
 const { connectionView, createServerHealth, shouldProbe } = require('./connection');
 const { linkStatusParts } = require('./link-status');
 const { createFinder } = require('./find');
-const { MESSAGE_SIZE, isConversationRoute, messageWindowCss, shouldCloseOnNavigate, messageTitle } = require('./message-window');
+const { MESSAGE_SIZE, isConversationRoute, messageWindowCss, shouldCloseOnNavigate, messageTitle, placeMessageWindow, FOLLOW_JS, FOLLOW_CHECK_JS } = require('./message-window');
 const prefs = require('./prefs');
 
 const PARTITION = 'persist:taifamail';
@@ -273,7 +273,8 @@ function wireMailWindow(w) {
   // (and a full-screen window cannot be dragged), so the inset is switched off
   // and the top bar sits at the far left exactly as on the web. A zoomed
   // (maximised) window still shows the traffic lights, so it keeps the inset.
-  if (process.platform === 'darwin') {
+  // A message window has a native title bar, so none of this applies there.
+  if (process.platform === 'darwin' && !messageWindows.has(w)) {
     wc.on('dom-ready', () => {
       // A repeat dom-ready for the same document just adds an identical sheet.
       wc.insertCSS(MAC_TITLEBAR_CSS, { cssOrigin: 'user' }).catch(() => {});
@@ -413,17 +414,25 @@ function openMailWindow(route) {
   const anchor = BrowserWindow.getFocusedWindow() || win;
   const ab = anchor && !anchor.isDestroyed() ? anchor.getBounds() : null;
   const message = isConversationRoute(route);
-  const size = message ? MESSAGE_SIZE : { width: 1200, height: 820 };
+  // A message window: its own remembered size and place, kept on screen, and
+  // a native title bar that shows the subject (message-window.js).
+  const bounds = message
+    ? placeMessageWindow({
+        saved: prefs.get('messageWindowBounds') || null,
+        displays: screen.getAllDisplays().map((d) => d.workArea),
+        open: [...messageWindows].filter((m) => !m.isDestroyed()).map((m) => m.getBounds()),
+        anchor: ab,
+      })
+    : { width: 1200, height: 820, ...(ab ? { x: ab.x + 28, y: ab.y + 28 } : {}) };
   const w = new BrowserWindow({
-    ...size,
-    ...(ab ? { x: ab.x + 28, y: ab.y + 28 } : {}),
+    ...bounds,
     minWidth: message ? 520 : 720,
     minHeight: 520,
     show: false,
     backgroundColor: THEME_BG[currentTheme],
     icon: process.platform === 'linux' ? brandingPath('icon.png') : undefined,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 14 } : undefined,
+    titleBarStyle: process.platform === 'darwin' && !message ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === 'darwin' && !message ? { x: 18, y: 14 } : undefined,
     title: message ? 'Taifa Mail' : undefined,
     webPreferences: mailWebPreferences(),
   });
@@ -431,14 +440,29 @@ function openMailWindow(route) {
     messageWindows.add(w);
     const wc = w.webContents;
     // Reader only, styled before the page draws, so the full client never flashes.
-    wc.on('dom-ready', () => { wc.insertCSS(messageWindowCss(process.platform), { cssOrigin: 'user' }).catch(() => {}); });
+    wc.on('dom-ready', () => {
+      wc.insertCSS(messageWindowCss(), { cssOrigin: 'user' }).catch(() => {});
+      wc.executeJavaScript(FOLLOW_JS, true).catch(() => {});
+    });
     // The title is the subject, not the page's "Inbox · Taifa Mail".
     w.on('page-title-updated', (e) => e.preventDefault());
+    // Remember where the user put it, for the next message window.
+    w.on('close', () => {
+      if (!w.isDestroyed() && !w.isFullScreen() && !w.isMinimized()) prefs.set('messageWindowBounds', w.getNormalBounds());
+    });
     // A window for THIS conversation: when it goes away, so does the window.
+    // Newer and older (the reader's buttons, j and k) move the window along.
     let home = '';
-    wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
-      if (isMainFrame === false || !home) return;
-      if (shouldCloseOnNavigate(home, url) && !w.isDestroyed()) w.close();
+    wc.on('did-navigate-in-page', async (_e, url, isMainFrame) => {
+      if (isMainFrame === false || !home || !shouldCloseOnNavigate(home, url) || w.isDestroyed()) return;
+      const followed = await wc.executeJavaScript(FOLLOW_CHECK_JS, true).catch(() => false);
+      if (w.isDestroyed()) return;
+      if (followed === true && isConversationRoute(new URL(url).pathname + new URL(url).hash)) {
+        home = url;
+        syncMessageTitle(w);
+        return;
+      }
+      w.close();
     });
     wc.on('did-finish-load', () => {
       home = wc.getURL();
@@ -1438,7 +1462,7 @@ html:not([data-taifa-fullscreen]):not(:has(.tm-shell-topbar)) body::before {
 // off the attribute), the inset in screen pixels, and the traffic lights
 // centred on the 60px top bar at any zoom.
 function syncWindowChrome(w) {
-  if (!isMailWindow(w) || process.platform !== 'darwin') return;
+  if (!isMailWindow(w) || process.platform !== 'darwin' || messageWindows.has(w)) return;
   const on = w.isFullScreen();
   const z = w.webContents.getZoomFactor() || 1;
   const inset = (88 / z).toFixed(2);
