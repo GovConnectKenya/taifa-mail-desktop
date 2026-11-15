@@ -12,8 +12,8 @@
 // small app scheme served by the main process (which reads app.asar fine)
 // keeps the fuse off and gives the pages a clean, non-file origin.
 //
-// The scheme is deliberately narrow: it serves an exact allowlist of two HTML
-// files, nothing else, and carries only the 'standard' and 'secure' privileges
+// The scheme is deliberately narrow: it serves an exact allowlist of fixed files
+// (the pages and the About window's logo, icons and fonts), nothing else, and carries only the 'standard' and 'secure' privileges
 // (no fetch, no CORS, no CSP bypass, no service workers).
 
 const fs = require('fs');
@@ -27,7 +27,26 @@ const HOST = 'app';
 const PAGES = Object.freeze({
   'tray/popover.html': 'tray/popover.html',
   'shell/offline.html': 'shell/offline.html',
+  // The About window (src/about): one page plus its logo, icons and fonts.
+  'about/about.html': 'about/about.html',
+  'about/logo.svg': 'about/logo.svg',
+  'about/logo-white.svg': 'about/logo-white.svg',
+  'about/icons/refresh.svg': 'about/icons/refresh.svg',
+  'about/icons/close.svg': 'about/icons/close.svg',
+  'about/icons/document.svg': 'about/icons/document.svg',
+  'about/icons/support.svg': 'about/icons/support.svg',
+  'about/icons/tick.svg': 'about/icons/tick.svg',
+  'about/icons/chevron-left.svg': 'about/icons/chevron-left.svg',
+  'about/fonts/GoogleSans-Regular.woff2': 'about/fonts/GoogleSans-Regular.woff2',
+  'about/fonts/GoogleSans-Medium.woff2': 'about/fonts/GoogleSans-Medium.woff2',
+  'about/fonts/GoogleSans-SemiBold.woff2': 'about/fonts/GoogleSans-SemiBold.woff2',
+  'about/fonts/JetBrainsMono-Regular.woff2': 'about/fonts/JetBrainsMono-Regular.woff2',
 });
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
+function contentType(file) {
+  return TYPES[path.extname(file)] || 'application/octet-stream';
+}
 
 function uiUrl(page) {
   if (!Object.prototype.hasOwnProperty.call(PAGES, page)) throw new Error(`unknown ui page: ${page}`);
@@ -65,7 +84,7 @@ function installUiScheme(ses, root) {
       const body = await fs.promises.readFile(file);
       return new Response(body, {
         status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+        headers: { 'content-type': contentType(file), 'cache-control': 'no-store' },
       });
     } catch (_) {
       return new Response('Not found', { status: 404 });
@@ -73,4 +92,4 @@ function installUiScheme(ses, root) {
   });
 }
 
-module.exports = { SCHEME, HOST, PAGES, uiUrl, resolveUiRequest, registerUiScheme, installUiScheme };
+module.exports = { contentType, SCHEME, HOST, PAGES, uiUrl, resolveUiRequest, registerUiScheme, installUiScheme };

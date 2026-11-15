@@ -50,7 +50,8 @@ const { APP_ORIGIN, APP_URL, THEME_BG, THEME_COOKIE } = require('./config');
 const { harden, installSessionHandlers } = require('./security');
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
-const { createNotificationState, detect: detectNotificationState, settingsTarget, linuxGuidance, DOCS_URL } = require('./notify-state');
+const { createNotificationState, detect: detectNotificationState, settingsTarget, linuxGuidance, permissionOverrideScript, createSettingsGate, DOCS_URL } = require('./notify-state');
+const { ABOUT_SIZE, aboutLink, chromiumLicencePath, buildAboutInfo } = require('./about');
 const { shouldReloadAfterFailedNavigation } = require('./route');
 const { handleWillPreventUnload } = require('./unload-guard');
 const windowState = require('./window-state');
@@ -68,6 +69,7 @@ registerUiScheme();
 let win = null;
 let tray = null;
 let trayWin = null;
+let aboutWin = null;
 let isQuitting = false;
 // Unread count, parsed from the webmail's document title (see the
 // page-title-updated handler). Drives the tray tooltip, the dock badge and the
@@ -212,6 +214,18 @@ function createWindow() {
   if (bounds.isMaximized) win.maximize();
   windowState.track(win);
 
+  for (const ev of ['focus', 'blur', 'show', 'hide', 'minimize', 'restore']) win.on(ev, syncAudioMute);
+  win.webContents.on('dom-ready', applyFocusShim);
+  win.webContents.on('dom-ready', applyPermissionOverride);
+  win.webContents.on('console-message', (event, ...rest) => {
+    const message = typeof event === 'object' && event && typeof event.message === 'string' ? event.message : rest[1];
+    if (message === FOCUS_MARK) showWindow();
+  });
+  // A settings click is the only time the OS settings may open (settingsGate).
+  win.webContents.on('input-event', (_e, input) => {
+    if (input && (input.type === 'mouseDown' || input.type === 'keyDown' || input.type === 'rawKeyDown')) settingsGate.noteGesture();
+  });
+
   win.once('ready-to-show', () => {
     win.show();
     if (TIMING) console.log(`[timing] launch to ready-to-show: ${Date.now() - LAUNCHED_AT}ms`);
@@ -257,6 +271,8 @@ function createWindow() {
       clearRetry();
       if (TIMING && !appLoaded) console.log(`[timing] launch to webmail loaded: ${Date.now() - LAUNCHED_AT}ms`);
       win.webContents.executeJavaScript(SEED_NOTIFY_PREF_JS).catch(() => {});
+      applyPermissionOverride();
+      applyFocusShim();
       if (!appLoaded && process.env.TAIFA_SMOKE_NOTIFY === '1') {
         // Release smoke test hook: proves a native notification reaches the
         // platform's notification service. Never set in normal use.
@@ -282,6 +298,7 @@ function createWindow() {
     if (n === unreadCount) return;
     unreadCount = n;
     badge.set(n);
+    if (n > 0) scheduleBadgeProbe();
     if (tray && !tray.isDestroyed()) tray.setToolTip(unreadTooltip(''));
     pushTrayState();
   });
@@ -315,9 +332,47 @@ function showWindow() {
     createWindow();
     return;
   }
+  // macOS: an app hidden with Cmd+H keeps its windows hidden until the APP is
+  // unhidden, and win.show() alone does not do that.
+  if (process.platform === 'darwin') app.show();
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  if (process.platform === 'darwin') app.focus({ steal: true });
+}
+
+// Clicking a new-mail notification. The webmail's click handler calls
+// window.focus() and then opens the thread. Measured in Electron 45: a
+// renderer window.focus() reaches the browser process as NOTHING (no webContents
+// or window event, the window stays hidden, minimised or behind), on every
+// platform. So the app wraps window.focus() in the page with a one-line shim
+// that reports the call through a console marker, and main brings the window
+// to the front. The shim only ever asks to be shown; a page that fakes the
+// marker can do no more than raise the window it already owns.
+const FOCUS_MARK = '\u0001taifa-focus-request';
+const FOCUS_SHIM_JS = `(() => {
+  try {
+    if (window.__taifaFocusShim) return;
+    window.__taifaFocusShim = true;
+    const orig = window.focus.bind(window);
+    window.focus = function () { try { console.debug(${JSON.stringify(FOCUS_MARK)}); } catch (_) {} return orig(); };
+  } catch (_) {}
+})()`;
+
+function applyFocusShim() {
+  if (!win || win.isDestroyed() || showingOffline) return;
+  win.webContents.executeJavaScript(FOCUS_SHIM_JS).catch(() => {});
+}
+
+// Page audio plays only while the window is in front. The webmail plays its own
+// chime on a new message (when its Sound preference is on) and, with the window
+// in the background, the OS also plays its notification sound for the banner:
+// two sounds. Muting the page while it is not in front leaves exactly one (the
+// OS one), and in front (no banner is shown then) the chime is the one.
+function syncAudioMute() {
+  if (!win || win.isDestroyed()) return;
+  const front = win.isVisible() && !win.isMinimized() && win.isFocused();
+  win.webContents.setAudioMuted(!front);
 }
 
 // The updater's onState callback: keep the tooltip and the (live) popover in
@@ -333,6 +388,7 @@ function updateStatusLabel() {
     tray.setToolTip(unreadTooltip(suffix));
   }
   pushTrayState();
+  pushAboutState();
 }
 
 function unreadTooltip(suffix) {
@@ -369,6 +425,206 @@ function buildTrayMenu() {
       },
     },
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// About window
+//
+// A small fixed-size window served from taifa-ui://app/about/about.html. It
+// replaces the native about panel. One instance: a second request focuses it.
+// macOS shows only the close traffic light (minimise and zoom are disabled by
+// the flags below); Windows and Linux are frameless and the page draws a close
+// button. Every bridge call arrives on a fixed channel and is accepted only from
+// this window's own contents.
+// ---------------------------------------------------------------------------
+
+const SMOKE_ABOUT = process.env.TAIFA_SMOKE_ABOUT === '1';
+
+function aboutInfo() {
+  return buildAboutInfo({ platform: process.platform, appVersion: app.getVersion(), bundle: bundleInfo(), update: getStatus() });
+}
+
+function pushAboutState() {
+  if (!aboutWin || aboutWin.isDestroyed()) return;
+  const s = getStatus();
+  aboutWin.webContents.send('about:update', { state: s.state, version: s.version, percent: s.percent });
+}
+
+function showAbout() {
+  if (aboutWin && !aboutWin.isDestroyed()) {
+    if (aboutWin.isMinimized()) aboutWin.restore();
+    aboutWin.show();
+    aboutWin.focus();
+    return aboutWin;
+  }
+  const isMac = process.platform === 'darwin';
+  aboutWin = new BrowserWindow({
+    width: ABOUT_SIZE.width,
+    height: ABOUT_SIZE.height,
+    useContentSize: true,
+    show: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: 'About Taifa Mail',
+    backgroundColor: THEME_BG[currentTheme],
+    icon: process.platform === 'linux' ? brandingPath('icon.png') : undefined,
+    frame: isMac,
+    titleBarStyle: isMac ? 'hiddenInset' : undefined,
+    trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  const w = aboutWin;
+  if (!isMac) w.setMenuBarVisibility(false);
+  w.once('ready-to-show', () => { if (!w.isDestroyed()) { w.show(); w.focus(); } });
+  w.on('closed', () => { if (aboutWin === w) aboutWin = null; });
+  w.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    if (isMainFrame) console.warn(`[shell] about window failed to load (${code} ${desc}): ${url}`);
+  });
+  w.loadURL(uiUrl('about/about.html'));
+  return w;
+}
+
+function fromAbout(e) {
+  return !!(aboutWin && !aboutWin.isDestroyed() && e.sender === aboutWin.webContents);
+}
+
+function registerAboutIpc() {
+  ipcMain.handle('about:info', (e) => (fromAbout(e) ? aboutInfo() : null));
+  ipcMain.on('about:check-updates', (e) => { if (fromAbout(e)) checkManual({ quiet: true }); });
+  ipcMain.on('about:restart-update', (e) => { if (fromAbout(e)) quitAndInstallNow(); });
+  ipcMain.on('about:close', (e) => { if (fromAbout(e)) aboutWin.close(); });
+  ipcMain.on('about:open', (e, key) => {
+    if (!fromAbout(e)) return;
+    const t = aboutLink(key);
+    if (!t) return;
+    if (t.url) shell.openExternal(t.url).catch(() => {});
+    else if (t.file) shell.openPath(chromiumLicencePath({ platform: process.platform, resourcesPath: process.resourcesPath, execPath: process.execPath })).catch(() => {});
+  });
+}
+
+// Release smoke test hook (never set in normal use): TAIFA_SMOKE_PERM=1 forces
+// the OS-blocked state and reports what the page sees: Notification.permission
+// (must read 'default'), what requestPermission() resolves to (must be
+// 'denied') and how many times the OS settings were asked to open.
+const SMOKE_PERM = process.env.TAIFA_SMOKE_PERM === '1';
+async function smokePerm() {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let opened = 0;
+  settingsOpenHook = () => { opened += 1; };
+  await wait(3000);
+  const js = (code) => win.webContents.executeJavaScript(code, true);
+  console.log(`[smoke] perm before block: ${await js('Notification.permission')}`);
+  notifyState.setBlocked('smoke');
+  await wait(600);
+  console.log(`[smoke] perm blocked: ${await js('Notification.permission')}`);
+  // No gesture (webmail asking on its own): must not open settings.
+  const r0 = await js("Notification.requestPermission()");
+  console.log(`[smoke] perm request without gesture: ${r0} settingsOpened=${opened}`);
+  // A click, then the request: opens once; a second request right after must not.
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: 300, y: 300, button: 'left', clickCount: 1 });
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: 300, y: 300, button: 'left', clickCount: 1 });
+  await wait(300);
+  const r1 = await js("Notification.requestPermission()");
+  const r2 = await js("Notification.requestPermission()");
+  console.log(`[smoke] perm request after click: ${r1} then ${r2} settingsOpened=${opened}`);
+  notifyState.setOk();
+  await wait(600);
+  console.log(`[smoke] perm unblocked: ${await js('Notification.permission')}`);
+  console.log('[smoke] done');
+  isQuitting = true;
+  app.quit();
+}
+
+// Release smoke test hook (never set in normal use): TAIFA_SMOKE_FOCUS=1 puts
+// the main window in each "not in front" state, then calls window.focus() from
+// the page (with a user gesture, as a notification click does) and reports what
+// the window did. This is how the click path was measured.
+const SMOKE_FOCUS = process.env.TAIFA_SMOKE_FOCUS === '1';
+async function smokeFocus() {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const state = () => `visible=${win.isVisible()} minimized=${win.isMinimized()} focused=${win.isFocused()}${process.platform === 'darwin' ? ` appHidden=${app.isHidden()}` : ''}`;
+  await wait(2500);
+  if (process.env.TAIFA_SMOKE_EVENTS === '1') for (const [label, o] of [['wc', win.webContents], ['win', win], ['app', app]]) { const e = o.emit; o.emit = function (n, ...a) { if (!/^(did-|page-|console|-)/.test(String(n))) console.log(`[evt] ${label} ${String(n)}`); return e.call(this, n, ...a); }; }
+  const scenarios = [
+    ['focused window', () => {}],
+    ['minimised', () => win.minimize()],
+    ['hidden to tray', () => win.hide()],
+    ...(process.platform === 'darwin' ? [['app hidden (Cmd+H)', () => app.hide()]] : []),
+  ];
+  for (const [name, setup] of scenarios) {
+    showWindow();
+    await wait(600);
+    setup();
+    await wait(800);
+    const before = state();
+    // Same handler shape as the webmail's desktop-notify.ts: a Notification
+    // whose onclick calls window.focus(). The click itself is dispatched from
+    // script (an OS banner click cannot be driven from here).
+    await win.webContents.executeJavaScript(
+      "(() => { const n = new Notification('Taifa Mail focus test', { tag: 'focus-test' }); n.onclick = () => { try { window.focus(); } catch (_) {} n.close(); }; n.dispatchEvent(new Event('click')); return 1; })()", true).catch(() => {});
+    await wait(900);
+    console.log(`[smoke] focus ${name}: before(${before}) after window.focus()(${state()})`);
+  }
+  console.log('[smoke] done');
+  isQuitting = true;
+  app.quit();
+}
+
+// Release smoke test hook (never set in normal use): TAIFA_SMOKE_ABOUT=1 opens
+// the About window, reports what it rendered and whether it got its bridge,
+// saves a light and a dark screenshot into TAIFA_SMOKE_ABOUT_DIR, then quits.
+async function smokeAbout() {
+  const fs = require('fs');
+  const dir = process.env.TAIFA_SMOKE_ABOUT_DIR;
+  const w = showAbout();
+  try {
+    await new Promise((resolve, reject) => {
+      w.webContents.once('did-finish-load', resolve);
+      w.webContents.once('did-fail-load', (_e, code, desc) => reject(new Error(`${code} ${desc}`)));
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    const probe = await w.webContents.executeJavaScript(
+      "JSON.stringify({ href: location.href, bridge: typeof window.taifaAbout, shell: typeof window.taifaShell, version: document.getElementById('v-app').textContent, webmail: document.getElementById('v-web').textContent, status: document.getElementById('status').textContent, closeButton: getComputedStyle(document.getElementById('close')).display, font: document.fonts.check(\"14px 'Google Sans'\") })");
+    console.log(`[smoke] about loaded ${probe}`);
+    const b = w.getContentBounds();
+    console.log(`[smoke] about size ${b.width}x${b.height} resizable=${w.isResizable()} minimizable=${w.isMinimizable()} maximizable=${w.isMaximizable()}`);
+    if (dir) {
+      fs.mkdirSync(dir, { recursive: true });
+      for (const scheme of ['light', 'dark']) {
+        nativeTheme.themeSource = scheme;
+        await new Promise((r) => setTimeout(r, 700));
+        const img = await w.webContents.capturePage();
+        fs.writeFileSync(path.join(dir, `about-${scheme}-${process.platform}.png`), img.toPNG());
+        console.log(`[smoke] about screenshot ${scheme}`);
+      }
+      // The licences view, scrolled to the top, in the current (dark) scheme.
+      await w.webContents.executeJavaScript("document.getElementById('lic').click()");
+      await new Promise((r) => setTimeout(r, 500));
+      fs.writeFileSync(path.join(dir, `about-licences-dark-${process.platform}.png`), (await w.webContents.capturePage()).toPNG());
+    }
+    // A second request must focus the same window, not make another.
+    const again = showAbout();
+    console.log(`[smoke] about single instance ${again === w} windows=${BrowserWindow.getAllWindows().filter((x) => x.webContents.getURL().includes('about/about.html')).length}`);
+    // Escape closes (from the licences view the first press steps back).
+    w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await new Promise((r) => setTimeout(r, 300));
+    w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await new Promise((r) => setTimeout(r, 600));
+    console.log(`[smoke] about closed by escape ${w.isDestroyed()}`);
+  } catch (e) {
+    console.log(`[smoke] about FAILED ${e && e.message}`);
+  }
+  console.log('[smoke] done');
+  isQuitting = true;
+  app.quit();
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +859,50 @@ function trackNotification(n) {
   return n;
 }
 
+// -- the webmail's enable path ------------------------------------------------
+// While the OS blocks notifications the page must read Notification.permission
+// as 'default' (so its enable button calls requestPermission), see
+// permissionOverrideScript in notify-state.js. Re-applied on every document and
+// whenever the state flips. The request handler then opens the OS settings and
+// answers 'denied', but only for a click: settingsGate.
+const settingsGate = createSettingsGate();
+
+function applyPermissionOverride() {
+  if (!win || win.isDestroyed() || showingOffline) return;
+  const blocked = notifyState.snapshot().status === 'blocked';
+  win.webContents.executeJavaScript(permissionOverrideScript(blocked)).catch(() => {});
+}
+notifyState.subscribe(applyPermissionOverride);
+
+let settingsOpenHook = null; // smoke tests only
+function onBlockedNotificationRequest() {
+  if (!settingsGate.shouldOpen()) return;
+  if (settingsOpenHook) settingsOpenHook();
+  else openNotificationHelp();
+}
+
+// Re-read the OS state. The launch probe can run before macOS has logged its
+// authorization verdict, so it is repeated on the first notification request
+// and a few seconds after the first badge. A verdict of 'unknown' changes nothing.
+function reprobeNotifications() {
+  return detectNotificationState({ platform: process.platform })
+    .then((r) => { if (r.status === 'blocked') notifyState.setBlocked(r.reason); else if (r.status === 'ok') notifyState.setOk(); })
+    .catch(() => {});
+}
+let firstRequestProbe = null;
+function onFirstNotificationRequest() {
+  if (!firstRequestProbe) {
+    firstRequestProbe = Promise.race([reprobeNotifications(), new Promise((r) => setTimeout(r, 2500))]);
+  }
+  return firstRequestProbe;
+}
+let badgeProbeScheduled = false;
+function scheduleBadgeProbe() {
+  if (badgeProbeScheduled) return;
+  badgeProbeScheduled = true;
+  setTimeout(() => { reprobeNotifications(); }, 4000);
+}
+
 function openNotificationHelp() {
   const { reason } = notifyState.snapshot();
   if (process.platform === 'linux') {
@@ -731,7 +1031,7 @@ function createAppMenu() {
           {
             label: app.name,
             submenu: [
-              { role: 'about' },
+              { label: 'About Taifa Mail', click: () => showAbout() },
               { type: 'separator' },
               settingsItem,
               defaultMailItem,
@@ -783,21 +1083,11 @@ function createAppMenu() {
         },
         { type: 'separator' },
         { label: 'Notification Settings...', click: () => openNotificationHelp() },
-        ...(isMac ? [] : [{ type: 'separator' }, { label: 'Check for Updates...', click: () => checkManual() }, { role: 'about' }]),
+        ...(isMac ? [] : [{ type: 'separator' }, { label: 'Check for Updates...', click: () => checkManual() }, { label: 'About Taifa Mail', click: () => showAbout() }]),
       ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
-
-function setAboutPanel() {
-  const info = bundleInfo();
-  app.setAboutPanelOptions({
-    applicationName: 'Taifa Mail',
-    applicationVersion: app.getVersion(),
-    version: info ? `webmail ${info.webmail} (${String(info.commit).slice(0, 9)})` : 'live webmail',
-    iconPath: brandingPath('icon.png'),
-  });
 }
 
 // The backend said the bundled webmail is older than it supports
@@ -866,10 +1156,8 @@ app.whenReady().then(async () => {
   installUiScheme(session.defaultSession, __dirname);
   // Read the OS notification state in the background: on macOS the verdict is in
   // our own unified log within a second of launch, well before the webmail asks.
-  detectNotificationState({ platform: process.platform })
-    .then((r) => { if (r.status === 'blocked') notifyState.setBlocked(r.reason); else if (r.status === 'ok') notifyState.setOk(); })
-    .catch(() => {});
-  installSessionHandlers(ses, { snapshot: () => notifyState.snapshot(), onBlockedRequest: openNotificationHelp });
+  reprobeNotifications();
+  installSessionHandlers(ses, { snapshot: () => notifyState.snapshot(), onBlockedRequest: onBlockedNotificationRequest, onFirstRequest: onFirstNotificationRequest });
   const bundled = installBundle(ses, { onTooOld: fallBackToLiveSite });
   if (!bundled) console.warn('[shell] no bundled webmail in renderer/: loading the live site');
 
@@ -889,7 +1177,10 @@ app.whenReady().then(async () => {
   applyTheme(await readThemePreference(ses));
   createAppMenu();
   createWindow();
-  setAboutPanel();
+  registerAboutIpc();
+  if (SMOKE_ABOUT) smokeAbout();
+  if (SMOKE_FOCUS) smokeFocus();
+  if (SMOKE_PERM) smokePerm();
   if (!app.isPackaged && process.platform === 'darwin') app.dock.setIcon(brandingPath('icon.png'));
 
   // Follow the webmail's theme toggle and, for 'system', the OS.
@@ -943,6 +1234,13 @@ app.whenReady().then(async () => {
     badge.reassert();
   });
   app.on('browser-window-focus', () => badge.reassert());
+  // macOS: clicking a notification banner activates the app. If the window is
+  // hidden or minimised at that moment, bring it back.
+  if (process.platform === 'darwin') {
+    app.on('did-become-active', () => {
+      if (win && !win.isDestroyed() && (!win.isVisible() || win.isMinimized()) && !isQuitting) showWindow();
+    });
+  }
 });
 
 // Deliberately a no-op: closing the last window hides to tray, it does not quit.

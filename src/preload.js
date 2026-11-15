@@ -25,7 +25,26 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-if (location.protocol === 'taifa-ui:' && location.hostname === 'app') {
+const IS_UI = location.protocol === 'taifa-ui:' && location.hostname === 'app';
+const IS_ABOUT = IS_UI && location.pathname === '/about/about.html';
+
+// The About window gets its own, smaller bridge and not taifaShell: it has no
+// use for the tray or retry calls. Every method is a fixed channel. open() takes
+// a KEY from a fixed set that main re-checks against its own allowlist, never a
+// URL or a path.
+if (IS_ABOUT) {
+  contextBridge.exposeInMainWorld('taifaAbout', {
+    getInfo: () => ipcRenderer.invoke('about:info'),
+    checkUpdates: () => ipcRenderer.send('about:check-updates'),
+    restartUpdate: () => ipcRenderer.send('about:restart-update'),
+    open: (key) => ipcRenderer.send('about:open', String(key)),
+    close: () => ipcRenderer.send('about:close'),
+    // Pushed by main on 'about:update' as { state, version, percent }.
+    onUpdate: (cb) => sub('about:update', cb),
+  });
+}
+
+if (IS_UI && !IS_ABOUT) {
   contextBridge.exposeInMainWorld('taifaShell', {
     // -- offline page ----------------------------------------------------
     // Safe even in principle: it takes no arguments, and all it can do is ask
