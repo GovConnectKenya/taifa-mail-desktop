@@ -93,3 +93,37 @@ test('settings target per platform', () => {
   assert.strictEqual(ns.settingsTarget('linux').url, ns.DOCS_URL);
   assert.match(ns.linuxGuidance('linux-no-notification-service'), /dunst/);
 });
+
+const vm = require('node:vm');
+const { permissionOverrideScript, createSettingsGate } = require('../src/notify-state');
+
+test('the permission override reads default while blocked and restores the real value after', () => {
+  function Notification() {}
+  Object.defineProperty(Notification, 'permission', { configurable: true, enumerable: true, get: () => 'denied' });
+  const ctx = { Notification };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(permissionOverrideScript(true), ctx);
+  assert.equal(ctx.Notification.permission, 'default');
+  vm.runInContext(permissionOverrideScript(true), ctx);
+  assert.equal(ctx.Notification.permission, 'default');
+  vm.runInContext(permissionOverrideScript(false), ctx);
+  assert.equal(ctx.Notification.permission, 'denied');
+  vm.runInContext(permissionOverrideScript(false), ctx);
+  assert.equal(ctx.Notification.permission, 'denied');
+});
+
+test('the settings gate opens once per gesture and never without one', () => {
+  let t = 1000;
+  const g = createSettingsGate({ now: () => t, gestureWindowMs: 3000, minIntervalMs: 15000 });
+  assert.equal(g.shouldOpen(), false, 'no gesture yet');
+  g.noteGesture();
+  assert.equal(g.shouldOpen(), true);
+  assert.equal(g.shouldOpen(), false, 'same gesture, already opened');
+  t += 5000; g.noteGesture();
+  assert.equal(g.shouldOpen(), false, 'too soon after the last open');
+  t += 20000; g.noteGesture();
+  assert.equal(g.shouldOpen(), true);
+  t += 4000;
+  assert.equal(g.shouldOpen(), false, 'the gesture is stale');
+});

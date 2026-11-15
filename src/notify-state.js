@@ -100,6 +100,48 @@ function settingsTarget(platform) {
   return { url: DOCS_URL, button: 'How to fix' };
 }
 
+// The webmail's enable button needs Notification.permission to read 'default'
+// while the OS blocks notifications: its ensureNotificationPermission() returns
+// early on 'denied' and never calls requestPermission(). Electron's check
+// handler can only answer allowed or not (the page then reads 'denied'), so the
+// app overrides the getter in the page instead (see PERMISSION_OVERRIDE_JS in
+// main.js). This builds that script for the given state.
+function permissionOverrideScript(blocked) {
+  return `(() => {
+    try {
+      if (typeof Notification === 'undefined') return;
+      const K = '__taifaPermDesc';
+      if (${blocked ? 'true' : 'false'}) {
+        if (!window[K]) window[K] = Object.getOwnPropertyDescriptor(Notification, 'permission') || null;
+        Object.defineProperty(Notification, 'permission', { configurable: true, enumerable: true, get: () => 'default' });
+      } else if (K in window) {
+        if (window[K]) Object.defineProperty(Notification, 'permission', window[K]);
+        else delete Notification.permission;
+        delete window[K];
+      }
+    } catch (_) {}
+  })()`;
+}
+
+// Opens the OS notification settings at most once per user gesture, and never
+// more often than minIntervalMs. A request with no gesture behind it (the
+// webmail asking on its own at startup) does nothing, so the app never throws a
+// settings window at someone who did not click anything.
+function createSettingsGate({ now = Date.now, gestureWindowMs = 3000, minIntervalMs = 15000 } = {}) {
+  let lastGesture = -Infinity;
+  let lastOpen = -Infinity;
+  return {
+    noteGesture() { lastGesture = now(); },
+    shouldOpen() {
+      const t = now();
+      if (t - lastGesture > gestureWindowMs) return false;
+      if (t - lastOpen < minIntervalMs) return false;
+      lastOpen = t;
+      return true;
+    },
+  };
+}
+
 // What the webmail's own permission UI should be told. Electron can only
 // answer a permission CHECK with allowed or not (the page sees 'granted' or
 // 'denied', never 'default'), so unknown stays allowed: the webmail then behaves
@@ -138,6 +180,6 @@ function linuxGuidance(reason) {
 module.exports = {
   createNotificationState, parseMacAuthLog, checkMacAuthorization, parseDbusNameHasOwner,
   checkLinuxNotificationService, detect, settingsTarget, notificationsAllowed,
-  permissionCheck, permissionRequest, linuxGuidance,
+  permissionCheck, permissionRequest, linuxGuidance, permissionOverrideScript, createSettingsGate,
   DOCS_URL, MAC_SETTINGS_URL, WIN_SETTINGS_URL,
 };

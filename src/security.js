@@ -49,7 +49,7 @@ function harden(wc) {
 }
 
 // ---------- per-Session handlers ----------
-// `notify` is { snapshot(), onBlockedRequest() }: the true OS notification state,
+// `notify` is { snapshot(), onBlockedRequest(), onFirstRequest?() }: the true OS notification state,
 // and what to do when the webmail's enable action reaches a blocked OS.
 function installSessionHandlers(ses, notify) {
   // BOTH permission handlers are required, and they are not redundant.
@@ -62,13 +62,19 @@ function installSessionHandlers(ses, notify) {
   // Both are deny-by-default via the ALLOWED_PERMISSIONS allowlist, so any
   // permission Chromium adds in a future Electron bump is denied automatically
   // rather than inherited.
-  ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+  ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     // The requesting frame is not always the top-level document (email bodies
     // render in an iframe), so prefer the URL Electron attributes the request to
     // and fall back to the WebContents URL only when it gives us nothing.
     const url = details?.requestingUrl || wc.getURL();
+    // The first notification request re-reads the OS state: the launch-time
+    // probe can run before macOS has logged its authorization verdict.
+    if (permission === 'notifications' && notify.onFirstRequest) {
+      try { await notify.onFirstRequest(); } catch (_) { /* keep the last known state */ }
+    }
     const r = permissionRequest({ permission, url, allowlist: ALLOWED_PERMISSIONS, isAllowedOrigin: isAllowedNav, snapshot: notify.snapshot() });
-    if (r.openSettings) notify.onBlockedRequest();
+    // Open the OS settings when blocked, and answer denied either way.
+    if (r.openSettings) notify.onBlockedRequest(wc);
     callback(r.grant);
   });
 
