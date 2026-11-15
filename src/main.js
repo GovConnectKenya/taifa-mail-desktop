@@ -1508,6 +1508,7 @@ async function runMenuAction(id, info = {}) {
     case 'zoom-in': zoomBy(w, 0.5); return;
     case 'zoom-out': zoomBy(w, -0.5); return;
     case 'reload': if (w) w.webContents.reload(); return;
+    case 'maximise': if (w) { if (w.isMaximized()) w.unmaximize(); else w.maximize(); } return;
     case 'refresh': await pageAction(w, 'refresh'); return;
     case 'help': openExternally('https://govconnect.ke/docs'); return;
     case 'shortcuts': surface(); await pageAction(w, 'shortcuts', process.platform === 'darwin' ? 'mac' : 'other'); return;
@@ -1589,8 +1590,8 @@ function handleDropResult(w, data) {
       message: n === 1 ? 'The file could not be attached' : 'The files could not be attached',
       detail:
         (outcome === 'no-composer'
-          ? 'Taifa Mail could not open a new message to attach them to.'
-          : 'The upload did not start or did not finish. Check your connection and try attaching them again.') +
+          ? `Taifa Mail could not open a new message to attach ${n === 1 ? 'it' : 'them'} to.`
+          : `The upload did not start or did not finish. Check your connection and try attaching ${n === 1 ? 'it' : 'them'} again.`) +
         (names.length ? `\n\n${names.join('\n')}` : ''),
       buttons: ['OK'],
     })

@@ -150,7 +150,7 @@ function buildMenuTemplate(ctx, act) {
 
   const windowMenu = isMac
     ? { role: 'windowMenu' }
-    : { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom', label: 'Maximise' }, sep, { role: 'close', label: 'Close Window' }] };
+    : { label: 'Window', submenu: [{ role: 'minimize' }, item('maximise', 'Maximise', null, true), sep, { role: 'close', label: 'Close Window' }] };
 
   const helpMenu = {
     role: 'help',

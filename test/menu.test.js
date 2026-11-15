@@ -23,6 +23,8 @@ test('Windows and Linux put About, Settings, Updates and Quit in File and Help',
     assert.deepEqual(top(tpl), ['File', 'Edit', 'View', 'Mailbox', 'Message', 'Window', 'help']);
     const file = tpl[0].submenu.map((i) => i.id || i.role);
     assert.ok(file.includes('settings') && file.includes('quit'), platform);
+    const win = tpl.find((m) => m.label === 'Window').submenu;
+    assert.ok(win.some((i) => i.id === 'maximise') && !win.some((i) => i.role === 'zoom'), 'zoom role is macOS only');
     const help = tpl.find((m) => m.role === 'help').submenu.map((i) => i.id);
     assert.ok(help.includes('check-updates') && help.includes('about'), platform);
   }
