@@ -15,7 +15,7 @@ test('aboutLink accepts only the fixed keys', () => {
   assert.equal(aboutLink('whats-new').url, 'https://github.com/GovConnectKenya/taifa-mail-desktop/releases');
   assert.ok(aboutLink('help').url.startsWith('https://'));
   assert.equal(aboutLink('rcfi').url, 'https://rcfi.co.ke');
-  assert.equal(aboutLink('webmail').url, 'https://mail.govconnect.ke');
+  assert.equal(aboutLink('webmail').url, 'https://mail.taifa.go.ke');
   assert.equal(aboutLink('chromium-licences').file, 'LICENSES.chromium.html');
   for (const bad of ['', 'https://evil.example', '../x', 'constructor', '__proto__', 'toString', undefined, null, 5]) {
     assert.equal(aboutLink(bad), null, String(bad));

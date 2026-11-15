@@ -17,7 +17,7 @@ const ABOUT_LINKS = Object.freeze({
   // Help > Taifa Mail Help already opens), so Support goes there.
   help: { url: 'https://govconnect.ke/docs' },
   rcfi: { url: 'https://rcfi.co.ke' },
-  webmail: { url: 'https://mail.govconnect.ke' },
+  webmail: { url: 'https://mail.taifa.go.ke' },
   'chromium-licences': { file: 'LICENSES.chromium.html' },
 });
 
