@@ -262,6 +262,17 @@ async function pageAction(name, arg) {
         inner.focus();
         inner.select();
       }
+      // With text ("Search Mail for …"): typed into the field the way the
+      // user would, replacing what is there, so the page's own input handling
+      // sees it. Main then presses Return.
+      if (typeof arg === 'string' && arg) {
+        const field = inner || el;
+        if (typeof field.select === 'function') field.select();
+        if (!document.execCommand('insertText', false, arg)) {
+          field.value = arg;
+          field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        }
+      }
       return true;
     }
 
@@ -467,7 +478,7 @@ const VALID = {
   reply: (a) => REPLIES.includes(a),
   refresh: () => true,
   reconnect: (a) => a === undefined || a === null,
-  search: () => true,
+  search: (a) => a === undefined || a === null || (typeof a === 'string' && a.length > 0 && a.length <= 200 && !/[\u0000-\u001f]/.test(a)),
   sidebar: () => true,
   shortcuts: (a) => a === 'mac' || a === 'other',
   conversation: () => true,

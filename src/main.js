@@ -1674,9 +1674,12 @@ async function showContextMenu(w, params) {
   const wc = w.webContents;
   const message = await contextInMessage(w, params);
   if (w.isDestroyed()) return;
-  const template = buildContextMenuTemplate(params, { platform: process.platform, isDev: !app.isPackaged, message }, (id, arg) => {
+  const mainState = win && !win.isDestroyed() ? pageStates.get(win.webContents.id) : null;
+  const canSearch = !!(mainState && mainState.signedIn && mainState.search);
+  const template = buildContextMenuTemplate(params, { platform: process.platform, isDev: !app.isPackaged, message, canSearch }, (id, arg) => {
     switch (id) {
       case 'menu': runMenuAction(String(arg)); break;
+      case 'search-for': searchMailFor(String(arg)); break;
       case 'replace-misspelling': wc.replaceMisspelling(String(arg)); break;
       case 'add-to-dictionary': wc.session.addWordToSpellCheckerDictionary(String(arg)); break;
       case 'look-up': if (process.platform === 'darwin') wc.showDefinitionForSelection(); break;
@@ -1700,6 +1703,23 @@ async function showContextMenu(w, params) {
   });
   if (!template.length) return;
   Menu.buildFromTemplate(template).popup({ window: w, frame: params.frame || undefined });
+}
+
+// "Search Mail for …" on selected text: the words go into the main window's
+// search field as if typed, and Return runs the search, so the page's own
+// search (all mail by default, with its scope chip) is what answers.
+async function searchMailFor(text) {
+  const query = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  if (!query || !win || win.isDestroyed()) return;
+  showWindow();
+  const ok = await pageAction(win, 'search', query);
+  if (!ok || win.isDestroyed()) {
+    shell.beep();
+    return;
+  }
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+  win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
 }
 
 // A file drop the page could not attach (page-shim.js): one accurate message

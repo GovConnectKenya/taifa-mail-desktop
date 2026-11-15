@@ -52,9 +52,16 @@ function buildContextMenuTemplate(params, ctx, act) {
     sections.push(s);
   }
 
-  // Look Up (macOS), on a selection.
-  if (isMac && hasSel) {
-    sections.push([{ label: `Look Up “${truncate(sel, 24)}”`, click: click('look-up') }]);
+  // Look Up (macOS) and Search Mail, on a selection outside a field. Search
+  // Mail looks for the selected words across all mail, as Apple Mail's
+  // "Search With" and Outlook's "Search for" do.
+  const query = sel.replace(/\s+/g, ' ').trim();
+  const searchable = hasSel && !params.isEditable && ctx.canSearch && query.length <= 200;
+  if ((isMac && hasSel) || searchable) {
+    const s = [];
+    if (isMac && hasSel) s.push({ label: `Look Up “${truncate(sel, 24)}”`, click: click('look-up') });
+    if (searchable) s.push({ label: `Search Mail for “${truncate(query, 24)}”`, click: click('search-for', query) });
+    sections.push(s);
   }
 
   // Links.

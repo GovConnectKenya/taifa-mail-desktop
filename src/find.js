@@ -84,6 +84,36 @@ const PANE_RECT = `(() => {
   return { x: b.left, y: top, width: b.width, height: b.height };
 })()`;
 
+// Escape puts the keyboard in the message, as docs/KEYBOARD.md says, not back
+// on the list row that had it before: the reader's scrolling part takes the
+// focus, so the arrow keys and Space scroll the message at once.
+const FOCUS_MESSAGE = `(() => {
+  const r = document.querySelector('.tm-reader[data-open="1"]');
+  if (!r) return false;
+  let t = null;
+  for (const el of [r, ...r.querySelectorAll('div, section, article, main')]) {
+    const cs = getComputedStyle(el);
+    if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4) { t = el; break; }
+  }
+  t = t || r;
+  if (!t.hasAttribute('tabindex')) {
+    t.setAttribute('tabindex', '-1');
+    t.style.outline = 'none';
+  }
+  try { t.focus({ preventScroll: true }); } catch (_) { return false; }
+  return document.activeElement === t;
+})()`;
+
+// Cmd+G after the bar was closed continues from the match last shown, as in
+// Apple Mail: the ordinal to step to, given the last one and the new count.
+function resumeTarget(lastActive, matches, forward) {
+  const n = Number(matches) || 0;
+  const a = Number(lastActive) || 0;
+  if (!n) return 0;
+  if (!a) return forward ? 1 : n;
+  return forward ? (a % n) + 1 : ((a - 2 + n) % n) + 1;
+}
+
 // deps: { WebContentsView, uiUrl, preload, isMailWindow }
 function createFinder(deps) {
   const { WebContentsView, uiUrl, preload, isMailWindow } = deps;
@@ -179,6 +209,7 @@ function createFinder(deps) {
     // Another conversation (or none): the matches no longer apply. The page
     // adding ?mid= to the same conversation's route is not a change.
     const at = conversationOf(win.webContents.getURL());
+    b.at = at;
     const onInPage = (_e, url, isMainFrame) => {
       if (isMainFrame !== false && conversationOf(url) !== at) close(win, false);
     };
@@ -207,7 +238,7 @@ function createFinder(deps) {
     const b = bars.get(win);
     if (!b) return;
     bars.delete(win);
-    lastText.set(win, b.text);
+    lastText.set(win, { text: b.text, active: b.active, at: b.at || '' });
     if (b.detach) b.detach();
     if (!win.isDestroyed()) {
       try {
@@ -216,7 +247,10 @@ function createFinder(deps) {
       try {
         win.contentView.removeChildView(b.view);
       } catch (_) {}
-      if (refocus) win.webContents.focus();
+      if (refocus) {
+        win.webContents.focus();
+        win.webContents.executeJavaScript(FOCUS_MESSAGE, true).catch(() => {});
+      }
     }
     if (!b.view.webContents.isDestroyed()) b.view.webContents.close();
   }
@@ -229,16 +263,28 @@ function createFinder(deps) {
   function step(win, forward) {
     const b = bars.get(win);
     if (!b) {
-      const t = lastText.get(win) || '';
+      const last = lastText.get(win) || { text: '', active: 0, at: '' };
       open(win);
       const nb = bars.get(win);
-      if (nb && t) {
-        nb.lastText = t;
-        query(win, t, forward, true);
+      if (nb && last.text) {
+        nb.lastText = last.text;
+        // The same conversation: continue from the match last shown. Another
+        // one: start again from its first match.
+        const same = last.at && last.at === conversationOf(win.webContents.getURL());
+        resume(win, nb, last.text, same ? last.active : 0, forward);
       }
       return;
     }
     if (b.text) query(win, b.text, forward, false);
+  }
+
+  async function resume(win, b, text, lastActive, forward) {
+    await query(win, text, true, true);
+    if (bars.get(win) !== b || !b.matches) return;
+    const target = resumeTarget(lastActive, b.matches, forward);
+    for (let guard = b.matches; b.active !== target && guard > 0 && bars.get(win) === b && b.text === text; guard -= 1) {
+      await query(win, text, forward, false);
+    }
   }
 
   function senderWindow(sender) {
@@ -258,4 +304,4 @@ function createFinder(deps) {
   return { open, close, step, handle, isOpen: (win) => bars.has(win), _bars: bars };
 }
 
-module.exports = { createFinder, barBounds, conversationOf, BAR_W, BAR_H, SCOPE_ON, SCOPE_OFF };
+module.exports = { createFinder, barBounds, conversationOf, resumeTarget, BAR_W, BAR_H, SCOPE_ON, SCOPE_OFF, FOCUS_MESSAGE };
