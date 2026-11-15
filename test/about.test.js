@@ -35,7 +35,10 @@ test('buildAboutInfo shortens the commit and tolerates a missing bundle', () => 
   const i = buildAboutInfo({ platform: 'darwin', appVersion: '0.2.1', bundle: { webmail: '0.5.0', commit: '5d365f6f467d76c11d1876033663f3b5d96bdf59' }, update: { state: 'current', version: '0.2.1', at: 1 } });
   assert.equal(i.webmailCommit, '5d365f6f4');
   assert.equal(i.webmailVersion, '0.5.0');
-  assert.deepEqual(i.update, { state: 'current', version: '0.2.1', percent: undefined });
+  assert.deepEqual(i.update, { state: 'current', version: '0.2.1', percent: undefined, fresh: false });
+  // A state from the last minute is marked fresh, so the page shows it on open.
+  const recent = buildAboutInfo({ platform: 'darwin', appVersion: '0.2.1', bundle: null, update: { state: 'checking', at: 1000 }, now: 30000 });
+  assert.equal(recent.update.fresh, true);
   const none = buildAboutInfo({ platform: 'linux', appVersion: '0.2.1', bundle: null, update: null });
   assert.equal(none.webmailVersion, '');
   assert.deepEqual(none.update, { state: 'idle' });

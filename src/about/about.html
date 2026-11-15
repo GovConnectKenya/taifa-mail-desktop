@@ -433,6 +433,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.</pre>
           // Primary only when there is something to install.
           btn.classList.toggle('primary', s === 'ready');
           icon.classList.toggle('spin', busy);
+          // The circular arrows read as a spinner, so they show only while busy.
+          icon.hidden = !busy;
           label.textContent = s === 'ready' ? 'Restart to update'
             : s === 'error' ? 'Try again'
             : 'Check for updates';
@@ -454,13 +456,10 @@ OTHER DEALINGS IN THE FONT SOFTWARE.</pre>
 
         api.getInfo().then(function (info) {
           if (info.platform !== 'darwin') document.body.classList.add('has-close');
-          // The poster names this system and shows its mark.
+          // The poster names this system. It no longer shows the platform's
+          // logo: an app's About window is about the app, not the OS vendor.
           var names = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' };
-          if (names[info.platform]) {
-            $('caption').textContent = 'Taifa Mail for ' + names[info.platform];
-            var mark = document.querySelector('#badge [data-os="' + info.platform + '"]');
-            if (mark) { mark.hidden = false; $('badge').hidden = false; }
-          }
+          if (names[info.platform]) $('caption').textContent = 'Taifa Mail for ' + names[info.platform];
           $('v-app').textContent = info.appVersion;
           $('v-web').textContent = '';
           if (info.webmailVersion) {
@@ -476,11 +475,12 @@ OTHER DEALINGS IN THE FONT SOFTWARE.</pre>
           } else {
             $('v-web').textContent = 'live site';
           }
-          // Only the "already up to date" and "ready" results are worth showing
-          // on open: an old transient state (checking, an error) is not.
+          // Results worth showing on open: "up to date", "ready", a download in
+          // progress, and anything from the last minute (a check the user just
+          // started from a menu, or its error). An old transient state is not.
           var u = info.update || {};
-          if (u.state === 'ready' || u.state === 'current' || u.state === 'dev' || u.state === 'downloading') render(u);
-          else render({ state: 'idle' });
+          if (u.state === 'ready' || u.state === 'current' || u.state === 'dev' || u.state === 'downloading' || u.fresh) render(u);
+          else if (state.state === 'idle') render({ state: 'idle' });
         });
       })();
     </script>

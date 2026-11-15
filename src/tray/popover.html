@@ -90,13 +90,31 @@
         font-weight: 600;
         letter-spacing: -0.01em;
       }
-      .dot {
+      /* Connection state: green online, amber reconnecting, grey offline. */
+      .conn {
         margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .dot {
         width: 7px;
         height: 7px;
         border-radius: 50%;
         background: var(--accent);
         box-shadow: 0 0 0 3px rgba(30, 169, 78, 0.16);
+      }
+      .conn.reconnecting .dot,
+      .conn.connecting .dot {
+        background: #d59a1c;
+        box-shadow: 0 0 0 3px rgba(213, 154, 28, 0.18);
+      }
+      .conn.offline .dot {
+        background: var(--muted);
+        box-shadow: 0 0 0 3px rgba(140, 140, 140, 0.16);
       }
 
       .sep {
@@ -183,6 +201,7 @@
         font: inherit;
         font-size: 13px;
         font-weight: 500;
+        white-space: nowrap;
         cursor: pointer;
         transition:
           background 0.14s ease,
@@ -330,7 +349,7 @@
           <ellipse class="m-green" cx="372.707" cy="162.096" rx="16.02" ry="16.02" />
         </svg>
         <span class="word">Taifa Mail</span>
-        <span class="dot" aria-hidden="true"></span>
+        <span class="conn" id="conn" role="status" aria-live="polite"><span id="conn-txt"></span><span class="dot" aria-hidden="true"></span></span>
       </div>
 
       <div class="sep"></div>
@@ -458,15 +477,31 @@
             case 'dev':
               updTxt.textContent = 'Updates run in the installed app';
               break;
-            default:
+            case 'current':
               updTxt.textContent = 'Taifa Mail is up to date';
+              updAct.textContent = 'Check';
+              updAct.className = 'u-act ghost show';
+              break;
+            default:
+              updTxt.textContent = 'Updates install automatically';
               updAct.textContent = 'Check';
               updAct.className = 'u-act ghost show';
           }
         }
 
+        var connEl = document.getElementById('conn');
+        var connTxt = document.getElementById('conn-txt');
+        var CONN_TEXT = { online: '', connecting: 'Connecting', reconnecting: 'Reconnecting', offline: 'Offline' };
+        function renderConn(c) {
+          c = CONN_TEXT.hasOwnProperty(c) ? c : 'online';
+          connEl.className = 'conn ' + c;
+          connTxt.textContent = CONN_TEXT[c];
+          connEl.setAttribute('aria-label', c === 'online' ? 'Connected' : CONN_TEXT[c]);
+        }
+
         renderUnread(0);
         renderUpdate({ state: 'idle' });
+        renderConn('online');
 
         // Main pushes { update, unread } on 'tray:state' whenever either
         // changes and every time the popover is shown.
@@ -474,6 +509,7 @@
           var off = s.onTrayState(function (st) {
             if (!st) return;
             if ('unread' in st) renderUnread(st.unread);
+            if ('conn' in st) renderConn(st.conn);
             if (st.update) renderUpdate(st.update);
           });
           window.addEventListener('beforeunload', function () {

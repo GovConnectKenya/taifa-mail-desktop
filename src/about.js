@@ -35,13 +35,17 @@ function chromiumLicencePath({ platform, resourcesPath, execPath }) {
 }
 
 // The payload the page renders its version rows from.
-function buildAboutInfo({ platform, appVersion, bundle, update }) {
+// update.fresh: the state is from the last minute, so the page shows it even
+// when it is a transient one (checking, error) the user just asked for.
+function buildAboutInfo({ platform, appVersion, bundle, update, now = Date.now() }) {
   return {
     platform,
     appVersion,
     webmailVersion: bundle && bundle.webmail ? String(bundle.webmail) : '',
     webmailCommit: bundle && bundle.commit ? String(bundle.commit).slice(0, 9) : '',
-    update: update ? { state: update.state, version: update.version, percent: update.percent } : { state: 'idle' },
+    update: update
+      ? { state: update.state, version: update.version, percent: update.percent, fresh: typeof update.at === 'number' && now - update.at < 60000 }
+      : { state: 'idle' },
   };
 }
 
