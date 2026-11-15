@@ -94,6 +94,11 @@ function buildPrintHtml(data) {
   .body.text { white-space: pre-wrap; font: inherit; }
   /* Black and white: the sender's colours and backgrounds go, its layout stays. */
   .body.html, .body.html * { color: #000 !important; background-color: transparent !important; background-image: none !important; border-color: #000 !important; box-shadow: none !important; text-shadow: none !important; }
+  /* One typeface, as the document rules ask: the sender's fonts (and the quote
+     blocks' sans fallback, round 3) give way to Times. Code stays monospace. */
+  .body.html, .body.html * { font-family: 'Times New Roman', Times, 'Liberation Serif', serif !important; }
+  .body.html pre, .body.html pre *, .body.html code, .body.html code *, .body.html kbd, .body.html samp, .body.html tt { font-family: Menlo, Consolas, 'Liberation Mono', monospace !important; }
+  .body.html blockquote { margin: 4pt 0 4pt 4pt !important; padding-left: 8pt !important; border-left: 0.75pt solid #000 !important; }
   .body.html a { text-decoration: underline; }
   .body img { max-width: 100% !important; height: auto !important; filter: grayscale(1); }
   .body table { max-width: 100% !important; }
