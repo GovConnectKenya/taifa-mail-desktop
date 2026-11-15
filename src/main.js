@@ -25,6 +25,7 @@ const {
   ipcMain,
   nativeImage,
   nativeTheme,
+  Notification,
   powerMonitor,
   screen,
   session,
@@ -49,6 +50,7 @@ const { harden, installSessionHandlers } = require('./security');
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
 const windowState = require('./window-state');
+const { parseUnread, createBadge, requestNativeNotificationAuthorization } = require('./badge');
 const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
 
 const PARTITION = 'persist:taifamail';
@@ -244,6 +246,12 @@ function createWindow() {
       retryAttempt = 0;
       clearRetry();
       if (TIMING && !appLoaded) console.log(`[timing] launch to webmail loaded: ${Date.now() - LAUNCHED_AT}ms`);
+      if (!appLoaded) {
+        // First real load: let macOS enable banners and the dock badge.
+        try {
+          requestNativeNotificationAuthorization({ Notification, userDataDir: app.getPath('userData'), platform: process.platform });
+        } catch (e) { console.warn('[shell] notification authorization request failed:', e && e.message); }
+      }
       appLoaded = true;
       if (pendingRoute) {
         const route = pendingRoute;
@@ -260,13 +268,10 @@ function createWindow() {
   // Until the webmail puts a count in the title it simply reads 0, which is
   // correct rather than a guess.
   win.webContents.on('page-title-updated', (_e, title) => {
-    // Only the webmail's own "(n) " prefix counts, not any number in brackets
-    // that happens to be in a subject or folder name ("Projects (2024)").
-    const m = /^\((\d+)\)\s/.exec(title || '');
-    const n = m ? Math.min(parseInt(m[1], 10), 9999) : 0;
+    const n = parseUnread(title);
     if (n === unreadCount) return;
     unreadCount = n;
-    setUnreadBadge(n);
+    badge.set(n);
     if (tray && !tray.isDestroyed()) tray.setToolTip(unreadTooltip(''));
     pushTrayState();
   });
@@ -509,15 +514,12 @@ function getOverlayDot() {
   return overlayDot;
 }
 
-function setUnreadBadge(n) {
-  if (process.platform === 'darwin') {
-    app.dock.setBadge(n ? String(n) : '');
-  } else if (process.platform === 'win32') {
-    if (win && !win.isDestroyed()) win.setOverlayIcon(n ? getOverlayDot() : null, n ? `${n} unread` : '');
-  } else {
-    app.setBadgeCount(n);
-  }
-}
+const badge = createBadge({
+  app,
+  platform: process.platform,
+  getWindow: () => win,
+  getOverlay: () => getOverlayDot(),
+});
 
 // ---------------------------------------------------------------------------
 // Theme
@@ -818,7 +820,11 @@ app.whenReady().then(async () => {
     app.quit();
   });
 
-  app.on('activate', () => showWindow());
+  app.on('activate', () => {
+    showWindow();
+    badge.reassert();
+  });
+  app.on('browser-window-focus', () => badge.reassert());
 });
 
 // Deliberately a no-op: closing the last window hides to tray, it does not quit.
