@@ -83,11 +83,55 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
+      "icon": "assets/branding/icon.png",
       "category": "Network;Email",
-      "maintainer": "RCFI <support@govconnect.ke>"
+      "executableName": "taifa-mail",
+      "artifactName": "TaifaMail-${version}-linux-${arch}.${ext}",
+      "synopsis": "Taifa Mail",
+      "maintainer": "RCFI <support@govconnect.ke>",
+      "desktop": {
+        "Name": "Taifa Mail",
+        "Comment": "Taifa Mail desktop",
+        "StartupWMClass": "taifa-mail",
+        "MimeType": "x-scheme-handler/mailto;",
+        "Categories": "Network;Email;"
+      }
+    },
+    "deb": {
+      "depends": [
+        "libnotify4",
+        "libnss3",
+        "libgtk-3-0",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0"
+      ]
     }
-  }
+  },
+  "desktopName": "taifa-mail.desktop"
 }
