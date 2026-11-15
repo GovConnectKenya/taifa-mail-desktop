@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { createNotifier, messageContent, summaryContent, summaryRoute } = require('../src/notifier');
-const { buildPrintHtml, escapeHtml } = require('../src/print');
+const { buildPrintHtml, escapeHtml, fmtSize } = require('../src/print');
 
 // A fake clock and timer queue, and a fake Notification that records itself.
 function harness(over = {}) {
@@ -121,12 +121,46 @@ test('notifications are kept alive until closed (a collected one loses its click
 });
 
 test('the print document escapes headers and is locked down', () => {
-  const html = buildPrintHtml({ subject: '<img src=x onerror=alert(1)>', messages: [{ from: 'A <a@b.ke>', to: 'Me', date: '15 Nov 2026', body: '<p>Hello</p>' }] });
+  const html = buildPrintHtml({ subject: '<img src=x onerror=alert(1)>', messages: [{ fromName: 'A', fromAddr: 'a@b.ke', to: ['Me <me@b.ke>'], date: '15 Nov 2026', html: '<p>Hello</p>' }] });
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
   assert.ok(html.includes('A &lt;a@b.ke&gt;'));
   assert.ok(html.includes('<p>Hello</p>'));
-  assert.ok(/Content-Security-Policy" content="default-src 'none'/.test(html));
+  assert.ok(/Content-Security-Policy" content="default-src 'none'; img-src data:;/.test(html), 'images: data: only, no network');
   assert.ok(!/script-src/.test(html));
   assert.equal(escapeHtml(`"'&`), '&quot;&#39;&amp;');
   assert.ok(buildPrintHtml({}).includes('(no subject)'));
+});
+
+test('print: plain-text messages print, escaped, with every header and the attachments', () => {
+  const html = buildPrintHtml({
+    subject: 'Budget',
+    total: 2,
+    messages: [
+      { fromName: 'Jane Doe', fromAddr: 'jane@ke.go', to: ['officer@ke.go', 'Bob <bob@ke.go>'], cc: ['cc@ke.go'], date: 'Sat, 15 Nov 2026, 14:05', text: 'Line one\n<b>not bold</b>', attachments: [{ name: 'q4.csv', size: 2048 }, { name: 'a<b>.pdf', size: 0 }] },
+      { fromName: '', fromAddr: 'officer@ke.go', to: [], cc: [], date: '', html: '<p>Reply</p>', attachments: [] },
+    ],
+  });
+  assert.ok(html.includes('<div class="body text">Line one\n&lt;b&gt;not bold&lt;/b&gt;</div>'), 'plain text is escaped, line breaks kept');
+  assert.ok(html.includes('<th>To:</th><td>officer@ke.go, Bob &lt;bob@ke.go&gt;</td>'), 'real recipients, not "me"');
+  assert.ok(html.includes('<th>Cc:</th><td>cc@ke.go</td>'));
+  assert.ok(html.includes('2 attachments') && html.includes('q4.csv <span class="size">(2 KB)</span>') && html.includes('a&lt;b&gt;.pdf</li>'));
+  assert.equal((html.match(/<section class="msg">/g) || []).length, 2, 'every message, not just expanded ones');
+  assert.ok(html.includes('<th>From:</th><td>officer@ke.go</td>'), 'an address alone when there is no name');
+  assert.ok(!/<th>Date:<\/th><td><\/td>/.test(html) && !/<th>To:<\/th><td><\/td>/.test(html), 'empty rows are left out');
+  assert.ok(html.includes('<p class="count">2 messages</p>'));
+});
+
+test('print: black and white, Times New Roman, no header or footer furniture', () => {
+  const html = buildPrintHtml({ subject: 'S', messages: [{ fromAddr: 'a@b.ke', html: '<p style="color:red">x</p>' }] });
+  assert.ok(/font: 11pt\/1\.45 'Times New Roman'/.test(html));
+  assert.ok(html.includes('.body.html, .body.html * { color: #000 !important; background-color: transparent !important'));
+  assert.ok(html.includes('filter: grayscale(1)'));
+  assert.ok(!/<header|<footer/.test(html));
+});
+
+test('print: a partial thread says how much of it printed', () => {
+  assert.ok(buildPrintHtml({ subject: 'S', total: 140, messages: new Array(100).fill({ fromAddr: 'a@b.ke', text: 'x' }) }).includes('100 of 140 messages (the latest 100)'));
+  const offline = buildPrintHtml({ subject: 'S', total: 3, note: 'only the open messages are printed (1 of 3).', messages: [{ fromAddr: 'a@b.ke', text: 'x' }] });
+  assert.ok(offline.includes('<p class="note">only the open messages are printed (1 of 3).</p>'));
+  assert.equal(fmtSize(1536 * 1024), '1.5 MB');
 });

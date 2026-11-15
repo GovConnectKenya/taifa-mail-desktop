@@ -1527,8 +1527,13 @@ async function printOpenConversation(w) {
   printing = true;
   try {
     const data = await pageAction(w, 'print');
-    if (!data || !Array.isArray(data.messages) || !data.messages.length) {
+    if (!data) {
+      // No conversation open (the menu item lags the page by a moment).
       shell.beep();
+      return;
+    }
+    if (!Array.isArray(data.messages) || !data.messages.length) {
+      dialog.showMessageBox(w, { type: 'warning', message: 'This conversation can’t be printed right now', detail: 'Taifa Mail can’t reach the server, and none of its messages are open on screen. Try again when you’re back online.', buttons: ['OK'] }).catch(() => {});
       return;
     }
     await printConversation({ BrowserWindow, session, app }, data);

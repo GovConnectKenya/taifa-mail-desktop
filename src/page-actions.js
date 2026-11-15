@@ -180,54 +180,144 @@ async function pageAction(name, arg) {
       return /^#[^/]+\/\d+$/.test(h) ? '/' + h : null;
     }
 
-    // The open conversation, for printing: the subject, and each expanded
-    // message's header lines and body HTML. Same-origin images (inline parts)
-    // are inlined as data URLs, since the print window has no session.
+    // The open conversation, for printing: every message in it, expanded or
+    // not, plain text or HTML. The reader only renders the messages that are
+    // expanded (and mounts at most three HTML frames), so the thread comes from
+    // the same conversation API the reader uses, with mark_seen=false: printing
+    // never changes read state. A message whose HTML frame is on screen is
+    // taken from that frame instead, so its images are the ones the user chose
+    // to load; any other remote image is left out (the print window has no
+    // network at all). When the server cannot be reached, the messages on
+    // screen are printed and the document says so.
     case 'print': {
       const r = reader();
-      if (!r) return null;
+      if (!r || !onMail()) return null;
       const h1 = r.querySelector('h1');
-      const messages = [...r.querySelectorAll('.tm-reader-message')]
-        .filter((m) => m.querySelector('iframe'))
-        .map((m) => {
-          const contact = m.querySelector('[aria-label^="Contact details for "]');
-          const email = contact ? contact.getAttribute('aria-label').replace('Contact details for ', '') : '';
-          const nameBtn = [...m.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && b.querySelector('span') && email && b.textContent.includes(email));
-          const name = nameBtn && nameBtn.firstChild ? nameBtn.firstChild.textContent.trim() : '';
-          const toBtn = m.querySelector('button[aria-haspopup="dialog"]');
-          const dated = [...m.querySelectorAll('span[title]')].find((s) => /\d/.test(s.getAttribute('title')));
-          const ifr = m.querySelector('iframe');
-          let body = '';
-          try {
-            const doc = ifr.contentDocument.cloneNode(true);
-            // Same-origin read of live images: the clone has the same URLs, the
-            // live document has the decoded pixels.
-            const live = [...ifr.contentDocument.querySelectorAll('img')];
-            const copy = [...doc.querySelectorAll('img')];
-            live.forEach((img, i) => {
-              try {
-                const u = new URL(img.currentSrc || img.src, location.href);
-                if ((u.origin === location.origin || u.protocol === 'blob:') && img.complete && img.naturalWidth && copy[i]) {
-                  const c = document.createElement('canvas');
-                  c.width = img.naturalWidth;
-                  c.height = img.naturalHeight;
-                  c.getContext('2d').drawImage(img, 0, 0);
-                  copy[i].setAttribute('src', c.toDataURL('image/png'));
-                  copy[i].removeAttribute('srcset');
-                }
-              } catch (_) {}
+      const subject = h1 ? h1.textContent.trim() : '';
+      const fmt = (d) => {
+        try {
+          return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d);
+        } catch (_) {
+          return d.toString();
+        }
+      };
+      // A rendered frame's body, with same-origin and blob images inlined as
+      // data URLs (the clone has the URLs, the live document has the pixels)
+      // and remote ones removed.
+      const frameBody = (ifr) => {
+        try {
+          const live = ifr.contentDocument;
+          const doc = live.cloneNode(true);
+          const liveImgs = [...live.querySelectorAll('img')];
+          const copy = [...doc.querySelectorAll('img')];
+          liveImgs.forEach((img, i) => {
+            if (!copy[i]) return;
+            try {
+              const u = new URL(img.currentSrc || img.src, location.href);
+              if (u.protocol === 'data:') return;
+              if ((u.origin === location.origin || u.protocol === 'blob:') && img.complete && img.naturalWidth) {
+                const c = document.createElement('canvas');
+                c.width = img.naturalWidth;
+                c.height = img.naturalHeight;
+                c.getContext('2d').drawImage(img, 0, 0);
+                copy[i].setAttribute('src', c.toDataURL('image/png'));
+                copy[i].removeAttribute('srcset');
+                return;
+              }
+            } catch (_) {}
+            copy[i].remove();
+          });
+          doc.querySelectorAll('script, base, meta, link, iframe, object, embed').forEach((x) => x.remove());
+          return doc.body ? doc.body.innerHTML : '';
+        } catch (_) {
+          return null;
+        }
+      };
+      // What the reader shows for each message, oldest first: the sender's
+      // address (to match against the API) and the HTML frame when mounted.
+      const shown = [...r.querySelectorAll('.tm-reader-message')].map((m) => {
+        const contact = m.querySelector('[aria-label^="Contact details for "]');
+        const email = contact ? contact.getAttribute('aria-label').replace('Contact details for ', '').trim().toLowerCase() : '';
+        const ifr = m.querySelector('iframe');
+        const pre = m.querySelector('pre.tm-reader-text:not(.tm-reader-quoted)');
+        const dated = [...m.querySelectorAll('span[title]')].find((s) => /\d/.test(s.getAttribute('title')));
+        return { email, ifr, pre, collapsed: m.classList.contains('collapsed'), date: dated ? dated.getAttribute('title') : '' };
+      });
+
+      const route = /^#((?:folder\/)?[^/?#]+)\/(\d+)$/.exec(location.hash.split('?')[0]);
+      let id = '';
+      try {
+        id = localStorage.getItem('taifa-mail-last-mailbox') || '';
+      } catch (_) {}
+      let thread = null;
+      let total = 0;
+      if (route && id && /^[\w-]{1,64}$/.test(id)) {
+        const folder = decodeURIComponent(route[1].replace(/^folder\//, '').replace(/\+/g, ' '));
+        const qs = new URLSearchParams({ folder, uid: route[2], limit: '100', mark_seen: 'false', bodies: 'all' });
+        try {
+          const res = await fetch('/v1/inbox/' + encodeURIComponent(id) + '/conversation?' + qs, { credentials: 'include', headers: { Accept: 'application/json' } });
+          if (res.ok) {
+            const win = await res.json();
+            if (win && Array.isArray(win.messages)) {
+              thread = win.messages.slice();
+              total = Number(win.total) || thread.length;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (thread) {
+        // Oldest first, as the reader shows them.
+        const ts = (m) => (m.date_ts ? m.date_ts * 1000 : Date.parse(m.date || '') || 0);
+        thread.sort((a, b) => ts(a) - ts(b));
+        // Line the reader's messages up with the newest end of the thread
+        // (the reader may show only the latest window of a long thread).
+        const offset = thread.length - shown.length;
+        const messages = thread.map((m, i) => {
+          const d = m.body && typeof m.body === 'object' ? { ...m, ...m.body } : m;
+          const s = offset >= 0 ? shown[i - offset] : null;
+          let html = null;
+          if (s && s.ifr && (!s.email || s.email === String(d.from_addr || '').toLowerCase())) html = frameBody(s.ifr);
+          if (html === null && typeof d.html === 'string' && d.html) {
+            // The server's sanitised HTML; inline parts are already data URLs.
+            const doc = new DOMParser().parseFromString(d.html, 'text/html');
+            doc.querySelectorAll('img').forEach((img) => {
+              if (!/^data:/i.test(img.getAttribute('src') || '')) img.remove();
             });
-            doc.querySelectorAll('script, base, meta[http-equiv]').forEach((x) => x.remove());
-            body = doc.body ? doc.body.innerHTML : '';
-          } catch (_) {}
+            doc.querySelectorAll('script, base, meta, link, iframe, object, embed').forEach((x) => x.remove());
+            html = doc.body ? doc.body.innerHTML : '';
+          }
+          const t = ts(d);
           return {
-            from: name && email ? name + ' <' + email + '>' : name || email,
-            to: toBtn ? toBtn.textContent.trim().replace(/^to\s+/i, '') : '',
-            date: dated ? dated.getAttribute('title') : '',
-            body,
+            fromName: String(d.from_name || ''),
+            fromAddr: String(d.from_addr || ''),
+            to: Array.isArray(d.to) ? d.to.map(String) : [],
+            cc: Array.isArray(d.cc) ? d.cc.map(String) : [],
+            date: t ? fmt(new Date(t)) : String(d.date || ''),
+            html: html === null ? undefined : html,
+            text: html === null ? String(d.text || d.snippet || '') : undefined,
+            attachments: Array.isArray(d.attachments) ? d.attachments.map((a) => ({ name: String(a.filename || 'attachment'), size: Number(a.size) || 0 })) : [],
           };
         });
-      return { subject: h1 ? h1.textContent.trim() : '', messages };
+        return { subject, total, messages };
+      }
+
+      // No server: what is on screen. Collapsed rows have no body to print.
+      const messages = [];
+      r.querySelectorAll('.tm-reader-message').forEach((m, i) => {
+        const s = shown[i];
+        if (s.collapsed) return;
+        const html = s.ifr ? frameBody(s.ifr) : null;
+        if (html === null && !s.pre) return;
+        messages.push({ fromName: '', fromAddr: s.email, to: [], cc: [], date: s.date, html: html === null ? undefined : html, text: html === null ? s.pre.textContent : undefined, attachments: [] });
+      });
+      const skipped = shown.length - messages.length;
+      return {
+        subject,
+        total: shown.length,
+        messages,
+        note: skipped > 0 ? 'Taifa Mail could not reach the server, so only the open messages are printed (' + messages.length + ' of ' + shown.length + ').' : '',
+      };
     }
 
     default:
