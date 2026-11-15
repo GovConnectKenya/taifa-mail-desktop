@@ -16,7 +16,7 @@ permissions:
 
 env:
   BASE: https://github.com/GovConnectKenya/taifa-mail-desktop/releases/latest/download
-  EXPECT_VERSION: '0.2.0'
+  EXPECT_VERSION: '0.2.1'
 
 jobs:
   windows:
@@ -340,13 +340,18 @@ jobs:
           cat "$RUNNER_TEMP/session.log"
           grep -q 'CHECK PASS dunst' "$RUNNER_TEMP/session.log" || { echo "CHECK FAIL dunst did not start"; exit 1; }
 
-      - name: Launch the AppImage and wait for the sign-in window
+      - name: Install the deb and launch it (no --no-sandbox) until the sign-in window shows
         run: |
           set -uo pipefail
           export DISPLAY=:99
           . "$RUNNER_TEMP/dbus.env"
-          chmod +x "$RUNNER_TEMP/dl/TaifaMail-linux-x64.AppImage"
-          TAIFA_SMOKE_NOTIFY=1 nohup "$RUNNER_TEMP/dl/TaifaMail-linux-x64.AppImage" --appimage-extract-and-run --no-sandbox > "$RUNNER_TEMP/app.log" 2>&1 &
+          # The AppImage cannot run its Chromium sandbox on Ubuntu 24.04 and later
+          # (AppArmor blocks unprivileged user namespaces), and we never ship
+          # --no-sandbox. The deb installs a setuid chrome-sandbox, so it is the
+          # package that is launched here, with the sandbox on.
+          sudo apt-get install -y "$RUNNER_TEMP/dl/TaifaMail-linux-x64.deb"
+          ls -l /opt/Taifa\ Mail/chrome-sandbox
+          TAIFA_SMOKE_NOTIFY=1 nohup taifa-mail > "$RUNNER_TEMP/app.log" 2>&1 &
           expected="Sign in · Taifa Mail"
           title=""
           for i in $(seq 1 90); do
