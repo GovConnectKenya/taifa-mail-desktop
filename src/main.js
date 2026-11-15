@@ -49,6 +49,7 @@ const { APP_ORIGIN, APP_URL, THEME_BG, THEME_COOKIE } = require('./config');
 const { harden, installSessionHandlers } = require('./security');
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
+const { shouldReloadAfterFailedNavigation } = require('./route');
 const windowState = require('./window-state');
 const { parseUnread, createBadge, requestNativeNotificationAuthorization, SEED_NOTIFY_PREF_JS } = require('./badge');
 const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
@@ -483,7 +484,13 @@ function openRoute(route) {
   }
   win.webContents
     .executeJavaScript(`(${NAVIGATE_SCRIPT})(${JSON.stringify(route)})`, true)
-    .catch(() => win.loadURL(new URL(route, APP_ORIGIN).toString()));
+    .catch((e) => {
+      if (!shouldReloadAfterFailedNavigation(win.webContents.getURL(), APP_ORIGIN)) {
+        console.warn('[shell] in-page navigation failed, not reloading the webmail:', e && e.message);
+        return;
+      }
+      win.loadURL(new URL(route, APP_ORIGIN).toString());
+    });
 }
 
 function openMailto(url) {

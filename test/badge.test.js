@@ -61,3 +61,12 @@ test('notification preference seed only fills an unset value', () => {
   assert.deepStrictEqual(run('off'), ['off', 'off']);
   assert.deepStrictEqual(run('on'), ['on', 'on']);
 });
+
+test('a failed in-page navigation never reloads the webmail', () => {
+  const { shouldReloadAfterFailedNavigation: f } = require('../src/route');
+  const o = 'https://mail.govconnect.ke';
+  assert.strictEqual(f('https://mail.govconnect.ke/#INBOX', o), false);
+  assert.strictEqual(f('https://mail.govconnect.ke/settings', o), false);
+  assert.strictEqual(f('file:///app/src/shell/offline.html', o), true);
+  assert.strictEqual(f('', o), true);
+});
