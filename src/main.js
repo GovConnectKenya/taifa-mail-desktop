@@ -56,7 +56,7 @@ const { harden, installSessionHandlers, openExternally, setAppWindowOpener } = r
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
 const { createNotificationState, detect: detectNotificationState, settingsTarget, linuxGuidance, permissionOverrideScript, createSettingsGate, DOCS_URL } = require('./notify-state');
-const { createFallback, fallbackBody, pickNew } = require('./notify-fallback');
+const { createFallback, fallbackBody, fallbackPlan, pickNew } = require('./notify-fallback');
 const { formatLine, appendLine } = require('./notify-log');
 const { ABOUT_SIZE, aboutLink, chromiumLicencePath, buildAboutInfo } = require('./about');
 const { shouldReloadAfterFailedNavigation } = require('./route');
@@ -630,16 +630,20 @@ function considerFallback(inc) {
     try { pref = await win.webContents.executeJavaScript("localStorage.getItem('taifa_mb_notifications')"); } catch (_) { /* keep the default */ }
     if (pref === 'off') { logNotify('fallback-skipped', { reason: 'pref-off' }); return; }
     const head = await pageAction(win, 'inbox-head');
-    const { fresh, baseline } = pickNew(head, inboxBaseline);
-    if (head) inboxBaseline = baseline;
-    if (fresh.length) {
-      logNotify('fallback-posted', { reason: 'page-silent', kind: 'envelopes', n: fresh.length });
-      for (const m of fresh) {
+    const plan = fallbackPlan(head, inboxBaseline);
+    if (plan.kind !== 'count') inboxBaseline = plan.baseline;
+    if (plan.kind === 'envelopes') {
+      logNotify('fallback-posted', { reason: 'page-silent', kind: 'envelopes', n: plan.fresh.length });
+      for (const m of plan.fresh) {
         notifier.post({ title: m.fromName || m.fromAddr, body: m.subject, snippet: m.snippet, fromAddr: m.fromAddr, tag: `mail-${m.folder}-${m.uid}` });
       }
       return;
     }
-    logNotify('fallback-posted', { reason: 'page-silent', kind: head ? 'count-no-new-inbox' : 'count-no-list' });
+    if (plan.kind === 'none') {
+      logNotify('fallback-skipped', { reason: 'no-new-inbox' });
+      return;
+    }
+    logNotify('fallback-posted', { reason: 'page-silent', kind: 'count-no-list' });
     notifier.postFallback(unreadCount);
   }, 4000);
 }

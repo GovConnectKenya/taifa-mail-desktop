@@ -13,8 +13,9 @@
 // same time, the app reads the newest unread Inbox envelopes itself (the same
 // list API the page uses, page-actions.js 'inbox-head') and posts them through
 // the notifier like any other: sender as the title, subject and snippet, bursts
-// grouped, a click opens the conversation. Only when that read fails (offline,
-// or the new mail went to another folder) does it post the plain count.
+// grouped, a click opens the conversation. When the list holds no new message
+// it posts nothing; only when the read fails outright does it post the plain
+// count (fallbackPlan).
 //
 // The settle window restarts at sign-in (markLoaded is called again then), so a
 // fresh sign-in, where the count jumps from nothing to the whole unread total,
@@ -52,8 +53,22 @@ function pickNew(items, baseline) {
   return { fresh, baseline: Math.max(baseline, top) };
 }
 
+// What the fallback does once the count rose and the page stayed silent:
+// - 'envelopes': new unread Inbox mail since the baseline, announced as usual;
+// - 'none': the list was read and holds no new message. The count rose for
+//   another reason (another device marked mail unread, a folder switch
+//   recounted), so there is nothing to announce. Round 3 found this path
+//   posting "You have N unread messages" with no new mail;
+// - 'count': the list could not be read at all, so the plain count is the
+//   only honest thing to say.
+function fallbackPlan(head, baseline) {
+  if (!Array.isArray(head)) return { kind: 'count', fresh: [], baseline };
+  const r = pickNew(head, baseline);
+  return { kind: r.fresh.length ? 'envelopes' : 'none', fresh: r.fresh, baseline: r.baseline };
+}
+
 function fallbackBody(unread) {
   return unread === 1 ? 'You have 1 unread message.' : `You have ${unread} unread messages.`;
 }
 
-module.exports = { createFallback, fallbackBody, pickNew };
+module.exports = { createFallback, fallbackBody, fallbackPlan, pickNew };

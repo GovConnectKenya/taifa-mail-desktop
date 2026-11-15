@@ -109,3 +109,17 @@ test('fallback envelopes become real notifications: sender, subject, snippet, a 
   // The page posting the same message later is a duplicate, not a second banner.
   assert.equal(n.post({ title: 'Jane Doe', body: 'Budget', tag: 'mail-INBOX-180' }), false);
 });
+
+// Round 3 critic #13: when the count rose but no new Inbox message existed
+// (another device marked mail unread), "You have N unread messages" posted.
+test('no banner when the list holds no new message; the count only when the list cannot be read', () => {
+  const { fallbackPlan } = require('../src/notify-fallback');
+  const head = [{ uid: 210, unread: true }, { uid: 205, unread: true }, { uid: 200, unread: false }];
+  assert.deepEqual(fallbackPlan(head, 210), { kind: 'none', fresh: [], baseline: 210 });
+  const p = fallbackPlan([{ uid: 211, unread: true }, ...head], 210);
+  assert.equal(p.kind, 'envelopes');
+  assert.deepEqual(p.fresh.map((m) => m.uid), [211]);
+  assert.equal(p.baseline, 211);
+  assert.deepEqual(fallbackPlan(null, 210), { kind: 'count', fresh: [], baseline: 210 });
+  assert.equal(fallbackPlan(head, null).kind, 'none', 'no baseline yet: take one, announce nothing');
+});
