@@ -39,6 +39,11 @@ const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
 const INDEX = path.join(RENDERER_DIR, 'index.html');
 const NET_LOG = process.env.TAIFA_NET_LOG === '1';
 
+// https for the real webmail origin. A TAIFA_APP_ORIGIN override such as
+// http://localhost:18768 (a local backend) is served the same way, so the
+// bundled webmail can be run against a local stack.
+const APP_SCHEME = new URL(APP_ORIGIN).protocol.replace(/:$/, '');
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -375,7 +380,7 @@ function installBundle(ses, opts = {}) {
     });
   }
 
-  ses.protocol.handle('https', (req) => {
+  ses.protocol.handle(APP_SCHEME, (req) => {
     const u = new URL(req.url);
     if (u.origin !== APP_ORIGIN || isBackendPath(u.pathname)) return passThrough(ses, req);
     if (req.method !== 'GET' && req.method !== 'HEAD') return passThrough(ses, req);
@@ -399,7 +404,7 @@ function uninstallBundle(ses) {
   onBackendHeaders = null;
   onBackendRequest = null;
   try {
-    ses.protocol.unhandle('https');
+    ses.protocol.unhandle(APP_SCHEME);
   } catch (_) {
     // Not installed: nothing to undo.
   }
