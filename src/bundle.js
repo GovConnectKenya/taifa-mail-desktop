@@ -39,6 +39,11 @@ const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
 const INDEX = path.join(RENDERER_DIR, 'index.html');
 const NET_LOG = process.env.TAIFA_NET_LOG === '1';
 
+// https for the real webmail origin. A TAIFA_APP_ORIGIN override such as
+// http://localhost:18768 (a local backend) is served the same way, so the
+// bundled webmail can be run against a local stack.
+const APP_SCHEME = new URL(APP_ORIGIN).protocol.replace(/:$/, '');
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -168,9 +173,35 @@ let onBackendHeaders = null;
 // redirect to another site would come back as that site's content under the
 // webmail's origin. Here every 3xx goes back to the renderer as a 3xx, and
 // Chromium follows it as it would for any page.
+// Told about every backend request the app forwards: onBackendRequest(pathname)
+// returns a done(status) callback, called with the HTTP status or 0 when no
+// answer came. Feeds the server-health signal (connection.js).
+let onBackendRequest = null;
+
+// How long a backend read may wait for its response headers before the app
+// gives up on it. Round 3: a server that accepted connections and never
+// answered left 14 hung sockets, which used up Chromium's per-host pool, so
+// the app sent nothing for over 80 s after the server came back. Only reads
+// (GET, HEAD) to the backend get a deadline: aborting a write (a send, a
+// move) the server may already have done could make the page do it twice.
+// The deadline covers the wait for headers only, never a body being streamed.
+const READ_DEADLINE_MS = 30000;
+function requestDeadline(method, url, appOrigin = APP_ORIGIN) {
+  const m = String(method || 'GET').toUpperCase();
+  if (m !== 'GET' && m !== 'HEAD') return 0;
+  let u;
+  try {
+    u = new URL(url);
+  } catch (_) {
+    return 0;
+  }
+  return u.origin === appOrigin && (u.pathname === '/health' || u.pathname.startsWith('/v1/') || u.pathname.startsWith('/auth/')) ? READ_DEADLINE_MS : 0;
+}
+
 function passThrough(ses, req) {
   const started = NET_LOG ? Date.now() : 0;
   const url = new URL(req.url);
+  const settle = onBackendRequest && url.origin === APP_ORIGIN ? onBackendRequest(url.pathname) : () => {};
   return new Promise((resolve, reject) => {
     // The page's own credentials and cache modes cannot be honoured: the
     // Request a protocol handler receives always reports credentials
@@ -200,6 +231,25 @@ function passThrough(ses, req) {
       reject(e);
       return;
     }
+    // No headers within the deadline: abort, so the socket is freed, and fail
+    // the request the way a dropped connection would.
+    let timedOut = false;
+    const deadline = requestDeadline(req.method, req.url);
+    const timer = deadline
+      ? setTimeout(() => {
+          timedOut = true;
+          try {
+            rq.abort();
+          } catch (_) {}
+          settle(0);
+          if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> timed out after ${deadline}ms`);
+          reject(new Error('timed out'));
+        }, deadline)
+      : null;
+    const answered = () => {
+      if (timer) clearTimeout(timer);
+      return !timedOut;
+    };
     for (const [name, value] of req.headers) {
       if (SKIP_REQUEST_HEADERS.has(name.toLowerCase())) continue;
       try {
@@ -212,23 +262,30 @@ function passThrough(ses, req) {
     rq.on('redirect', (status, _method, location, headers) => {
       // Cookies on the redirect itself are already in the jar.
       rq.abort();
+      if (!answered()) return;
       const out = new Headers();
       for (const [name, values] of Object.entries(headers || {})) {
         if (SKIP_RESPONSE_HEADERS.has(name.toLowerCase())) continue;
         for (const v of [].concat(values)) out.append(name, v);
       }
       out.set('location', location);
+      settle(status);
       if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> ${status} redirect ${Date.now() - started}ms`);
       resolve(new Response(null, { status, headers: out }));
     });
 
     rq.on('response', (res) => {
+      if (!answered()) {
+        res.resume();
+        return;
+      }
       const out = new Headers();
       for (const [name, values] of Object.entries(res.headers)) {
         if (SKIP_RESPONSE_HEADERS.has(name.toLowerCase())) continue;
         for (const v of [].concat(values)) out.append(name, v);
       }
       if (onBackendHeaders && url.origin === APP_ORIGIN) onBackendHeaders(url.pathname, out);
+      settle(res.statusCode);
       if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> ${res.statusCode} ${Date.now() - started}ms`);
       if (NULL_BODY_STATUS.has(res.statusCode) || req.method === 'HEAD') {
         res.resume();
@@ -258,6 +315,8 @@ function passThrough(ses, req) {
     });
 
     rq.on('error', (e) => {
+      if (!answered()) return;
+      settle(0);
       if (NET_LOG) console.log(`[net] ${req.method} ${url.host}${url.pathname} -> error ${e.message}`);
       reject(e);
     });
@@ -271,6 +330,7 @@ function passThrough(ses, req) {
       }
       rq.end();
     })().catch((e) => {
+      settle(0);
       rq.abort();
       reject(e);
     });
@@ -288,6 +348,7 @@ function passThrough(ses, req) {
 function installBundle(ses, opts = {}) {
   if (!hasBundle()) return false;
 
+  onBackendRequest = typeof opts.onBackendRequest === 'function' ? opts.onBackendRequest : null;
   const info = bundleInfo();
   const bundleDate = info && Date.parse(info.commitDate);
   let tooOldReported = false;
@@ -319,7 +380,7 @@ function installBundle(ses, opts = {}) {
     });
   }
 
-  ses.protocol.handle('https', (req) => {
+  ses.protocol.handle(APP_SCHEME, (req) => {
     const u = new URL(req.url);
     if (u.origin !== APP_ORIGIN || isBackendPath(u.pathname)) return passThrough(ses, req);
     if (req.method !== 'GET' && req.method !== 'HEAD') return passThrough(ses, req);
@@ -341,11 +402,12 @@ function installBundle(ses, opts = {}) {
 // the network, the window loads the live site.
 function uninstallBundle(ses) {
   onBackendHeaders = null;
+  onBackendRequest = null;
   try {
-    ses.protocol.unhandle('https');
+    ses.protocol.unhandle(APP_SCHEME);
   } catch (_) {
     // Not installed: nothing to undo.
   }
 }
 
-module.exports = { installBundle, uninstallBundle, hasBundle, bundleInfo, RENDERER_DIR };
+module.exports = { installBundle, uninstallBundle, hasBundle, bundleInfo, requestDeadline, READ_DEADLINE_MS, RENDERER_DIR };

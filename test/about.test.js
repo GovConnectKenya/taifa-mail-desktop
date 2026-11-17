@@ -15,6 +15,7 @@ test('aboutLink accepts only the fixed keys', () => {
   assert.equal(aboutLink('whats-new').url, 'https://github.com/GovConnectKenya/taifa-mail-desktop/releases');
   assert.ok(aboutLink('help').url.startsWith('https://'));
   assert.equal(aboutLink('rcfi').url, 'https://rcfi.co.ke');
+  // Round 3: the link named mail.taifa.go.ke while the app talks to mail.govconnect.ke.
   assert.equal(aboutLink('webmail').url, 'https://mail.taifa.go.ke');
   assert.equal(aboutLink('chromium-licences').file, 'LICENSES.chromium.html');
   for (const bad of ['', 'https://evil.example', '../x', 'constructor', '__proto__', 'toString', undefined, null, 5]) {
@@ -35,7 +36,10 @@ test('buildAboutInfo shortens the commit and tolerates a missing bundle', () => 
   const i = buildAboutInfo({ platform: 'darwin', appVersion: '0.2.1', bundle: { webmail: '0.5.0', commit: '5d365f6f467d76c11d1876033663f3b5d96bdf59' }, update: { state: 'current', version: '0.2.1', at: 1 } });
   assert.equal(i.webmailCommit, '5d365f6f4');
   assert.equal(i.webmailVersion, '0.5.0');
-  assert.deepEqual(i.update, { state: 'current', version: '0.2.1', percent: undefined });
+  assert.deepEqual(i.update, { state: 'current', version: '0.2.1', percent: undefined, fresh: false });
+  // A state from the last minute is marked fresh, so the page shows it on open.
+  const recent = buildAboutInfo({ platform: 'darwin', appVersion: '0.2.1', bundle: null, update: { state: 'checking', at: 1000 }, now: 30000 });
+  assert.equal(recent.update.fresh, true);
   const none = buildAboutInfo({ platform: 'linux', appVersion: '0.2.1', bundle: null, update: null });
   assert.equal(none.webmailVersion, '');
   assert.deepEqual(none.update, { state: 'idle' });
@@ -57,4 +61,14 @@ test('the About page references only allowlisted taifa-ui assets', () => {
   const refs = [...html.matchAll(/taifa-ui:\/\/app\/([\w./-]+)/g)].map((m) => m[1]);
   assert.ok(refs.length > 5);
   for (const r of refs) assert.ok(Object.prototype.hasOwnProperty.call(PAGES, r), r);
+});
+
+test('the About page and info name the public webmail address, mail.taifa.go.ke (owner decision)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'about', 'about.html'), 'utf8');
+  assert.ok(html.includes('>mail.taifa.go.ke<'));
+  assert.ok(!html.includes('>mail.govconnect.ke<'));
+  const i = buildAboutInfo({ platform: 'darwin', appVersion: '0.2.2', bundle: null, update: null });
+  assert.equal(i.webmailHost, 'mail.taifa.go.ke');
 });

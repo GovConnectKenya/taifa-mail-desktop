@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src taifa-ui:; font-src taifa-ui:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>Find in Message</title>
+    <!--
+      The find bar: Edit > Find > Find in Message (find.js). A small view laid
+      over the mail window, so it is never part of the text it searches.
+      Keyboard: type to search, Return for the next match, Shift+Return for the
+      previous one, Escape to close. Cmd+G and Shift+Cmd+G come from the menu.
+      Icons: Iconsax rounded linear (arrow-up3, arrow-down4, close), vendored
+      in ./icons.
+    -->
+    <style>
+      @font-face { font-family: 'Google Sans'; font-weight: 400; src: url(taifa-ui://app/about/fonts/GoogleSans-Regular.woff2) format('woff2'); }
+      @font-face { font-family: 'Google Sans'; font-weight: 500; src: url(taifa-ui://app/about/fonts/GoogleSans-Medium.woff2) format('woff2'); }
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --ink: #161616;
+        --muted: #6b6b6b;
+        --line: rgba(0, 0, 0, 0.12);
+        --field: #f3f5f4;
+        --hover: rgba(0, 0, 0, 0.06);
+        --focus: #00864e;
+        --none: #a22b2b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1c1c;
+          --ink: #ececec;
+          --muted: #a8a8a8;
+          --line: rgba(255, 255, 255, 0.12);
+          --field: #262626;
+          --hover: rgba(255, 255, 255, 0.08);
+          --focus: #3fb57d;
+          --none: #f08a8a;
+        }
+      }
+      html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+      body { font: 13px/1 'Google Sans', system-ui, sans-serif; color: var(--ink); -webkit-user-select: none; user-select: none; }
+      .bar {
+        position: absolute; inset: 6px 8px 10px; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 8px;
+        background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.1);
+        opacity: 0; transform: translateY(-4px); transition: opacity 120ms ease-out, transform 120ms ease-out;
+      }
+      .bar.in { opacity: 1; transform: none; }
+      @media (prefers-reduced-motion: reduce) { .bar { transition: none; } }
+      input {
+        flex: 1; min-width: 0; height: 30px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px;
+        background: var(--field); color: var(--ink); font: inherit; outline: none; -webkit-user-select: text; user-select: text;
+      }
+      input:focus { border-color: var(--focus); }
+      .count { min-width: 64px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 4px; }
+      .count.none { color: var(--none); }
+      button {
+        width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px;
+        background: transparent; color: var(--ink); cursor: default; padding: 0;
+      }
+      button:hover:not(:disabled) { background: var(--hover); }
+      button:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+      button:disabled { opacity: 0.35; }
+      .i { width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat; }
+      .i-up { --i: url(taifa-ui://app/find/icons/arrow-up3.svg); }
+      .i-down { --i: url(taifa-ui://app/find/icons/arrow-down4.svg); }
+      .i-close { --i: url(taifa-ui://app/find/icons/close.svg); width: 11px; height: 11px; }
+      .sep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+    </style>
+  </head>
+  <body>
+    <div class="bar" id="bar" role="search" aria-label="Find in message">
+      <input id="q" type="text" placeholder="Find in message" aria-label="Find in message" spellcheck="false" autocomplete="off" />
+      <span class="count" id="count" role="status" aria-live="polite"></span>
+      <button id="prev" type="button" title="Previous match (Shift+Return)" aria-label="Previous match" disabled><span class="i i-up"></span></button>
+      <button id="next" type="button" title="Next match (Return)" aria-label="Next match" disabled><span class="i i-down"></span></button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="close" type="button" title="Close (Escape)" aria-label="Close find"><span class="i i-close"></span></button>
+    </div>
+    <script>
+      (function () {
+        var f = window.taifaFind;
+        var bar = document.getElementById('bar');
+        var q = document.getElementById('q');
+        var count = document.getElementById('count');
+        var prev = document.getElementById('prev');
+        var next = document.getElementById('next');
+        var mac = /Mac/.test(navigator.platform);
+        if (!mac) {
+          prev.title = 'Previous match (Shift+Enter)';
+          next.title = 'Next match (Enter)';
+        }
+        var timer = null;
+        var matches = 0;
+        function render(st) {
+          matches = Number(st.matches) || 0;
+          var text = q.value;
+          if (!text) count.textContent = '';
+          else if (st.pending) count.textContent = '';
+          else if (!matches) count.textContent = 'No matches';
+          else count.textContent = (Number(st.active) || 1) + ' of ' + matches;
+          count.className = 'count' + (text && !st.pending && !matches ? ' none' : '');
+          prev.disabled = next.disabled = matches === 0;
+        }
+        function search() {
+          clearTimeout(timer);
+          timer = null;
+          render({ matches: 0, pending: !!q.value });
+          if (f) f.query(q.value, true);
+        }
+        q.addEventListener('input', function () {
+          clearTimeout(timer);
+          // A short pause so each keystroke does not run a search of its own.
+          timer = setTimeout(search, 90);
+        });
+        q.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (timer) search();
+            else if (q.value && f) f.step(!e.shiftKey);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            if (f) f.close();
+          }
+        });
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && e.target !== q && f) f.close();
+        });
+        prev.addEventListener('click', function () { if (f) f.step(false); });
+        next.addEventListener('click', function () { if (f) f.step(true); });
+        document.getElementById('close').addEventListener('click', function () { if (f) f.close(); });
+        if (f) {
+          f.onState(function (st) {
+            if (!st) return;
+            if (typeof st.text === 'string' && st.text !== q.value) q.value = st.text;
+            if (st.focus) {
+              q.focus();
+              q.select();
+            }
+            render(st);
+          });
+        }
+        requestAnimationFrame(function () { bar.classList.add('in'); });
+        q.focus();
+      })();
+    </script>
+  </body>
+</html>

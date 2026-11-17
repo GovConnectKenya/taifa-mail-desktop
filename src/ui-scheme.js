@@ -26,7 +26,16 @@ const HOST = 'app';
 // request can never name anything else, and there is no path to traverse.
 const PAGES = Object.freeze({
   'tray/popover.html': 'tray/popover.html',
+  // The popover's icons: the webmail's own two-tone Iconsax files.
+  'tray/icons/direct-inbox.svg': 'tray/icons/direct-inbox.svg',
+  'tray/icons/edit.svg': 'tray/icons/edit.svg',
+  'tray/icons/setting.svg': 'tray/icons/setting.svg',
   'shell/offline.html': 'shell/offline.html',
+  // The find bar (src/find), shown over a mail window by find.js.
+  'find/find.html': 'find/find.html',
+  'find/icons/arrow-up3.svg': 'find/icons/arrow-up3.svg',
+  'find/icons/arrow-down4.svg': 'find/icons/arrow-down4.svg',
+  'find/icons/close.svg': 'find/icons/close.svg',
   // The About window (src/about): one page plus its logo, icons and fonts.
   'about/about.html': 'about/about.html',
   'about/logo.svg': 'about/logo.svg',

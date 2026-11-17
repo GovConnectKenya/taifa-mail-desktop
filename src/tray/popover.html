@@ -90,13 +90,31 @@
         font-weight: 600;
         letter-spacing: -0.01em;
       }
-      .dot {
+      /* Connection state: green online, amber reconnecting, grey offline. */
+      .conn {
         margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .dot {
         width: 7px;
         height: 7px;
         border-radius: 50%;
         background: var(--accent);
         box-shadow: 0 0 0 3px rgba(30, 169, 78, 0.16);
+      }
+      .conn.reconnecting .dot,
+      .conn.connecting .dot {
+        background: #d59a1c;
+        box-shadow: 0 0 0 3px rgba(213, 154, 28, 0.18);
+      }
+      .conn.offline .dot {
+        background: var(--muted);
+        box-shadow: 0 0 0 3px rgba(140, 140, 140, 0.16);
       }
 
       .sep {
@@ -127,6 +145,15 @@
         border-color: var(--accent);
         background: #26221e;
       }
+      /* The webmail's own two-tone Iconsax files, drawn in the text colour. */
+      .icon {
+        display: inline-block; width: 16px; height: 16px; flex: none; background: currentColor;
+        -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat;
+      }
+      .inbox .icon { width: 20px; height: 20px; }
+      .i-inbox { --i: url(taifa-ui://app/tray/icons/direct-inbox.svg); }
+      .i-compose { --i: url(taifa-ui://app/tray/icons/edit.svg); }
+      .i-settings { --i: url(taifa-ui://app/tray/icons/setting.svg); }
       .inbox .ic {
         display: inline-flex;
         color: var(--accent);
@@ -183,6 +210,7 @@
         font: inherit;
         font-size: 13px;
         font-weight: 500;
+        white-space: nowrap;
         cursor: pointer;
         transition:
           background 0.14s ease,
@@ -330,17 +358,14 @@
           <ellipse class="m-green" cx="372.707" cy="162.096" rx="16.02" ry="16.02" />
         </svg>
         <span class="word">Taifa Mail</span>
-        <span class="dot" aria-hidden="true"></span>
+        <span class="conn" id="conn" role="status" aria-live="polite"><span id="conn-txt"></span><span class="dot" aria-hidden="true"></span></span>
       </div>
 
       <div class="sep"></div>
 
       <button class="inbox" id="inbox" type="button">
         <span class="ic" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z" />
-            <path d="M3 7l9 6 9-6" />
-          </svg>
+          <span class="icon i-inbox"></span>
         </span>
         <span class="txt">
           <span class="t1">Open Inbox</span>
@@ -352,19 +377,13 @@
       <div class="row">
         <button class="btn" id="compose" type="button">
           <span class="ic" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-            </svg>
+            <span class="icon i-compose"></span>
           </span>
           New Message
         </button>
         <button class="btn" id="settings" type="button">
           <span class="ic" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
-            </svg>
+            <span class="icon i-settings"></span>
           </span>
           Settings
         </button>
@@ -417,15 +436,20 @@
           });
         }
 
+        // The count shows once, in the pill (round 3: "25 unread messages" sat
+        // next to a "25" pill). The full sentence goes to assistive tech.
+        var inboxBtn = document.getElementById('inbox');
         function renderUnread(n) {
           n = Number(n) || 0;
           if (n > 0) {
             unreadEl.textContent = n > 99 ? '99+' : String(n);
             unreadEl.classList.add('show');
-            inboxSub.textContent = n === 1 ? '1 unread message' : n + ' unread messages';
+            inboxSub.textContent = 'Unread mail waiting';
+            inboxBtn.setAttribute('aria-label', 'Open Inbox, ' + (n === 1 ? '1 unread message' : n + ' unread messages'));
           } else {
             unreadEl.classList.remove('show');
             inboxSub.textContent = 'Your mailbox';
+            inboxBtn.setAttribute('aria-label', 'Open Inbox');
           }
         }
 
@@ -435,18 +459,31 @@
           upd.className = 'upd ' + updState;
           updAct.className = 'u-act';
           var pct = Math.max(0, Math.min(100, Math.round(u.percent || 0)));
+          // Text nodes only: the version comes from the update feed.
+          function say(main, sub) {
+            updTxt.textContent = main;
+            if (sub) {
+              var span = document.createElement('span');
+              span.className = 'u-sub';
+              span.textContent = sub;
+              updTxt.appendChild(document.createTextNode(' '));
+              updTxt.appendChild(span);
+            }
+          }
+          var clean = typeof u.version === 'string' ? u.version.replace(/[^0-9A-Za-z.+-]/g, '').slice(0, 32) : '';
+          var ver = clean ? 'v' + clean : '';
           switch (updState) {
             case 'checking':
-              updTxt.innerHTML = 'Checking for updates';
+              say('Checking for updates');
               break;
             case 'available':
-              updTxt.innerHTML = 'Downloading an update' + (u.version ? ' <span class="u-sub">v' + u.version + '</span>' : '');
+              say('Downloading an update', ver);
               break;
             case 'downloading':
-              updTxt.innerHTML = 'Downloading an update <span class="u-sub">' + pct + '%</span>';
+              say('Downloading an update', pct + '%');
               break;
             case 'ready':
-              updTxt.innerHTML = 'Update ready' + (u.version ? ' <span class="u-sub">v' + u.version + '</span>' : '');
+              say('Update ready', ver);
               updAct.textContent = 'Restart';
               updAct.className = 'u-act show';
               break;
@@ -458,15 +495,36 @@
             case 'dev':
               updTxt.textContent = 'Updates run in the installed app';
               break;
-            default:
+            case 'current':
               updTxt.textContent = 'Taifa Mail is up to date';
+              updAct.textContent = 'Check';
+              updAct.className = 'u-act ghost show';
+              break;
+            default:
+              updTxt.textContent = 'Updates install automatically';
               updAct.textContent = 'Check';
               updAct.className = 'u-act ghost show';
           }
         }
 
+        var connEl = document.getElementById('conn');
+        var connTxt = document.getElementById('conn-txt');
+        // Main sends { state, label }: the same words the window and the tray
+        // tooltip use (src/connection.js). Nothing shows while connected.
+        var CONN_STATES = { online: 1, connecting: 1, reconnecting: 1, offline: 1 };
+        function renderConn(c) {
+          var st = c && typeof c === 'object' ? c.state : c;
+          var label = c && typeof c === 'object' && typeof c.label === 'string' ? c.label.slice(0, 60) : '';
+          if (!CONN_STATES.hasOwnProperty(st)) st = 'online';
+          connEl.className = 'conn ' + st;
+          connTxt.textContent = st === 'online' ? '' : label;
+          connEl.setAttribute('aria-label', label || 'Connected');
+          connEl.title = label;
+        }
+
         renderUnread(0);
         renderUpdate({ state: 'idle' });
+        renderConn({ state: 'online', label: 'Connected' });
 
         // Main pushes { update, unread } on 'tray:state' whenever either
         // changes and every time the popover is shown.
@@ -474,6 +532,7 @@
           var off = s.onTrayState(function (st) {
             if (!st) return;
             if ('unread' in st) renderUnread(st.unread);
+            if ('conn' in st) renderConn(st.conn);
             if (st.update) renderUpdate(st.update);
           });
           window.addEventListener('beforeunload', function () {

@@ -20,6 +20,8 @@ const path = require('path');
 const {
   app,
   BrowserWindow,
+  WebContentsView,
+  clipboard,
   Menu,
   Tray,
   ipcMain,
@@ -50,11 +52,11 @@ if (app.isPackaged) {
 }
 
 const { APP_ORIGIN, APP_URL, THEME_BG, THEME_COOKIE } = require('./config');
-const { harden, installSessionHandlers } = require('./security');
+const { harden, installSessionHandlers, openExternally, setAppWindowOpener } = require('./security');
 const { installBundle, uninstallBundle, bundleInfo } = require('./bundle');
 const { mailtoToRoute } = require('./mailto');
 const { createNotificationState, detect: detectNotificationState, settingsTarget, linuxGuidance, permissionOverrideScript, createSettingsGate, DOCS_URL } = require('./notify-state');
-const { createFallback, fallbackBody } = require('./notify-fallback');
+const { createFallback, fallbackBody, fallbackPlan, pickNew } = require('./notify-fallback');
 const { formatLine, appendLine } = require('./notify-log');
 const { ABOUT_SIZE, aboutLink, chromiumLicencePath, buildAboutInfo } = require('./about');
 const { shouldReloadAfterFailedNavigation } = require('./route');
@@ -64,6 +66,19 @@ const { parseUnread, createBadge, SEED_NOTIFY_PREF_JS } = require('./badge');
 const { initUpdater, checkManual, checkNow, getStatus, quitAndInstallNow } = require('./updater');
 
 const { registerUiScheme, installUiScheme, uiUrl } = require('./ui-scheme');
+const { PAGE_SHIM_JS, parseMarker, normaliseState } = require('./page-shim');
+const { actionScript } = require('./page-actions');
+const { buildMenuTemplate, menuSignature } = require('./menu');
+const { buildContextMenuTemplate, pickSpellLanguages } = require('./context-menu');
+const { createNotifier } = require('./notifier');
+const { printConversation } = require('./print');
+const { dropAlert } = require('./drop');
+const { testNotificationReport } = require('./notify-test');
+const { connectionView, createServerHealth, shouldProbe } = require('./connection');
+const { linkStatusParts } = require('./link-status');
+const { createFinder } = require('./find');
+const { MESSAGE_SIZE, isConversationRoute, messageWindowCss, shouldCloseOnNavigate, messageTitle, placeMessageWindow, FOLLOW_JS, FOLLOW_CHECK_JS } = require('./message-window');
+const prefs = require('./prefs');
 
 const PARTITION = 'persist:taifamail';
 
@@ -180,6 +195,113 @@ function loadApp() {
 // Window
 // ---------------------------------------------------------------------------
 
+// Every webmail window: the primary one (win) and any opened with File > New
+// Window or "Open Conversation in New Window". They share the session, so they
+// are the same signed-in mailbox.
+const mailWindows = new Set();
+// Page state per window (page-shim.js), keyed by webContents id.
+const pageStates = new Map();
+
+function mailWebPreferences() {
+  return {
+    partition: PARTITION,
+    preload: path.join(__dirname, 'preload.js'),
+    contextIsolation: true,
+    nodeIntegration: false,
+    nodeIntegrationInSubFrames: false,
+    sandbox: true,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    experimentalFeatures: false,
+    webviewTag: false,
+    spellcheck: true,
+    // Load-bearing, not a nicety. Closing to tray hides the window, and a
+    // hidden window gets Chromium background throttling, which clamps timers
+    // to roughly 1Hz. The webmail's mailbox WebSocket runs a 30s heartbeat and
+    // treats more than 75s of silence as a dead socket, so throttled timers
+    // make that logic misfire. A mail client that stops noticing mail while
+    // minimised is broken.
+    backgroundThrottling: false,
+  };
+}
+
+function isMailWindow(w) {
+  return !!(w && !w.isDestroyed() && mailWindows.has(w));
+}
+
+// Edit > Find > Find in Message (find.js).
+const finder = createFinder({ WebContentsView, uiUrl, preload: path.join(__dirname, 'preload.js'), isMailWindow });
+
+// What every webmail window gets, primary or not.
+function wireMailWindow(w) {
+  mailWindows.add(w);
+  const wc = w.webContents;
+  const wcId = wc.id;
+  for (const ev of ['focus', 'blur', 'show', 'hide', 'minimize', 'restore']) w.on(ev, () => syncAudioMute(w));
+  w.on('focus', () => scheduleMenuRefresh());
+  wc.on('dom-ready', () => applyPageShim(w));
+  wc.on('dom-ready', () => applyPermissionOverride(w));
+  wc.on('console-message', (event, ...rest) => {
+    const d = typeof event === 'object' && event && typeof event.message === 'string' ? event : { level: rest[0], message: rest[1] };
+    if (handlePageMarker(w, d.message)) return;
+    logPageConsole(d.level, d.message);
+  });
+  // A settings click is the only time the OS settings may open (settingsGate).
+  wc.on('input-event', (_e, input) => {
+    if (input && (input.type === 'mouseDown' || input.type === 'keyDown' || input.type === 'rawKeyDown')) settingsGate.noteGesture();
+  });
+  wc.on('context-menu', (_e, params) => showContextMenu(w, params));
+  // The link status bubble: where a hovered link goes (link-status.js).
+  wc.on('update-target-url', (_e, url) => {
+    const parts = linkStatusParts(url, APP_ORIGIN);
+    wc.executeJavaScript(`window.__taifaPageShim && window.__taifaPageShim.link && window.__taifaPageShim.link(${JSON.stringify(parts)})`).catch(() => {});
+  });
+  wc.on('did-start-navigation', (_e, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) {
+      pageStates.delete(wcId);
+      scheduleMenuRefresh();
+    }
+  });
+  wc.on('zoom-changed', (_e, dir) => zoomBy(w, dir === 'in' ? 0.5 : -0.5));
+
+  // The macOS title bar is hidden and the traffic lights sit over the
+  // webmail's top bar, so that bar must leave room for them and act as the
+  // window's drag handle. Injected here, as app chrome, rather than written
+  // into the webmail: the browser build never gets it.
+  //
+  // Only while the traffic lights are visible: in full screen macOS hides them
+  // (and a full-screen window cannot be dragged), so the inset is switched off
+  // and the top bar sits at the far left exactly as on the web. A zoomed
+  // (maximised) window still shows the traffic lights, so it keeps the inset.
+  // A message window has a native title bar, so none of this applies there.
+  if (process.platform === 'darwin' && !messageWindows.has(w)) {
+    wc.on('dom-ready', () => {
+      // A repeat dom-ready for the same document just adds an identical sheet.
+      wc.insertCSS(MAC_TITLEBAR_CSS, { cssOrigin: 'user' }).catch(() => {});
+      syncWindowChrome(w);
+    });
+    wc.on('did-finish-load', () => syncWindowChrome(w));
+    w.on('enter-full-screen', () => syncWindowChrome(w));
+    w.on('leave-full-screen', () => syncWindowChrome(w));
+  }
+
+  // The webmail cancels beforeunload while a send is pending. Without this
+  // handler that silently blocks reloads, quit and the updater restart.
+  wc.on('will-prevent-unload', (e) => {
+    const leave = handleWillPreventUnload({ dialog, win: w }, e);
+    // Stay during a quit or an updater restart cancels the quit. Clear the flag
+    // so a later window close hides to the tray again instead of destroying it.
+    if (!leave) isQuitting = false;
+  });
+
+  w.on('close', () => finder.close(w, false));
+  w.on('closed', () => {
+    mailWindows.delete(w);
+    pageStates.delete(wcId);
+    scheduleMenuRefresh();
+  });
+}
+
 function createWindow() {
   const bounds = windowState.restoreBounds({ width: 1200, height: 820 });
 
@@ -194,70 +316,21 @@ function createWindow() {
     icon: process.platform === 'linux' ? brandingPath('icon.png') : undefined,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 22 } : undefined,
-    webPreferences: {
-      partition: PARTITION,
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      nodeIntegrationInSubFrames: false,
-      sandbox: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      experimentalFeatures: false,
-      webviewTag: false,
-      spellcheck: true,
-      // Load-bearing, not a nicety. Closing to tray hides the window, and a
-      // hidden window gets Chromium background throttling, which clamps timers
-      // to roughly 1Hz. The webmail's mailbox WebSocket runs a 30s heartbeat and
-      // treats more than 75s of silence as a dead socket, so throttled timers
-      // make that logic misfire. A mail client that stops noticing mail while
-      // minimised is broken.
-      backgroundThrottling: false,
-    },
+    webPreferences: mailWebPreferences(),
   });
 
   if (bounds.isMaximized) win.maximize();
   windowState.track(win);
-
-  for (const ev of ['focus', 'blur', 'show', 'hide', 'minimize', 'restore']) win.on(ev, syncAudioMute);
-  win.webContents.on('dom-ready', applyFocusShim);
-  win.webContents.on('dom-ready', applyPermissionOverride);
-  win.webContents.on('console-message', (event, ...rest) => {
-    const d = typeof event === 'object' && event && typeof event.message === 'string' ? event : { level: rest[0], message: rest[1] };
-    if (handlePageMarker(d.message)) return;
-    logPageConsole(d.level, d.message);
-  });
-  // A settings click is the only time the OS settings may open (settingsGate).
-  win.webContents.on('input-event', (_e, input) => {
-    if (input && (input.type === 'mouseDown' || input.type === 'keyDown' || input.type === 'rawKeyDown')) settingsGate.noteGesture();
-  });
+  wireMailWindow(win);
 
   win.once('ready-to-show', () => {
     win.show();
+    // The window was in full screen when the app last quit: put it back.
+    if (bounds.isFullScreen) win.setFullScreen(true);
     if (TIMING) console.log(`[timing] launch to ready-to-show: ${Date.now() - LAUNCHED_AT}ms`);
     // Everything that is not the window waits until it is on screen.
     setTimeout(startDeferred, 0);
   });
-
-  // The macOS title bar is hidden and the traffic lights sit over the
-  // webmail's top bar, so that bar must leave room for them and act as the
-  // window's drag handle. Injected here, as app chrome, rather than written
-  // into the webmail: the browser build never gets it.
-  //
-  // Only while the traffic lights are visible: in full screen macOS hides them
-  // (and a full-screen window cannot be dragged), so the stylesheet is removed
-  // and the top bar sits at the far left exactly as on the web. A zoomed
-  // (maximised) window still shows the traffic lights, so it keeps the inset.
-  if (process.platform === 'darwin') {
-    win.webContents.on('dom-ready', () => {
-      // A repeat dom-ready for the same document just adds an identical sheet.
-      win.webContents.insertCSS(MAC_TITLEBAR_CSS, { cssOrigin: 'user' }).catch(() => {});
-      syncFullScreenFlag();
-    });
-    win.webContents.on('did-finish-load', syncFullScreenFlag);
-    win.on('enter-full-screen', syncFullScreenFlag);
-    win.on('leave-full-screen', syncFullScreenFlag);
-  }
 
   win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
     if (!isMainFrame) return;
@@ -277,8 +350,8 @@ function createWindow() {
       clearRetry();
       if (TIMING && !appLoaded) console.log(`[timing] launch to webmail loaded: ${Date.now() - LAUNCHED_AT}ms`);
       win.webContents.executeJavaScript(SEED_NOTIFY_PREF_JS).catch(() => {});
-      applyPermissionOverride();
-      applyFocusShim();
+      applyPermissionOverride(win);
+      applyPageShim(win);
       if (!appLoaded && process.env.TAIFA_SMOKE_NOTIFY === '1') {
         // Release smoke test hook: proves a native notification reaches the
         // platform's notification service. Never set in normal use.
@@ -292,6 +365,8 @@ function createWindow() {
         openRoute(route);
       }
     }
+    scheduleMenuRefresh();
+    pushTrayState();
   });
 
   // Unread count from the document title. The webmail sets its tab title to
@@ -308,17 +383,8 @@ function createWindow() {
     considerFallback(fallback.onUnread(prevUnread, n));
     badge.set(n);
     if (n > 0) scheduleBadgeProbe();
-    if (tray && !tray.isDestroyed()) tray.setToolTip(unreadTooltip(''));
+    updateTrayTooltip();
     pushTrayState();
-  });
-
-  // The webmail cancels beforeunload while a send is pending. Without this
-  // handler that silently blocks reloads, quit and the updater restart.
-  win.webContents.on('will-prevent-unload', (e) => {
-    const leave = handleWillPreventUnload({ dialog, win }, e);
-    // Stay during a quit or an updater restart cancels the quit. Clear the flag
-    // so a later window close hides to the tray again instead of destroying it.
-    if (!leave) isQuitting = false;
   });
 
   // Keep the app alive in the tray. A mail client that quits when you close the
@@ -326,10 +392,118 @@ function createWindow() {
   win.on('close', (e) => {
     if (isQuitting) return;
     e.preventDefault();
+    // Leaving full screen first: hiding a full-screen window on macOS leaves
+    // an empty black Space behind.
+    if (win.isFullScreen()) {
+      win.once('leave-full-screen', () => win.hide());
+      win.setFullScreen(false);
+      return;
+    }
     win.hide();
   });
 
   loadApp();
+}
+
+// A second webmail window: File > New Window (a full client), or a single
+// conversation in its own focused window (message-window.js). It closes for
+// real, and it does not drive the badge or the offline page: the primary
+// window owns those.
+const messageWindows = new WeakSet();
+function openMailWindow(route) {
+  const anchor = BrowserWindow.getFocusedWindow() || win;
+  const ab = anchor && !anchor.isDestroyed() ? anchor.getBounds() : null;
+  const message = isConversationRoute(route);
+  // A message window: its own remembered size and place, kept on screen, and
+  // a native title bar that shows the subject (message-window.js).
+  const bounds = message
+    ? placeMessageWindow({
+        saved: prefs.get('messageWindowBounds') || null,
+        displays: screen.getAllDisplays().map((d) => d.workArea),
+        open: [...mailWindows].filter((m) => messageWindows.has(m) && !m.isDestroyed()).map((m) => m.getBounds()),
+        anchor: ab,
+      })
+    : { width: 1200, height: 820, ...(ab ? { x: ab.x + 28, y: ab.y + 28 } : {}) };
+  const w = new BrowserWindow({
+    ...bounds,
+    minWidth: message ? 520 : 720,
+    minHeight: 520,
+    show: false,
+    backgroundColor: THEME_BG[currentTheme],
+    icon: process.platform === 'linux' ? brandingPath('icon.png') : undefined,
+    titleBarStyle: process.platform === 'darwin' && !message ? 'hiddenInset' : 'default',
+    trafficLightPosition: process.platform === 'darwin' && !message ? { x: 18, y: 14 } : undefined,
+    title: message ? 'Taifa Mail' : undefined,
+    webPreferences: mailWebPreferences(),
+  });
+  if (message) {
+    messageWindows.add(w);
+    const wc = w.webContents;
+    // Reader only, styled before the page draws, so the full client never flashes.
+    wc.on('dom-ready', () => {
+      wc.insertCSS(messageWindowCss(), { cssOrigin: 'user' }).catch(() => {});
+      wc.executeJavaScript(FOLLOW_JS, true).catch(() => {});
+    });
+    // The title is the subject, not the page's "Inbox · Taifa Mail".
+    w.on('page-title-updated', (e) => e.preventDefault());
+    // Remember where the user put it, for the next message window.
+    w.on('close', () => {
+      if (!w.isDestroyed() && !w.isFullScreen() && !w.isMinimized()) prefs.set('messageWindowBounds', w.getNormalBounds());
+    });
+    // A window for THIS conversation: when it goes away, so does the window.
+    // Newer and older (the reader's buttons, j and k) move the window along.
+    let home = '';
+    wc.on('did-navigate-in-page', async (_e, url, isMainFrame) => {
+      if (isMainFrame === false || !home || !shouldCloseOnNavigate(home, url) || w.isDestroyed()) return;
+      const followed = await wc.executeJavaScript(FOLLOW_CHECK_JS, true).catch(() => false);
+      if (w.isDestroyed()) return;
+      if (followed === true && isConversationRoute(new URL(url).pathname + new URL(url).hash)) {
+        home = url;
+        syncMessageTitle(w);
+        return;
+      }
+      w.close();
+    });
+    wc.on('did-finish-load', () => {
+      home = wc.getURL();
+      if (process.platform !== 'darwin') w.setMenuBarVisibility(false);
+    });
+  }
+  wireMailWindow(w);
+  w.once('ready-to-show', () => {
+    if (!w.isDestroyed()) {
+      w.show();
+      w.focus();
+    }
+  });
+  w.webContents.on('did-finish-load', () => {
+    applyPermissionOverride(w);
+    applyPageShim(w);
+    scheduleMenuRefresh();
+  });
+  w.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return;
+    // The primary window owns the offline page and its retries.
+    console.warn(`[shell] extra window failed to load (${code} ${desc}): ${url}`);
+    if (!w.isDestroyed()) w.close();
+    showWindow();
+  });
+  w.loadURL(new URL(route || '/', APP_ORIGIN).toString());
+  return w;
+}
+
+// A message window's title follows its conversation's subject.
+const SUBJECT_JS = "(() => { const h = document.querySelector('.tm-reader[data-open=\"1\"] h1'); return h ? h.textContent : ''; })()";
+function syncMessageTitle(w) {
+  if (!messageWindows.has(w) || w.isDestroyed()) return;
+  w.webContents.executeJavaScript(SUBJECT_JS, true).then((s) => { if (!w.isDestroyed() && s) w.setTitle(messageTitle(s)); }).catch(() => {});
+}
+
+// The webmail window an action applies to: the focused one, else the primary.
+function targetWindow() {
+  const f = BrowserWindow.getFocusedWindow();
+  if (isMailWindow(f)) return f;
+  return win && !win.isDestroyed() ? win : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,63 +524,40 @@ function showWindow() {
   if (process.platform === 'darwin') app.focus({ steal: true });
 }
 
-// Clicking a new-mail notification. The webmail's click handler calls
-// window.focus() and then opens the thread. Measured in Electron 45: a
-// renderer window.focus() reaches the browser process as NOTHING (no webContents
-// or window event, the window stays hidden, minimised or behind), on every
-// platform. So the app wraps window.focus() in the page with a one-line shim
-// that reports the call through a console marker, and main brings the window
-// to the front. The shim only ever asks to be shown; a page that fakes the
-// marker can do no more than raise the window it already owns.
-const FOCUS_MARK = '\u0001taifa-focus-request';
-const NOTIFY_MARK = '\u0001taifa-notify:';
-// One page shim, two jobs, both reported through console markers (the page has
-// no bridge): window.focus() requests, and a record of every Notification the
-// page creates (attempted, shown, failed, clicked) with the permission it saw,
-// never its title or body. The Notification wrapper is a Proxy, so the static
-// permission getter and requestPermission() pass straight through.
-const PAGE_SHIM_JS = `(() => {
-  try {
-    if (window.__taifaPageShim) return;
-    window.__taifaPageShim = true;
-    const orig = window.focus.bind(window);
-    window.focus = function () { try { console.debug(${JSON.stringify(FOCUS_MARK)}); } catch (_) {} return orig(); };
-    const N = window.Notification;
-    if (typeof N === 'function') {
-      const say = (kind) => { try { console.debug(${JSON.stringify(NOTIFY_MARK)} + kind + ':' + N.permission); } catch (_) {} };
-      window.Notification = new Proxy(N, {
-        construct(target, args) {
-          const n = Reflect.construct(target, args);
-          say('attempted');
-          try {
-            n.addEventListener('show', () => say('shown'));
-            n.addEventListener('error', () => say('failed'));
-            n.addEventListener('click', () => say('clicked'));
-          } catch (_) {}
-          return n;
-        },
-      });
-    }
-  } catch (_) {}
-})()`;
-
-function applyFocusShim() {
-  if (!win || win.isDestroyed() || showingOffline) return;
-  win.webContents.executeJavaScript(PAGE_SHIM_JS).catch(() => {});
+// The page shim (page-shim.js): reports window.focus() calls, takes over the
+// page's new-mail notifications, reports what the page is showing (for the
+// menus and the tray) and handles files dropped on the window. It talks back
+// only through console markers, read in handlePageMarker.
+//
+// Why window.focus() needs it: a notification click in the page calls
+// window.focus(), and measured in Electron 45 a renderer window.focus() reaches
+// the browser process as NOTHING (no webContents or window event, the window
+// stays hidden, minimised or behind), on every platform. The shim reports the
+// call and main brings the window to the front. A page that fakes the marker
+// can do no more than raise the window it already owns.
+function applyPageShim(w) {
+  if (!isMailWindow(w)) return;
+  if (w === win && showingOffline) return;
+  w.webContents.executeJavaScript(PAGE_SHIM_JS).catch(() => {});
 }
 
-// Page audio plays only while the window is in front. The webmail plays its own
+// Page audio plays only while its window is in front. The webmail plays its own
 // chime on a new message (when its Sound preference is on) and, with the window
-// in the background, the OS also plays its notification sound for the banner:
-// two sounds. Muting the page while it is not in front leaves exactly one (the
-// OS one), and in front (no banner is shown then) the chime is the one.
-function windowInFront() {
-  return !!(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused());
+// in the background, the OS plays the notification's sound: two sounds. Muting
+// the page while it is not in front leaves exactly one.
+function windowInFront(w = win) {
+  return !!(w && !w.isDestroyed() && w.isVisible() && !w.isMinimized() && w.isFocused());
 }
 
-function syncAudioMute() {
-  if (!win || win.isDestroyed()) return;
-  win.webContents.setAudioMuted(!windowInFront());
+// Any webmail window in front: the user is looking at the app.
+function appInFront() {
+  for (const w of mailWindows) if (windowInFront(w)) return true;
+  return false;
+}
+
+function syncAudioMute(w) {
+  if (!w || w.isDestroyed()) return;
+  w.webContents.setAudioMuted(!windowInFront(w));
 }
 
 // -- notification diagnostics and the new-mail safety net ---------------------
@@ -420,7 +571,7 @@ function logNotify(event, extra) {
     event,
     os: notifyState.snapshot().status,
     osReason: notifyState.snapshot().reason,
-    front: windowInFront(),
+    front: appInFront(),
     unread: unreadCount,
     ...extra,
   }));
@@ -432,65 +583,139 @@ function logPageConsole(level, message) {
   appendLine(pageLogFile(), formatLine({ level, msg: String(message).slice(0, 300) }));
 }
 
-function handlePageMarker(message) {
-  if (message === FOCUS_MARK) { showWindow(); return true; }
-  if (typeof message === 'string' && message.startsWith(NOTIFY_MARK)) {
-    const [kind, permission] = message.slice(NOTIFY_MARK.length).split(':');
-    if (kind === 'attempted') fallback.pageAttempt();
-    logNotify(`page-${kind}`, { permission });
-    return true;
+// Native notifications for new mail (notifier.js). A click opens the exact
+// conversation in the primary window and brings it forward.
+const notifier = createNotifier({
+  createNotification: (opts) => trackNotification(new Notification(opts)),
+  platform: process.platform,
+  onOpen: (route) => {
+    showWindow();
+    openRoute(route);
+  },
+  log: (event, extra) => logNotify(event, extra),
+  soundOn: () => {
+    const st = win && !win.isDestroyed() ? pageStates.get(win.webContents.id) : null;
+    return !!(st && st.sound);
+  },
+});
+
+// Every marker is page-controlled input: see page-shim.js.
+function handlePageMarker(w, message) {
+  const m = parseMarker(message);
+  if (!m) return false;
+  if (m.type === 'focus') {
+    if (w === win) showWindow();
+    else if (!w.isDestroyed()) {
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+    }
+  } else if (m.type === 'notify') {
+    if (m.kind === 'attempted') fallback.pageAttempt();
+    logNotify(`page-${m.kind}`, { permission: m.permission });
+  } else if (m.type === 'post') {
+    // The page posts when ITS window is not in front, but with several windows
+    // another one may be: then the user is looking at the app, no banner.
+    if (appInFront()) logNotify('notify-skipped', { reason: 'in-front' });
+    else notifier.post(m.data);
+  } else if (m.type === 'state') {
+    pageStates.set(w.webContents.id, normaliseState(m.data));
+    syncMessageTitle(w);
+    scheduleMenuRefresh();
+    if (w === win) {
+      onSignInState(pageStates.get(w.webContents.id).signedIn);
+      pushTrayState();
+      updateTrayTooltip();
+    }
+  } else if (m.type === 'drop') {
+    handleDropResult(w, m.data);
   }
-  return false;
+  return true;
 }
 
 // Called when the unread count in the title went up while the app was not in
-// front: waits a moment for the page's own notification, then posts a plain one
-// if the page stayed silent (see src/notify-fallback.js).
+// front: waits a moment for the page's own notification, then, if the page
+// stayed silent, announces the new mail itself (see src/notify-fallback.js). A
+// second increase while waiting restarts the wait, so a burst is handled once.
+let fallbackTimer = null;
+let fallbackInc = null;
+let inboxBaseline = null; // newest Inbox uid known at sign-in (or last announced)
 function considerFallback(inc) {
-  if (!inc || windowInFront()) return;
-  setTimeout(async () => {
-    if (windowInFront() || !fallback.due(inc)) { logNotify('fallback-skipped', { reason: windowInFront() ? 'in-front' : 'page-notified' }); return; }
+  if (!inc || appInFront()) return;
+  fallbackInc = fallbackInc ? { at: fallbackInc.at, delta: fallbackInc.delta + inc.delta } : inc;
+  clearTimeout(fallbackTimer);
+  fallbackTimer = setTimeout(async () => {
+    const pending = fallbackInc;
+    fallbackInc = null;
+    fallbackTimer = null;
+    if (appInFront() || !fallback.due(pending) || notifier.postedWithin(8000)) { logNotify('fallback-skipped', { reason: appInFront() ? 'in-front' : 'page-notified' }); return; }
     if (notifyState.snapshot().status === 'blocked') { logNotify('fallback-skipped', { reason: 'os-blocked' }); return; }
     let pref = 'on';
     try { pref = await win.webContents.executeJavaScript("localStorage.getItem('taifa_mb_notifications')"); } catch (_) { /* keep the default */ }
     if (pref === 'off') { logNotify('fallback-skipped', { reason: 'pref-off' }); return; }
-    const n = trackNotification(new Notification({ title: 'Taifa Mail', body: fallbackBody(unreadCount) }));
-    n.on('click', () => showWindow());
-    n.on('show', () => logNotify('fallback-shown'));
-    n.on('failed', (_e, err) => logNotify('fallback-failed', { reason: err }));
-    logNotify('fallback-posted', { reason: 'page-silent' });
-    n.show();
+    const head = await pageAction(win, 'inbox-head');
+    const plan = fallbackPlan(head, inboxBaseline);
+    if (plan.kind !== 'count') inboxBaseline = plan.baseline;
+    if (plan.kind === 'envelopes') {
+      logNotify('fallback-posted', { reason: 'page-silent', kind: 'envelopes', n: plan.fresh.length });
+      for (const m of plan.fresh) {
+        notifier.post({ title: m.fromName || m.fromAddr, body: m.subject, snippet: m.snippet, fromAddr: m.fromAddr, tag: `mail-${m.folder}-${m.uid}` });
+      }
+      return;
+    }
+    if (plan.kind === 'none') {
+      logNotify('fallback-skipped', { reason: 'no-new-inbox' });
+      return;
+    }
+    logNotify('fallback-posted', { reason: 'page-silent', kind: 'count-no-list' });
+    notifier.postFallback(unreadCount);
   }, 4000);
 }
 
-// Help > Send test notification: posts a native notification and says what the
-// app and the page believe about permission, so a silent failure can be told
-// apart from a switched-off one.
+// Sign-in (or a switch of account): the count is about to jump from nothing to
+// the whole unread total. Restart the settle window and take a fresh baseline
+// a moment later, so only mail that arrives after sign-in is announced.
+let signedIn = false;
+function onSignInState(now) {
+  if (now === signedIn) return;
+  signedIn = now;
+  inboxBaseline = null;
+  if (!now) return;
+  fallback.markLoaded();
+  setTimeout(async () => {
+    const head = await pageAction(win, 'inbox-head');
+    if (head && inboxBaseline === null) inboxBaseline = pickNew(head, null).baseline;
+  }, 6000);
+}
+
+// Help > Send Test Notification: posts a native notification and tells the
+// user, in plain words, whether notifications work (notify-test.js). What the
+// app and the page believe about permission goes to notifications.log.
 async function sendTestNotification() {
   const js = (code) => (win && !win.isDestroyed() ? win.webContents.executeJavaScript(code).catch(() => 'unavailable') : Promise.resolve('no window'));
   const pagePermission = await js('typeof Notification === "undefined" ? "unsupported" : Notification.permission');
   const pagePref = await js("localStorage.getItem('taifa_mb_notifications')");
-  const snap = notifyState.snapshot();
-  let outcome = 'no event within 3 seconds';
-  const done = new Promise((resolve) => {
-    const n = new Notification({ title: 'Taifa Mail test notification', body: 'If you can read this, notifications reach the system.' });
+  let outcome = 'timeout';
+  let reason = '';
+  await new Promise((resolve) => {
+    // trackNotification: a refusal also records the blocked state, so the app
+    // stops reporting 'unknown' after macOS has said no.
+    const n = trackNotification(new Notification({ title: 'Taifa Mail', body: 'Notifications are working. New mail will show up like this.' }));
     n.on('show', () => { outcome = 'shown'; resolve(); });
-    n.on('failed', (_e, err) => { outcome = `failed: ${err}`; resolve(); });
+    n.on('failed', (_e, err) => { outcome = 'failed'; reason = String(err); resolve(); });
     n.on('click', () => showWindow());
     n.show();
     setTimeout(resolve, 3000);
   });
-  await done;
-  logNotify('test', { permission: pagePermission, outcome });
-  const lines = [
-    `Native notification: ${outcome}${process.platform === 'darwin' && outcome === 'shown' ? ' (macOS reports this even when notifications are switched off for the app)' : ''}`,
-    `Permission the webmail sees: ${pagePermission}`,
-    `Webmail notification setting: ${pagePref === null ? 'not set (on)' : pagePref}`,
-    `System state known to the app: ${snap.status}${snap.reason ? ` (${snap.reason})` : ''}`,
-    `Log: ${notifyLogFile()}`,
-  ];
-  dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, { type: 'info', title: 'Taifa Mail', message: 'Test notification sent', detail: lines.join('\n'), buttons: ['OK', 'Open notification settings'], defaultId: 0, cancelId: 0 })
-    .then(({ response }) => { if (response === 1) openNotificationHelp(); })
+  const snap = notifyState.snapshot();
+  logNotify('test', { permission: pagePermission, outcome, reason, pref: pagePref === null ? 'unset' : pagePref });
+  const r = testNotificationReport({ platform: process.platform, outcome, osStatus: snap.status, pagePref });
+  dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, { type: outcome === 'failed' || snap.status === 'blocked' ? 'warning' : 'info', message: r.message, detail: r.detail, buttons: r.buttons, defaultId: 0, cancelId: r.buttons.length - 1 })
+    .then(({ response }) => {
+      const a = r.actions[response];
+      if (a === 'os-settings') openNotificationHelp();
+      else if (a === 'app-settings') openRoute('/settings');
+    })
     .catch(() => {});
 }
 
@@ -498,16 +723,83 @@ async function sendTestNotification() {
 // step with download progress. The right-click menu is built on demand, so
 // there is nothing to rebuild here.
 function updateStatusLabel() {
-  if (tray && !tray.isDestroyed()) {
-    const s = getStatus();
-    let suffix = '';
-    if (s.state === 'downloading') suffix = ` (update ${s.percent || 0}%)`;
-    else if (s.state === 'ready') suffix = ' (update ready, restart to apply)';
-    else if (s.state === 'error') suffix = ' (update check failed)';
-    tray.setToolTip(unreadTooltip(suffix));
-  }
+  updateTrayTooltip();
   pushTrayState();
   pushAboutState();
+}
+
+// The one connection state (connection.js), from the primary window's page
+// state, the offline page and the backend's health. The tray popover, the tray
+// tooltip and the window all say the same words.
+const serverHealth = createServerHealth();
+function connectionInfo() {
+  const st = win && !win.isDestroyed() ? pageStates.get(win.webContents.id) : null;
+  return connectionView({ showingOffline, appLoaded, page: st || null, serverDown: serverHealth.down() });
+}
+function connectionState() {
+  return connectionInfo().state;
+}
+// The backend's health changes without the page saying anything (a 502, a hung
+// request), so it is re-read every few seconds while the tray is up.
+let lastConnKey = '';
+let lastProbeAt = 0;
+let lastNudgeAt = 0;
+// The server may come back long before the page's own backoff looks again
+// (round 2: 94 s for the mailbox, 63 s for live updates). While the state is
+// not fine, probe /health; when it answers, press the page's own retry.
+// One probe at a time, and never longer than PROBE_TIMEOUT_MS: the probe
+// bypasses the protocol handler (and so its read deadline), and round 3's hang
+// test showed unanswered probes piling up every few seconds until they held
+// every connection Chromium allows to the host, so nothing at all reached the
+// server after it came back.
+const PROBE_TIMEOUT_MS = 4000;
+let probing = false;
+async function probeAndNudge() {
+  if (probing) return;
+  probing = true;
+  lastProbeAt = Date.now();
+  const done = serverHealth.start('/health');
+  let ok = false;
+  try {
+    const res = await session.fromPartition(PARTITION).fetch(`${APP_ORIGIN}/health`, { bypassCustomProtocolHandlers: true, cache: 'no-store', signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    ok = res.status < 500;
+    done(res.status);
+    res.body?.cancel().catch(() => {});
+  } catch (_) {
+    done(0);
+  } finally {
+    probing = false;
+  }
+  if (!ok || !win || win.isDestroyed() || showingOffline || Date.now() - lastNudgeAt < 10000) return;
+  const st = pageStates.get(win.webContents.id);
+  if (!st || !(st.bootError || st.degraded || st.connKind === 'server')) return;
+  lastNudgeAt = Date.now();
+  const r = await pageAction(win, 'reconnect');
+  if (r) console.log(`[shell] server is back: retried ${r}`);
+}
+
+function watchConnection() {
+  setInterval(() => {
+    if (shouldProbe({ state: connectionState(), lastProbeAt, now: Date.now(), everyMs: 2500 })) probeAndNudge();
+    const c = connectionInfo();
+    const key = `${c.state}|${c.label}`;
+    if (key === lastConnKey) return;
+    lastConnKey = key;
+    updateTrayTooltip();
+    pushTrayState();
+  }, 3000).unref();
+}
+
+function updateTrayTooltip() {
+  if (!tray || tray.isDestroyed()) return;
+  const s = getStatus();
+  const parts = [];
+  const conn = connectionInfo();
+  if (conn.state !== 'online') parts.push(conn.label);
+  if (s.state === 'downloading') parts.push(`update ${s.percent || 0}%`);
+  else if (s.state === 'ready') parts.push('update ready, restart to apply');
+  else if (s.state === 'error') parts.push('update check failed');
+  tray.setToolTip(unreadTooltip(parts.length ? ` (${parts.join(', ')})` : ''));
 }
 
 function unreadTooltip(suffix) {
@@ -522,18 +814,19 @@ function buildTrayMenu() {
   const s = getStatus();
   const updateLabel =
     s.state === 'ready'
-      ? 'Restart to update'
+      ? 'Restart to Update'
       : s.state === 'downloading'
-        ? `Downloading update ${s.percent || 0}%`
-        : 'Check for Updates...';
+        ? `Downloading Update ${s.percent || 0}%`
+        : 'Check for Updates…';
 
   return Menu.buildFromTemplate([
     { label: 'Open Taifa Mail', click: showWindow },
+    { label: 'New Message', click: () => composeIn(win) },
     { type: 'separator' },
     {
       label: updateLabel,
       enabled: s.state !== 'downloading',
-      click: () => (s.state === 'ready' ? quitAndInstallNow() : checkManual()),
+      click: () => (s.state === 'ready' ? quitAndInstallNow() : checkForUpdatesUi()),
     },
     { type: 'separator' },
     {
@@ -544,6 +837,16 @@ function buildTrayMenu() {
       },
     },
   ]);
+}
+
+// A check the user asked for, from a menu: the About window opens and shows
+// the whole story inline (checking, up to date, downloading, ready, or failed),
+// the same states it shows for its own button. No silent clicks.
+function checkForUpdatesUi() {
+  const w = showAbout();
+  const go = () => checkManual({ quiet: true });
+  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', () => setTimeout(go, 150));
+  else go();
 }
 
 // ---------------------------------------------------------------------------
@@ -566,7 +869,7 @@ function aboutInfo() {
 function pushAboutState() {
   if (!aboutWin || aboutWin.isDestroyed()) return;
   const s = getStatus();
-  aboutWin.webContents.send('about:update', { state: s.state, version: s.version, percent: s.percent });
+  aboutWin.webContents.send('about:update', { state: s.state, version: s.version, percent: s.percent, fresh: true });
 }
 
 function showAbout() {
@@ -810,6 +1113,7 @@ function pushTrayState() {
   trayWin.webContents.send('tray:state', {
     update: { state: s.state, percent: s.percent, version: s.version },
     unread: unreadCount,
+    conn: connectionInfo(),
   });
 }
 
@@ -935,37 +1239,54 @@ function hideTrayPopover() {
 
 const COMPOSE_ROUTE = '/#INBOX?compose=new';
 
-const NAVIGATE_SCRIPT = `(route) => {
-  const a = document.createElement('a');
-  a.href = route;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}`;
+// Runs one page action (page-actions.js) in a webmail window. Resolves to the
+// action's result, or null when the window cannot take it.
+function pageAction(w, name, arg) {
+  if (!isMailWindow(w) || (w === win && (!appLoaded || showingOffline))) return Promise.resolve(null);
+  return w.webContents.executeJavaScript(actionScript(name, arg), true).catch((e) => {
+    console.warn(`[shell] page action ${name} failed:`, e && e.message);
+    return null;
+  });
+}
 
-function openRoute(route) {
-  if (!win || win.isDestroyed()) {
+function openRoute(route, target) {
+  const w = target && isMailWindow(target) ? target : win;
+  if (!w || w.isDestroyed()) {
     pendingRoute = route;
     createWindow();
     return;
   }
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
-  if (!appLoaded || showingOffline) {
+  if (w.isMinimized()) w.restore();
+  w.show();
+  w.focus();
+  if (w === win && (!appLoaded || showingOffline)) {
     pendingRoute = route;
     return;
   }
-  win.webContents
-    .executeJavaScript(`(${NAVIGATE_SCRIPT})(${JSON.stringify(route)})`, true)
+  w.webContents
+    .executeJavaScript(actionScript('navigate', route), true)
     .catch((e) => {
-      if (!shouldReloadAfterFailedNavigation(win.webContents.getURL(), APP_ORIGIN)) {
+      if (!shouldReloadAfterFailedNavigation(w.webContents.getURL(), APP_ORIGIN)) {
         console.warn('[shell] in-page navigation failed, not reloading the webmail:', e && e.message);
         return;
       }
-      win.loadURL(new URL(route, APP_ORIGIN).toString());
+      w.loadURL(new URL(route, APP_ORIGIN).toString());
     });
+}
+
+// New message in a window, composed over whatever folder it shows.
+function composeIn(w) {
+  const t = isMailWindow(w) ? w : win;
+  if (!t || t.isDestroyed() || (t === win && (!appLoaded || showingOffline))) {
+    openRoute(COMPOSE_ROUTE);
+    return;
+  }
+  if (t === win) showWindow();
+  else {
+    t.show();
+    t.focus();
+  }
+  pageAction(t, 'compose');
 }
 
 function openMailto(url) {
@@ -1032,12 +1353,15 @@ function trackNotification(n) {
 // answers 'denied', but only for a click: settingsGate.
 const settingsGate = createSettingsGate();
 
-function applyPermissionOverride() {
-  if (!win || win.isDestroyed() || showingOffline) return;
+function applyPermissionOverride(w) {
+  const targets = w ? [w] : [...mailWindows];
   const blocked = notifyState.snapshot().status === 'blocked';
-  win.webContents.executeJavaScript(permissionOverrideScript(blocked)).catch(() => {});
+  for (const t of targets) {
+    if (!isMailWindow(t) || (t === win && showingOffline)) continue;
+    t.webContents.executeJavaScript(permissionOverrideScript(blocked)).catch(() => {});
+  }
 }
-notifyState.subscribe(applyPermissionOverride);
+notifyState.subscribe(() => applyPermissionOverride());
 
 let settingsOpenHook = null; // smoke tests only
 function onBlockedNotificationRequest() {
@@ -1131,25 +1455,51 @@ function applyTheme(pref) {
 // edge instead, which takes no clicks away from the page. In full screen the
 // traffic lights are hidden and the window cannot be dragged, so none of this
 // applies and the top bar sits at the far left, as on the web.
+//
+// The inset is set in CSS pixels, which scale with the page zoom, while the
+// traffic lights do not. So main keeps --taifa-tl-inset at 88 screen pixels
+// whatever the zoom (syncWindowChrome); 88px is only the fallback.
 const MAC_TITLEBAR_CSS = `
-html:not([data-taifa-fullscreen]) .tm-shell-topbar { -webkit-app-region: drag; padding-left: 88px !important; }
-.tm-shell-topbar :is(button, a, input, select, textarea, label, [role], [tabindex], [contenteditable]) { -webkit-app-region: no-drag; }
+html:not([data-taifa-fullscreen]) .tm-shell-topbar { -webkit-app-region: drag; padding-left: var(--taifa-tl-inset, 88px) !important; }
+.tm-shell-topbar :is(button, a, input, select, textarea, label, [role], [tabindex], [contenteditable], vs-input-beam) { -webkit-app-region: no-drag; }
 html:not([data-taifa-fullscreen]):not(:has(.tm-shell-topbar)) body::before {
-  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 28px;
+  content: ''; position: fixed; top: 0; left: 0; right: 0; height: var(--taifa-drag-h, 28px);
   -webkit-app-region: drag; z-index: 2147483647; pointer-events: none;
 }
 `;
 
-// Tells the injected stylesheet whether the window is in full screen, through
-// one attribute on <html> that only this app sets. (Removing an injected
-// user-origin sheet is not reliable in Electron 45, so the sheet stays and
-// keys off the attribute instead.)
-function syncFullScreenFlag() {
-  if (!win || win.isDestroyed()) return;
-  const on = win.isFullScreen();
-  win.webContents
-    .executeJavaScript(`document.documentElement.toggleAttribute('data-taifa-fullscreen', ${on})`, true)
+// Keeps the window chrome in step with full screen and zoom: one attribute on
+// <html> that only this app sets for full screen (removing an injected
+// user-origin sheet is not reliable in Electron 45, so the sheet stays and keys
+// off the attribute), the inset in screen pixels, and the traffic lights
+// centred on the 60px top bar at any zoom.
+function syncWindowChrome(w) {
+  if (!isMailWindow(w) || process.platform !== 'darwin' || messageWindows.has(w)) return;
+  const on = w.isFullScreen();
+  const z = w.webContents.getZoomFactor() || 1;
+  const inset = (88 / z).toFixed(2);
+  const drag = (28 / z).toFixed(2);
+  w.webContents
+    .executeJavaScript(`(() => { const r = document.documentElement; r.toggleAttribute('data-taifa-fullscreen', ${on}); r.style.setProperty('--taifa-tl-inset', '${inset}px'); r.style.setProperty('--taifa-drag-h', '${drag}px'); })()`, true)
     .catch(() => {});
+  if (typeof w.setWindowButtonPosition === 'function') {
+    const y = Math.max(8, Math.min(40, Math.round(22 + 30 * (z - 1))));
+    try { w.setWindowButtonPosition({ x: 18, y }); } catch (_) { /* older macOS */ }
+  }
+}
+
+// Zoom applies to the webmail origin, so every webmail window follows (Chromium
+// keeps one zoom level per origin and session), and the chrome is re-synced in
+// each. Clamped to the range the webmail's layout is tested at.
+function setZoom(w, level) {
+  if (!isMailWindow(w)) return;
+  const l = Math.max(-3, Math.min(3, level));
+  w.webContents.setZoomLevel(l);
+  setTimeout(() => { for (const m of mailWindows) syncWindowChrome(m); }, 50);
+}
+function zoomBy(w, step) {
+  if (!isMailWindow(w)) return;
+  setZoom(w, w.webContents.getZoomLevel() + step);
 }
 
 function createTray() {
@@ -1178,82 +1528,254 @@ function createTray() {
 
 // ---------------------------------------------------------------------------
 // Application menu
+//
+// Not optional, and not polish. On macOS, without an app menu carrying the
+// edit roles, Cmd+C / Cmd+V / Cmd+A do not work in the composer in a packaged
+// build. The template is built in menu.js from the focused webmail window's
+// state, and rebuilt when that state changes, so items that do not apply are
+// greyed out (no Reply without an open conversation, and so on).
 // ---------------------------------------------------------------------------
 
-function createAppMenu() {
-  // Not optional, and not polish. On macOS, without an app menu carrying the
-  // editMenu roles, Cmd+C / Cmd+V / Cmd+A do not work in the composer in a
-  // packaged build. People write real email in this thing.
-  const isMac = process.platform === 'darwin';
-  const settingsItem = { label: isMac ? 'Settings...' : 'Settings', accelerator: 'CmdOrCtrl+,', click: () => openRoute('/settings') };
-  const defaultMailItem = {
-    label: 'Make Taifa Mail the Default Email App',
-    click: () => app.setAsDefaultProtocolClient('mailto'),
-  };
-  const template = [
-    ...(isMac
-      ? [
-          {
-            label: app.name,
-            submenu: [
-              { label: 'About Taifa Mail', click: () => showAbout() },
-              { type: 'separator' },
-              settingsItem,
-              defaultMailItem,
-              { label: 'Check for Updates...', click: () => checkManual() },
-              { type: 'separator' },
-              { role: 'services' },
-              { type: 'separator' },
-              { role: 'hide' },
-              { role: 'hideOthers' },
-              { role: 'unhide' },
-              { type: 'separator' },
-              { role: 'quit' },
-            ],
-          },
-        ]
-      : []),
-    {
-      label: 'File',
-      submenu: [
-        { label: 'New Message', accelerator: 'CmdOrCtrl+N', click: () => openRoute(COMPOSE_ROUTE) },
-        { label: 'Inbox', accelerator: 'CmdOrCtrl+Shift+I', click: () => openRoute('/#INBOX') },
-        { type: 'separator' },
-        ...(isMac ? [] : [settingsItem, defaultMailItem, { type: 'separator' }]),
-        isMac ? { role: 'close' } : { role: 'quit' },
-      ],
-    },
-    { role: 'editMenu' },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-        ...(app.isPackaged ? [] : [{ type: 'separator' }, { role: 'toggleDevTools' }]),
-      ],
-    },
-    { role: 'windowMenu' },
-    {
-      role: 'help',
-      submenu: [
-        {
-          label: 'Taifa Mail Help',
-          click: () => shell.openExternal('https://govconnect.ke/docs'),
-        },
-        { type: 'separator' },
-        { label: 'Notification Settings...', click: () => openNotificationHelp() },
-        { label: 'Send Test Notification', click: () => sendTestNotification() },
-        ...(isMac ? [] : [{ type: 'separator' }, { label: 'Check for Updates...', click: () => checkManual() }, { label: 'About Taifa Mail', click: () => showAbout() }]),
-      ],
-    },
-  ];
+let menuSig = '';
+let menuTimer = null;
+
+function menuPageState() {
+  const w = targetWindow();
+  if (!w || (w === win && (!appLoaded || showingOffline))) return null;
+  return pageStates.get(w.webContents.id) || null;
+}
+
+function refreshMenu() {
+  menuTimer = null;
+  const template = buildMenuTemplate(
+    { platform: process.platform, isPackaged: app.isPackaged, page: menuPageState(), spellcheck: prefs.get('spellcheck') !== false },
+    (id, info) => runMenuAction(id, info),
+  );
+  const sig = menuSignature(template);
+  if (sig === menuSig) return;
+  menuSig = sig;
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function scheduleMenuRefresh() {
+  if (!menuTimer) menuTimer = setTimeout(refreshMenu, 40);
+}
+
+// The page tools a Message menu item presses (page-actions.js TOOLS).
+const MESSAGE_TOOLS = {
+  archive: 'Archive',
+  delete: 'Delete',
+  spam: 'Report spam',
+  move: 'Move to folder',
+  'mark-read': 'Mark as read',
+  'mark-unread': 'Mark as unread',
+  star: 'Star',
+  unstar: 'Remove star',
+};
+const REPLY_TEXT = { reply: 'Reply', 'reply-all': 'Reply all', forward: 'Forward' };
+// Each standard folder's route, once seen (its IMAP path comes from the server).
+const folderHashes = { Inbox: '#INBOX' };
+
+const TYPING_PROBE = "(() => { const a = document.activeElement; const t = a && a.shadowRoot && a.shadowRoot.activeElement ? a.shadowRoot.activeElement : a; return !!(t && t !== document.body && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))); })()";
+
+// Actions about the mailbox as a whole (folders, search, settings, a new
+// message) go to the main window when a message window is in front.
+const MAILBOX_ACTIONS = new Set(['settings', 'new-message', 'search', 'sidebar', 'shortcuts', 'refresh']);
+
+async function runMenuAction(id, info = {}) {
+  let w = targetWindow();
+  if (w && messageWindows.has(w) && (MAILBOX_ACTIONS.has(id) || id.startsWith('folder:')) && win && !win.isDestroyed()) w = win;
+  const surface = () => {
+    if (!w) return;
+    if (w === win) showWindow();
+    else {
+      w.show();
+      w.focus();
+    }
+  };
+  if (id.startsWith('folder:')) {
+    surface();
+    const name = id.slice('folder:'.length);
+    const hash = await pageAction(w, 'folder', folderHashes[name] ? { name, hash: folderHashes[name] } : { name });
+    if (typeof hash === 'string' && /^#[^?#\s]{1,300}$/.test(hash)) folderHashes[name] = hash;
+    return;
+  }
+  if (MESSAGE_TOOLS[id]) {
+    // Cmd+Delete is also "delete to start of line". If the shortcut reached us
+    // while a text field had focus (the menu state can lag a keystroke behind),
+    // hand the key back to the page instead of deleting the conversation.
+    if (id === 'delete' && info.accelerator && w) {
+      const typing = await w.webContents.executeJavaScript(TYPING_PROBE, true).catch(() => false);
+      if (typing) {
+        w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace', modifiers: ['meta'] });
+        w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace', modifiers: ['meta'] });
+        return;
+      }
+    }
+    const done = await pageAction(w, 'tool', MESSAGE_TOOLS[id]);
+    // Mark as Unread hands the conversation back to the list in the main
+    // window. A message window is for that one conversation, so it stays.
+    if (id === 'mark-unread' && done && !messageWindows.has(w)) await pageAction(w, 'back-after-unread');
+    return;
+  }
+  if (REPLY_TEXT[id]) {
+    await pageAction(w, 'reply', REPLY_TEXT[id]);
+    return;
+  }
+  switch (id) {
+    case 'about': showAbout(); return;
+    case 'settings': openRoute('/settings', w); return;
+    case 'check-updates': checkForUpdatesUi(); return;
+    case 'default-mail': app.setAsDefaultProtocolClient('mailto'); return;
+    case 'new-message': composeIn(w); return;
+    case 'new-window': openMailWindow('/#INBOX'); return;
+    case 'open-window': {
+      const route = await pageAction(w, 'conversation');
+      if (typeof route === 'string') openMailWindow(route);
+      return;
+    }
+    case 'print': printOpenConversation(w); return;
+    case 'find': surface(); if (!finder.open(w)) shell.beep(); return;
+    case 'find-next': finder.step(w, true); return;
+    case 'find-prev': finder.step(w, false); return;
+    case 'search': {
+      surface();
+      const ok = await pageAction(w, 'search');
+      if (!ok) shell.beep();
+      return;
+    }
+    case 'spellcheck': {
+      const on = prefs.get('spellcheck') === false;
+      prefs.set('spellcheck', on);
+      session.fromPartition(PARTITION).setSpellCheckerEnabled(on);
+      menuSig = '';
+      scheduleMenuRefresh();
+      return;
+    }
+    case 'sidebar': await pageAction(w, 'sidebar'); return;
+    case 'zoom-reset': setZoom(w, 0); return;
+    case 'zoom-in': zoomBy(w, 0.5); return;
+    case 'zoom-out': zoomBy(w, -0.5); return;
+    case 'reload': if (w) w.webContents.reload(); return;
+    case 'maximise': if (w) { if (w.isMaximized()) w.unmaximize(); else w.maximize(); } return;
+    case 'refresh': await pageAction(w, 'refresh'); return;
+    case 'help': openExternally('https://govconnect.ke/docs'); return;
+    case 'shortcuts': surface(); await pageAction(w, 'shortcuts', process.platform === 'darwin' ? 'mac' : 'other'); return;
+    case 'notification-settings': openNotificationHelp(); return;
+    case 'test-notification': sendTestNotification(); return;
+    default:
+      console.warn(`[shell] unknown menu action ${id}`);
+  }
+}
+
+// File > Print: the open conversation, through the system print dialog
+// (print.js), never the app window itself.
+let printing = false;
+async function printOpenConversation(w) {
+  if (printing || !isMailWindow(w)) return;
+  printing = true;
+  try {
+    const data = await pageAction(w, 'print');
+    if (!data) {
+      // No conversation open (the menu item lags the page by a moment).
+      shell.beep();
+      return;
+    }
+    if (!Array.isArray(data.messages) || !data.messages.length) {
+      dialog.showMessageBox(w, { type: 'warning', message: 'This conversation can’t be printed right now', detail: 'Taifa Mail can’t reach the server, and none of its messages are open on screen. Try again when you’re back online.', buttons: ['OK'] }).catch(() => {});
+      return;
+    }
+    await printConversation({ BrowserWindow, session, app }, data);
+  } catch (e) {
+    console.warn('[shell] print failed:', e && e.message);
+    dialog.showMessageBox(w, { type: 'warning', message: 'Could not print this conversation', detail: String((e && e.message) || e), buttons: ['OK'] }).catch(() => {});
+  } finally {
+    printing = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Right-click menu (context-menu.js)
+// ---------------------------------------------------------------------------
+
+// Did a right-click land in the open conversation? A message's HTML body is a
+// frame inside the reader; anything else is checked by its point.
+async function contextInMessage(w, params) {
+  const st = pageStates.get(w.webContents.id);
+  if (!st || !st.conversation || st.modal) return null;
+  const message = { canReplyAll: !!st.canReplyAll, inWindow: messageWindows.has(w) };
+  if (params.frame && params.frame !== w.webContents.mainFrame) return message;
+  const x = Math.round(Number(params.x) || 0);
+  const y = Math.round(Number(params.y) || 0);
+  const hit = await w.webContents
+    .executeJavaScript(`(() => { const e = document.elementFromPoint(${x}, ${y}); return !!(e && e.closest('.tm-reader[data-open="1"]') && !e.closest('.compose')); })()`, true)
+    .catch(() => false);
+  return hit ? message : null;
+}
+
+async function showContextMenu(w, params) {
+  const wc = w.webContents;
+  const message = await contextInMessage(w, params);
+  if (w.isDestroyed()) return;
+  const mainState = win && !win.isDestroyed() ? pageStates.get(win.webContents.id) : null;
+  const canSearch = !!(mainState && mainState.signedIn && mainState.search);
+  const template = buildContextMenuTemplate(params, { platform: process.platform, isDev: !app.isPackaged, message, canSearch }, (id, arg) => {
+    switch (id) {
+      case 'menu': runMenuAction(String(arg)); break;
+      case 'search-for': searchMailFor(String(arg)); break;
+      case 'replace-misspelling': wc.replaceMisspelling(String(arg)); break;
+      case 'add-to-dictionary': wc.session.addWordToSpellCheckerDictionary(String(arg)); break;
+      case 'look-up': if (process.platform === 'darwin') wc.showDefinitionForSelection(); break;
+      case 'open-link': openExternally(String(arg)); break;
+      case 'copy-link': clipboard.writeText(String(arg)); break;
+      case 'compose-to': {
+        const route = mailtoToRoute(String(arg));
+        if (route) openRoute(route, w);
+        break;
+      }
+      case 'copy-address': {
+        try {
+          clipboard.writeText(decodeURIComponent(new URL(String(arg)).pathname));
+        } catch (_) { /* not a mailto we can read */ }
+        break;
+      }
+      case 'copy-image': wc.copyImageAt(Math.round(arg.x), Math.round(arg.y)); break;
+      case 'inspect': wc.inspectElement(Math.round(arg.x), Math.round(arg.y)); break;
+      default: break;
+    }
+  });
+  if (!template.length) return;
+  Menu.buildFromTemplate(template).popup({ window: w, frame: params.frame || undefined });
+}
+
+// "Search Mail for …" on selected text: the words go into the main window's
+// search field as if typed, and Return runs the search, so the page's own
+// search (all mail by default, with its scope chip) is what answers.
+async function searchMailFor(text) {
+  const query = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  if (!query || !win || win.isDestroyed()) return;
+  showWindow();
+  const ok = await pageAction(win, 'search', query);
+  if (!ok || win.isDestroyed()) {
+    shell.beep();
+    return;
+  }
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+  win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+}
+
+// A file drop the page could not attach (page-shim.js): one accurate message
+// (drop.js), on the window it happened in, at most one sheet every few seconds.
+// When the page explained the failure itself, the app says nothing.
+let lastDropAlert = 0;
+function handleDropResult(w, data) {
+  appendLine(pageLogFile(), formatLine({ level: 'info', msg: `drop ${data && data.outcome} count=${Number(data && data.count) || 0}` }));
+  const alert = dropAlert(data);
+  if (!alert || !isMailWindow(w)) return;
+  if (Date.now() - lastDropAlert < 3000) return;
+  lastDropAlert = Date.now();
+  dialog.showMessageBox(w, { type: 'warning', message: alert.message, detail: alert.detail, buttons: ['OK'] }).catch(() => {});
 }
 
 // The backend said the bundled webmail is older than it supports
@@ -1282,6 +1804,7 @@ function startDeferred() {
   if (deferredStarted) return;
   deferredStarted = true;
   createTray();
+  watchConnection();
   initUpdater({ onState: updateStatusLabel });
 }
 
@@ -1324,7 +1847,7 @@ app.whenReady().then(async () => {
   // our own unified log within a second of launch, well before the webmail asks.
   reprobeNotifications();
   installSessionHandlers(ses, { snapshot: () => notifyState.snapshot(), onBlockedRequest: onBlockedNotificationRequest, onFirstRequest: onFirstNotificationRequest });
-  const bundled = installBundle(ses, { onTooOld: fallBackToLiveSite });
+  const bundled = installBundle(ses, { onTooOld: fallBackToLiveSite, onBackendRequest: (p) => serverHealth.start(p) });
   if (!bundled) console.warn('[shell] no bundled webmail in renderer/: loading the live site');
 
   // 0.1.x registered the web build's service worker in this partition, and it
@@ -1338,10 +1861,22 @@ app.whenReady().then(async () => {
   } catch (e) {
     console.warn('[shell] could not clear the old service worker:', e && e.message);
   }
-  ses.setSpellCheckerLanguages(['en-GB', 'en-US']);
+  // Spellcheck follows the system: macOS uses its own spell checker with the
+  // system languages (setSpellCheckerLanguages is a no-op there); Windows and
+  // Linux get the system's preferred languages that have a dictionary.
+  prefs.load(app.getPath('userData'));
+  ses.setSpellCheckerEnabled(prefs.get('spellcheck') !== false);
+  if (process.platform !== 'darwin') {
+    try {
+      ses.setSpellCheckerLanguages(pickSpellLanguages(app.getPreferredSystemLanguages(), ses.availableSpellCheckerLanguages));
+    } catch (e) {
+      console.warn('[shell] spellcheck languages:', e && e.message);
+    }
+  }
 
   applyTheme(await readThemePreference(ses));
-  createAppMenu();
+  refreshMenu();
+  setAppWindowOpener((route) => openMailWindow(route));
   createWindow();
   registerAboutIpc();
   if (SMOKE_ABOUT) smokeAbout();
@@ -1369,6 +1904,11 @@ app.whenReady().then(async () => {
     }
   });
 
+  // The find bar's calls (find.js checks the sender is one of its bars).
+  for (const ch of ['find:query', 'find:step', 'find:close']) {
+    ipcMain.on(ch, (e, a, b) => finder.handle(ch, e.sender, ch === 'find:step' ? undefined : a, ch === 'find:step' ? a : b));
+  }
+
   // Retry now, from the offline page's button.
   ipcMain.on('shell:retry', () => {
     retryAttempt = 0;
@@ -1383,13 +1923,14 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('tray:new-message', () => {
     hideTrayPopover();
-    openRoute(COMPOSE_ROUTE);
+    composeIn(win);
   });
   ipcMain.on('tray:open-settings', () => {
     hideTrayPopover();
     openRoute('/settings');
   });
-  ipcMain.on('tray:check-updates', () => checkManual());
+  // The popover shows the result inline, so no dialog on top of it.
+  ipcMain.on('tray:check-updates', () => checkManual({ quiet: true }));
   ipcMain.on('tray:restart-update', () => quitAndInstallNow());
   ipcMain.on('tray:quit', () => {
     isQuitting = true;
@@ -1400,7 +1941,16 @@ app.whenReady().then(async () => {
     showWindow();
     badge.reassert();
   });
-  app.on('browser-window-focus', () => badge.reassert());
+  app.on('browser-window-focus', () => {
+    badge.reassert();
+    scheduleMenuRefresh();
+  });
+
+  // Development runs only (never a packaged build): a handle for driving the
+  // app from the Node inspector in manual and automated UI checks.
+  if (!app.isPackaged) {
+    global.__taifaDev = { runMenuAction, pageAction, pageStates, mailWindows, openMailWindow, openRoute, notifier, notifyState, connectionState, connectionInfo, serverHealth, printConversation: (data) => printConversation({ BrowserWindow, session, app }, data, { toPdf: true }), getWin: () => win, finder, considerFallback, getInboxBaseline: () => inboxBaseline };
+  }
   // macOS: clicking a notification banner activates the app. If the window is
   // hidden or minimised at that moment, bring it back.
   if (process.platform === 'darwin') {
